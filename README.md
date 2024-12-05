@@ -1,10 +1,8 @@
-# 安装脚本使用前，请先阅读`install_xray_warp.sh`文件，确保脚本文件合法
-
-## 以下系统经过测试，可以使用脚本安装
- - ubuntu（24、22、20）
- - debian（12、11、10）
+# 使用脚本，请先阅读脚本文件，确保脚本文件不会破坏系统，要是不会分析，可以问ChatGPT
  
 ## 安装命令
+
+安装xray-core和cloudflare-warp，并生成xray-core的config.json文件，无需手动修改config.json文件
 ```shell
 bash -c "$(curl -sSL https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray_warp.sh)"
 ```
