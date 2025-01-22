@@ -40,6 +40,15 @@ function install_dependencies {
   esac
 }
 
+# 开启防火墙
+function enable_ufw{
+  ufw allow 22
+  ufw allow 80
+  ufw allow 443
+  ufw allow 2333
+  ufw enable
+}
+
 # 安装 Cloudflare WARP
 function install_warp {
   case $OS_NAME in
@@ -169,7 +178,6 @@ function setup_xray {
           "domain:chatgpt.com",
           "domain:ai.com",
           "domain:chat.com",
-          "domain:cloudflare.com",
           "domain:youtube.com",
           "domain:netflix.com"
         ]
@@ -184,14 +192,30 @@ EOF
   systemctl restart xray
 }
 
-# 获取公网 IP
-function get_public_ip {
-  local IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip || curl -s http://ip-api.com/line?fields=query)
-  echo ${IP:-"未知"}
+# 开启bbr
+function enable_bbr{
+  local sysctl_config="/etc/sysctl.conf"
+  if ! grep -q "net.core.default_qdisc=fq" $sysctl_config; then
+    echo "net.core.default_qdisc=fq" >> $sysctl_config
+  fi
+  if ! grep -q "net.ipv4.tcp_congestion_control=bbr" $sysctl_config; then
+    echo "net.ipv4.tcp_congestion_control=bbr" >> $sysctl_config
+  fi
+}
+
+# 获取公网ipv4
+function get_ipv4{
+  local ipv4=$(curl -4 -s https://ipv4.icanhazip.com)
+}
+
+# 获取公网ipv6
+function get_ipv6{
+  local ipv6=$(curl -6 -s https://ipv6.icanhazip.com)
 }
 
 # 主函数
 function main {
+  enable_ufw
   confirm_action
   check_root
   get_os
@@ -199,10 +223,13 @@ function main {
   install_warp
   setup_warp
   setup_xray
-  PUBLIC_IP=$(get_public_ip)
+  enable_bbr
+  IPv4=$(get_ipv4)
+  IPv6=$(get_ipv6)
 
   echo "Xray 配置完成, UUID: ${UUID}"
-  echo "公网 IP: ${PUBLIC_IP}"
+  echo "公网 IPv4: ${IPv4}"
+  echo "公网 IPv6: ${IPv6}" 
   echo "Xray 配置文件路径: /usr/local/etc/xray/config.json"
 }
 
