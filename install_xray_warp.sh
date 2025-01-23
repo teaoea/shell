@@ -185,7 +185,7 @@ EOF
 
 # 开启bbr
 function enable_bbr{
-  sysctl_config="/etc/sysctl.conf"
+  sysctl_config=$(/etc/sysctl.conf)
   if ! grep -q "net.core.default_qdisc=fq" $sysctl_config; then
     echo "net.core.default_qdisc=fq" >> $sysctl_config
   fi
