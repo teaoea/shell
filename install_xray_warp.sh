@@ -185,7 +185,7 @@ EOF
 
 # 开启bbr
 function enable_bbr{
-  local sysctl_config="/etc/sysctl.conf"
+  sysctl_config="/etc/sysctl.conf"
   if ! grep -q "net.core.default_qdisc=fq" $sysctl_config; then
     echo "net.core.default_qdisc=fq" >> $sysctl_config
   fi
@@ -196,12 +196,12 @@ function enable_bbr{
 
 # 获取公网ipv4
 function get_ipv4{
-  local ipv4=$(curl -4 -s https://ipv4.icanhazip.com)
+   ipv4=$(curl -4 -s https://ipv4.icanhazip.com)
 }
 
 # 获取公网ipv6
 function get_ipv6{
-  local ipv6=$(curl -6 -s https://ipv6.icanhazip.com)
+   ipv6=$(curl -6 -s https://ipv6.icanhazip.com)
 }
 
 # 主函数
