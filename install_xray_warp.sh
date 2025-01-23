@@ -170,7 +170,9 @@ function setup_xray {
           "domain:ai.com",
           "domain:chat.com",
           "domain:youtube.com",
-          "domain:netflix.com"
+          "domain:netflix.com",
+          "domain:deepseek.com",
+          "domain:tiktok.com"
         ]
       }
     ]
@@ -185,16 +187,21 @@ EOF
 
 # 获取公网 IP 地址
 function get_public_ip {
-  echo "正在检测公网 IP 地址..."
-  IPV4=$(curl -4 -s https://ifconfig.co)
-  IPV6=$(curl -6 -s https://ifconfig.co)
+  IPV4=$(curl -4 ipinfo.io/ip)
+  IPV6=$(curl -6 ipinfo.io/ip)
 
   # 设置全局变量，供后续展示
   PUBLIC_IPV4=${IPV4:-"未检测到"}
   PUBLIC_IPV6=${IPV6:-"未检测到"}
+}
 
-  echo "Public IPv4: $PUBLIC_IPV4"
-  echo "Public IPv6: $PUBLIC_IPV6"
+# 开启bbr和fq加速
+function enable_bbr{
+  sysctl -w net.core.default_qdisc=fq
+  sysctl -w net.ipv4.tcp_congestion_control=bbr
+  echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+  echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+  sysctl -p
 }
 
 # 主函数
@@ -207,6 +214,7 @@ function main {
   install_warp
   setup_warp
   setup_xray
+  enable_bbr
   ufw allow 22
   ufw allow 80
   ufw allow 443
