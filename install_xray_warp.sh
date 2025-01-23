@@ -197,30 +197,6 @@ function get_public_ip {
   echo "Public IPv6: $PUBLIC_IPV6"
 }
 
-# 启用 BBR 加速
-function enable_bbr {
-  echo "正在启用 BBR 加速..."
-  # 检查内核版本是否支持 BBR
-  kernel_version=$(uname -r)
-  if [[ "$kernel_version" < "4.9" ]]; then
-    echo "当前内核版本过低，不支持 BBR，请升级内核到 4.9 或更高版本。"
-    exit 1
-  fi
-
-  # 启用BBR加速
-function enable_bbr {
-  echo "正在启用 BBR 加速..."
-
-  # 配置 sysctl 参数
-  cat <<EOF > /etc/sysctl.d/99-bbr.conf
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-EOF
-
-  # 应用 sysctl 配置
-  sysctl --system
-}
-
 # 主函数
 function main {
   confirm_action
@@ -231,7 +207,6 @@ function main {
   install_warp
   setup_warp
   setup_xray
-  enable_bbr
   ufw allow 22
   ufw allow 80
   ufw allow 443
