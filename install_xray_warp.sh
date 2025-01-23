@@ -210,16 +210,6 @@ function enable_bbr {
   # 启用BBR加速
 function enable_bbr {
   echo "正在启用 BBR 加速..."
-  # 检查内核版本是否支持 BBR
-  kernel_version=$(uname -r)
-  if [[ "$kernel_version" < "4.9" ]]; then
-    echo "当前内核版本过低，不支持 BBR，请升级内核到 4.9 或更高版本。"
-    exit 1
-  fi
-
-  # 启用 BBR
-  modprobe tcp_bbr
-  echo "tcp_bbr" >> /etc/modules-load.d/modules.conf
 
   # 配置 sysctl 参数
   cat <<EOF > /etc/sysctl.d/99-bbr.conf
@@ -229,13 +219,6 @@ EOF
 
   # 应用 sysctl 配置
   sysctl --system
-
-  # 验证 BBR 是否启用
-  if sysctl net.ipv4.tcp_available_congestion_control | grep -q bbr && sysctl net.ipv4.tcp_congestion_control | grep -q bbr; then
-    echo "BBR 已成功启用并将在重启后保持生效！"
-  else
-    echo "BBR 启用失败，请检查配置。"
-  fi
 }
 
 # 主函数
