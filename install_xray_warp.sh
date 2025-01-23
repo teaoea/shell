@@ -40,15 +40,6 @@ function install_dependencies {
   esac
 }
 
-# 开启防火墙
-function enable_ufw{
-  ufw allow 22
-  ufw allow 80
-  ufw allow 443
-  ufw allow 2333
-  ufw enable
-}
-
 # 安装 Cloudflare WARP
 function install_warp {
   case $OS_NAME in
@@ -215,7 +206,6 @@ function get_ipv6{
 
 # 主函数
 function main {
-  enable_ufw
   confirm_action
   check_root
   get_os
