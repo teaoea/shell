@@ -195,15 +195,6 @@ function get_public_ip {
   PUBLIC_IPV6=${IPV6:-"未检测到"}
 }
 
-# 开启bbr和fq加速
-function enable_bbr{
-  sysctl -w net.core.default_qdisc=fq
-  sysctl -w net.ipv4.tcp_congestion_control=bbr
-  echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-  echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-  sysctl -p
-}
-
 # 主函数
 function main {
   confirm_action
@@ -214,7 +205,6 @@ function main {
   install_warp
   setup_warp
   setup_xray
-  enable_bbr
   ufw allow 22
   ufw allow 80
   ufw allow 443
