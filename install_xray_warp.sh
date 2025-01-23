@@ -183,27 +183,6 @@ EOF
   systemctl restart xray
 }
 
-# 开启bbr
-function enable_bbr{
-  sysctl_config=$(/etc/sysctl.conf)
-  if ! grep -q "net.core.default_qdisc=fq" $sysctl_config; then
-    echo "net.core.default_qdisc=fq" >> $sysctl_config
-  fi
-  if ! grep -q "net.ipv4.tcp_congestion_control=bbr" $sysctl_config; then
-    echo "net.ipv4.tcp_congestion_control=bbr" >> $sysctl_config
-  fi
-}
-
-# 获取公网ipv4
-function get_ipv4{
-   ipv4=$(curl -4 -s https://ipv4.icanhazip.com)
-}
-
-# 获取公网ipv6
-function get_ipv6{
-   ipv6=$(curl -6 -s https://ipv6.icanhazip.com)
-}
-
 # 主函数
 function main {
   confirm_action
@@ -213,13 +192,8 @@ function main {
   install_warp
   setup_warp
   setup_xray
-  enable_bbr
-  IPv4=$(get_ipv4)
-  IPv6=$(get_ipv6)
 
   echo "Xray 配置完成, UUID: ${UUID}"
-  echo "公网 IPv4: ${IPv4}"
-  echo "公网 IPv6: ${IPv6}" 
   echo "Xray 配置文件路径: /usr/local/etc/xray/config.json"
 }
 
