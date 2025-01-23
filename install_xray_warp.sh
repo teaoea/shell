@@ -187,8 +187,8 @@ EOF
 
 # 获取公网 IP 地址
 function get_public_ip {
-  IPV4=$(curl -4 ipinfo.io/ip)
-  IPV6=$(curl -6 ipinfo.io/ip)
+  IPV4=$(curl 4.ipw.cn)
+  IPV6=$(curl 6.ipw.cn)
 
   # 设置全局变量，供后续展示
   PUBLIC_IPV4=${IPV4:-"未检测到"}
