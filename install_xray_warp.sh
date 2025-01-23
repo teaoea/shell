@@ -189,11 +189,20 @@ function main {
   check_root
   get_os
   install_dependencies
+  get_public_ip
   install_warp
   setup_warp
   setup_xray
-
+  IPV4 = $(curl -4 -s https://ifconfig.co) 
+  IPV6 = $(curl -6 -s https://ifconfig.co)
+  ufw allow 22
+  ufw allow 80
+  ufw allow 443
+  ufw allow 2333
+  ufw enable
   echo "Xray 配置完成, UUID: ${UUID}"
+  echo "Public IPv4: ${IPV4:-未检测到}"
+  echo "Public IPv6: ${IPV6:-未检测到}"
   echo "Xray 配置文件路径: /usr/local/etc/xray/config.json"
 }
 
