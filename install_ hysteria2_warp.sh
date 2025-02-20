@@ -69,13 +69,14 @@ function setup_warp {
   systemctl enable warp-svc
 }
 
-# uuid生成
-UUID=$(cat /proc/sys/kernel/random/uuid)
+# password生成
+PASSWORD = $(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)
 
 # 配置hysteria2
 function setup_hysteria2 {
   bash <(curl -fsSL https://get.hy2.sh/)
-  
+  rm -f /etc/hysteria/config.yml
+
   DOMAIN=${1:-"bing.com"}
   DAYS_VALID=365
   openssl req -x509 -nodes -days $DAYS_VALID -newkey rsa:2048 \
@@ -83,48 +84,25 @@ function setup_hysteria2 {
     -out /usr/local/etc/xray/${DOMAIN}.pem \
     -subj "/CN=${DOMAIN}"
 
-  chmod 644 /usr/local/etc/xray/${DOMAIN}.pem
-  chmod 644 /usr/local/etc/xray/${DOMAIN}.key
-  chown root:root /usr/local/etc/xray/${DOMAIN}.pem
-  chown root:root /usr/local/etc/xray/${DOMAIN}.key
+  chmod 644 /etc/hysteria/${DOMAIN}.pem
+  chmod 644 /etc/hysteria/${DOMAIN}.key
+  chown root:root /etc/hysteria/${DOMAIN}.pem
+  chown root:root /etc/hysteria/${DOMAIN}.key
 
+  touch /etc/hysteria/config.yml
   cat > /etc/hysteria/config.yml << EOF
 # :443同时监听ipv4和ipv6
 # 仅监听 IPv4，使用0.0.0.0:443
 # 仅监听 IPv6，使用 [::]:443
 listen: :443
 tls:
-  cert: "/usr/local/etc/xray/example.com.pem"
-  key: "/usr/local/etc/xray/example.com.key"
-  sniGuard: disable
-# 默认 Hysteria 协议伪装为 HTTP/3
-# 如果你的网络针对性屏蔽了 QUIC 或 HTTP/3 流量（但允许其他 UDP 流量），可以使用混淆来解决此问题
-obfs:
-  type: salamander
-  salamander:
-    password: password
-quic:
-  initStreamReceiveWindow: 8388608 
-  maxStreamReceiveWindow: 8388608 
-  initConnReceiveWindow: 20971520 
-  maxConnReceiveWindow: 20971520 
-  maxIdleTimeout: 30s 
-  maxIncomingStreams: 1024 
-  disablePathMTUDiscovery: false
-# 带宽限制
-bandwidth:
-  up: 1 gbps
-  down: 1 gbps
-# 速度测试
-speedTest: true
-# udp转发
-disableUDP: false
-# udp最长会话时间
-udpIdleTimeout: 60s
+  cert: "/etc/hysteria/bing.com.pem"
+  key: "/etc/hysteria/bing.com.key"
+  #sniGuard: disable
 # 认证
 auth:
   type: password
-  password: ${UUID}
+  password: ${PASSWORD}
 # 出站设置
 outbounds:
   - name: default # 默认出站规则
@@ -147,13 +125,15 @@ acl:
 masquerade:
   type: proxy
   proxy:
-    url: https://bing.com
+    url: https://bing.com/
     rewriteHost: true
     insecure: false
   listenHTTP: :80
   listenHTTPS: :443
   forceHTTPS: true
 EOF
+systemctl enable hysteria-server.service
+sudo hysteria server check -c /etc/hysteria/config.yaml
 }
 
 # 获取公网 IP 地址
@@ -183,7 +163,7 @@ function main {
   ufw enable
 
   echo -e "\n配置完成！"
-  echo "hysteria2设置的密码: ${UUID}"
+  echo "hysteria2设置的密码: ${PASSWORD}"
   echo -e "公网 IPv4 地址: $PUBLIC_IPV4"
   echo -e "公网 IPv6 地址: $PUBLIC_IPV6"
   echo "hysteria2配置文件路径: /etc/hysteria/config.yml"
