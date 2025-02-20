@@ -80,8 +80,8 @@ function setup_hysteria2 {
   DOMAIN=${1:-"bing.com"}
   DAYS_VALID=365
   openssl req -x509 -nodes -days $DAYS_VALID -newkey rsa:2048 \
-    -keyout /usr/local/etc/xray/${DOMAIN}.key \
-    -out /usr/local/etc/xray/${DOMAIN}.pem \
+    -keyout /etc/hysteria/${DOMAIN}.key \
+    -out /etc/hysteria/${DOMAIN}.pem \
     -subj "/CN=${DOMAIN}"
 
   chmod 644 /etc/hysteria/${DOMAIN}.pem
@@ -89,8 +89,8 @@ function setup_hysteria2 {
   chown root:root /etc/hysteria/${DOMAIN}.pem
   chown root:root /etc/hysteria/${DOMAIN}.key
 
-  touch /etc/hysteria/config.yml
-  cat > /etc/hysteria/config.yml << EOF
+  touch /etc/hysteria/config.yaml
+  cat > /etc/hysteria/config.yaml << EOF
 # :443同时监听ipv4和ipv6
 # 仅监听 IPv4，使用0.0.0.0:443
 # 仅监听 IPv6，使用 [::]:443
