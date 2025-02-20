@@ -70,7 +70,7 @@ function setup_warp {
 }
 
 # password生成
-PASSWORD = $(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)
+PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)
 
 # 配置hysteria2
 function setup_hysteria2 {
