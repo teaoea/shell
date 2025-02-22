@@ -3,7 +3,8 @@
 # 安全提示
 function confirm_action {
   echo -e "注意: 此脚本将修改系统配置并安装多个服务，可能带来潜在的安全风险！"
-  read -p "是否继续执行？ (y/n): " CONFIRM
+  read -p "是否继续执行？ (y/N): " CONFIRM
+  CONFIRM=${CONFIRM:-N}  # 如果用户未输入内容，则默认为 "N"
   if [[ "$CONFIRM" != "y" ]]; then
     echo "操作已取消。"
     exit 0
@@ -75,7 +76,7 @@ PASSWORD=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)
 # 配置hysteria2
 function setup_hysteria2 {
   bash <(curl -fsSL https://get.hy2.sh/)
-  rm -f /etc/hysteria/config.yml
+  rm -f /etc/hysteria/config.yaml
 
   DOMAIN=${1:-"bing.com"}
   DAYS_VALID=365
@@ -92,8 +93,8 @@ function setup_hysteria2 {
   touch /etc/hysteria/config.yaml
   cat > /etc/hysteria/config.yaml << EOF
 # :443同时监听ipv4和ipv6
-# 仅监听 IPv4，使用0.0.0.0:443
-# 仅监听 IPv6，使用 [::]:443
+# 仅监听 IPv4,使用0.0.0.0:443
+# 仅监听 IPv6,使用 [::]:443
 listen: :443
 tls:
   cert: "/etc/hysteria/bing.com.pem"
@@ -125,7 +126,7 @@ acl:
 masquerade:
   type: proxy
   proxy:
-    url: https://bing.com/
+    url: https://cn.bing.com/
     rewriteHost: true
     insecure: false
   listenHTTP: :80
@@ -133,7 +134,17 @@ masquerade:
   forceHTTPS: true
 EOF
 systemctl enable hysteria-server.service
-sudo hysteria server check -c /etc/hysteria/config.yaml
+systemctl restart hysteria-server.service
+}
+
+# 防火墙配置
+function configure_firewall {
+  echo "配置防火墙规则..."
+  ufw allow 22
+  ufw allow 80
+  ufw allow 443
+  ufw allow 2333
+  ufw enable
 }
 
 # 获取公网 IP 地址
@@ -156,17 +167,13 @@ function main {
   install_warp
   setup_warp
   setup_hysteria2
-  ufw allow 22
-  ufw allow 80
-  ufw allow 443
-  ufw allow 2333
-  ufw enable
+  configure_firewall
 
   echo -e "\n配置完成！"
   echo "hysteria2设置的密码: ${PASSWORD}"
   echo -e "公网 IPv4 地址: $PUBLIC_IPV4"
   echo -e "公网 IPv6 地址: $PUBLIC_IPV6"
-  echo "hysteria2配置文件路径: /etc/hysteria/config.yml"
+  echo "hysteria2配置文件路径: /etc/hysteria/config.yaml"
 }
 
 # 执行主函数
