@@ -3,7 +3,8 @@
 # 安全提示
 function confirm_action {
   echo -e "注意: 此脚本将修改系统配置并安装多个服务，可能带来潜在的安全风险！"
-  read -p "是否继续执行？ (y/n): " CONFIRM
+  read -p "是否继续执行？ (y/N): " CONFIRM
+  CONFIRM=${CONFIRM:-N}  # 如果用户未输入内容，则默认为 "N"
   if [[ "$CONFIRM" != "y" ]]; then
     echo "操作已取消。"
     exit 0
@@ -74,7 +75,8 @@ UUID=$(cat /proc/sys/kernel/random/uuid)
 
 # 配置 Xray
 function setup_xray {
-  DOMAIN=${1:-"example.com"}
+  read -p "请输入域名（默认: bing.com): " DOMAIN
+  DOMAIN=${DOMAIN:-"bing.com"}
   DAYS_VALID=365
 
   # 创建证书目录
@@ -92,7 +94,8 @@ function setup_xray {
   chown root:root /usr/local/etc/xray/${DOMAIN}.key
 
   # 安装 Xray
-  curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh | bash
+  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install-geodata
 
   # 创建 Xray 配置文件
   cat >/usr/local/etc/xray/config.json <<EOF
@@ -152,7 +155,7 @@ function setup_xray {
       "settings": {
         "servers": [
           {
-            "address": "127.0.0.1",
+            "address": "localhost",
             "port": 2333
           }
         ]
@@ -185,6 +188,16 @@ EOF
   systemctl restart xray
 }
 
+# 防火墙配置
+function configure_firewall {
+  echo "配置防火墙规则..."
+  ufw allow 22
+  ufw allow 80
+  ufw allow 443
+  ufw allow 2333
+  ufw enable -y
+}
+
 # 获取公网 IP 地址
 function get_public_ip {
   IPV4=$(curl 4.ipw.cn)
@@ -205,11 +218,7 @@ function main {
   install_warp
   setup_warp
   setup_xray
-  ufw allow 22
-  ufw allow 80
-  ufw allow 443
-  ufw allow 2333
-  ufw enable
+  configure_firewall
 
   echo -e "\n配置完成！"
   echo "Xray使用的UUID: ${UUID}"
