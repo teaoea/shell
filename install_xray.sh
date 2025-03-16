@@ -41,35 +41,6 @@ function install_dependencies {
   esac
 }
 
-# 安装 Cloudflare WARP
-function install_warp {
-  case $OS_NAME in
-  ubuntu)
-    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-    apt update && apt install cloudflare-warp -y
-    ;;
-  debian)
-    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-    apt update && apt install cloudflare-warp -y
-    ;;
-  centos | rhel | fedora)
-    curl -fsSl https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo | sudo tee /etc/yum.repos.d/cloudflare-warp.repo
-    yum update && yum install cloudflare-warp -y
-    ;;
-  esac
-}
-
-# 配置 Cloudflare WARP
-function setup_warp {
-  warp-cli mode proxy
-  warp-cli proxy port 2333
-  warp-cli registration new
-  warp-cli connect
-  systemctl enable warp-svc
-}
-
 # uuid生成
 UUID=$(cat /proc/sys/kernel/random/uuid)
 
@@ -118,13 +89,8 @@ function setup_xray {
         "network": "tcp",
         "security": "tls",
         "tlsSettings": {
-          "serverNames": [
-            ""
-          ],
-          "alpn": [
-            "h2",
-            "http/1.1"
-          ],
+          "serverNames": [""],
+          "alpn": [ "h2", "http/1.1" ],
           "certificates": [
             {
               "certificateFile": "/usr/local/etc/xray/${DOMAIN}.pem",
@@ -135,11 +101,7 @@ function setup_xray {
       },
       "sniffing": {
         "enabled": true,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ],
+        "destOverride": [ "http", "tls", "quic" ],
         "routeOnly": true
       }
     }
@@ -148,38 +110,8 @@ function setup_xray {
     {
       "tag": "direct",
       "protocol": "freedom"
-    },
-    {
-      "tag": "warp",
-      "protocol": "socks",
-      "settings": {
-        "servers": [
-          {
-            "address": "localhost",
-            "port": 2333
-          }
-        ]
-      }
     }
-  ],
-  "routing": {
-    "rules": [
-      {
-        "type": "field",
-        "outboundTag": "warp",
-        "domain": [
-          "domain:openai.com",
-          "domain:chatgpt.com",
-          "domain:ai.com",
-          "domain:chat.com",
-          "domain:youtube.com",
-          "domain:netflix.com",
-          "domain:deepseek.com",
-          "domain:tiktok.com"
-        ]
-      }
-    ]
-  }
+  ]
 }
 EOF
 
@@ -194,7 +126,6 @@ function configure_firewall {
   ufw allow 22
   ufw allow 80
   ufw allow 443
-  ufw allow 2333
   ufw enable -y
 }
 
@@ -215,8 +146,6 @@ function main {
   get_os
   install_dependencies
   get_public_ip
-  install_warp
-  setup_warp
   setup_xray
   configure_firewall
 
