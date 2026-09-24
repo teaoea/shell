@@ -494,36 +494,25 @@ function get_public_ip {
 
 # 生成客户端连接信息
 function write_client_info {
-  local server_address share_link share_link_ipv4 share_link_ipv6 link_parameters
-
-  link_parameters="encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#Xray-REALITY"
-  share_link_ipv4="未检测到公网 IPv4"
-  share_link_ipv6="未检测到公网 IPv6"
-
-  if [[ "${PUBLIC_IPV4}" != "未检测到" ]]; then
-    share_link_ipv4="vless://${UUID}@${PUBLIC_IPV4}:${XRAY_PORT}?${link_parameters}"
-  fi
-  if [[ "${PUBLIC_IPV6}" != "未检测到" ]]; then
-    share_link_ipv6="vless://${UUID}@[${PUBLIC_IPV6}]:${XRAY_PORT}?${link_parameters}"
-  fi
+  local server_address
 
   if [[ "${PUBLIC_IPV6}" != "未检测到" ]]; then
     server_address=${PUBLIC_IPV6}
-    share_link=${share_link_ipv6}
   elif [[ "${PUBLIC_IPV4}" != "未检测到" ]]; then
     server_address=${PUBLIC_IPV4}
-    share_link=${share_link_ipv4}
   else
     server_address="<服务器IP>"
-    share_link="vless://${UUID}@<服务器IP>:${XRAY_PORT}?${link_parameters}"
   fi
 
   cat >"${CLIENT_INFO_FILE}" <<EOF
 VLESS + REALITY + XTLS Vision 客户端参数
 ==========================================
-服务器地址: ${server_address}
+推荐服务器地址: ${server_address}
+公网 IPv4 地址: ${PUBLIC_IPV4}
+公网 IPv6 地址: ${PUBLIC_IPV6}
 端口: ${XRAY_PORT}
 UUID: ${UUID}
+Encryption: none
 Flow: xtls-rprx-vision
 传输方式: TCP/RAW
 传输安全: reality
@@ -532,15 +521,6 @@ Fingerprint: chrome
 Password/Public Key: ${PUBLIC_KEY}
 Short ID: ${SHORT_ID}
 SpiderX: /
-
-主分享链接（IPv6 优先）:
-${share_link}
-
-IPv6 分享链接:
-${share_link_ipv6}
-
-IPv4 备用分享链接:
-${share_link_ipv4}
 
 Xray 客户端出站示例:
 {
@@ -570,16 +550,21 @@ EOF
 
   echo -e "\n配置完成！"
   echo "Xray 服务状态: 运行中"
-  echo "公网 IPv4 地址: ${PUBLIC_IPV4}"
-  echo "公网 IPv6 地址: ${PUBLIC_IPV6}"
-  echo "SSH 放行端口: ${SSH_PORTS}"
-  echo "BBR 状态: ${BBR_STATUS}"
-  echo "IPv6 状态: ${IPV6_STATUS}"
   echo "Xray 配置文件: ${XRAY_CONFIG_FILE}"
   echo "客户端信息文件: ${CLIENT_INFO_FILE}"
-  echo -e "\n主分享链接（IPv6 优先）："
-  echo "${share_link}"
-  echo "IPv4 备用链接: ${share_link_ipv4}"
+  echo -e "\n客户端手动配置参数："
+  echo "公网 IPv6 地址: ${PUBLIC_IPV6}"
+  echo "端口: ${XRAY_PORT}"
+  echo "UUID: ${UUID}"
+  echo "Encryption: none"
+  echo "Flow: xtls-rprx-vision"
+  echo "传输方式: TCP/RAW"
+  echo "传输安全: reality"
+  echo "SNI/ServerName: ${REALITY_SERVER_NAME}"
+  echo "Fingerprint: chrome"
+  echo "Password/Public Key: ${PUBLIC_KEY}"
+  echo "Short ID: ${SHORT_ID}"
+  echo "SpiderX: /"
 }
 
 # 主函数
