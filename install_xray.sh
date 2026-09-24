@@ -494,7 +494,7 @@ function get_public_ip {
 
 # 生成客户端连接信息
 function write_client_info {
-  local server_address
+  local loon_config server_address
 
   if [[ "${PUBLIC_IPV6}" != "未检测到" ]]; then
     server_address=${PUBLIC_IPV6}
@@ -503,6 +503,8 @@ function write_client_info {
   else
     server_address="<服务器IP>"
   fi
+
+  loon_config="Xray-REALITY = VLESS,${server_address},${XRAY_PORT},\"${UUID}\",transport=tcp,flow=xtls-rprx-vision,public-key=\"${PUBLIC_KEY}\",short-id=${SHORT_ID},over-tls=true,sni=${REALITY_SERVER_NAME},tls-profile=chrome,udp=true,block-quic=false"
 
   cat >"${CLIENT_INFO_FILE}" <<EOF
 VLESS + REALITY + XTLS Vision 客户端参数
@@ -544,6 +546,9 @@ Xray 客户端出站示例:
     }
   }
 }
+
+Loon 节点配置（粘贴到 [Proxy] 段）:
+${loon_config}
 EOF
 
   chmod 600 "${CLIENT_INFO_FILE}"
@@ -565,6 +570,8 @@ EOF
   echo "Password/Public Key: ${PUBLIC_KEY}"
   echo "Short ID: ${SHORT_ID}"
   echo "SpiderX: /"
+  echo -e "\nLoon 节点配置（粘贴到 [Proxy] 段）："
+  echo "${loon_config}"
 }
 
 # 主函数
