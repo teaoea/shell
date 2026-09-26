@@ -8,6 +8,9 @@ readonly XRAY_CONFIG_DIR="/usr/local/etc/xray"
 readonly XRAY_CONFIG_FILE="${XRAY_CONFIG_DIR}/config.json"
 readonly CLIENT_INFO_FILE="/root/xray-reality-client.txt"
 readonly NETWORK_SYSCTL_FILE="/etc/sysctl.d/99-xray-network.conf"
+readonly GAI_CONFIG_FILE="/etc/gai.conf"
+readonly GAI_BEGIN="# BEGIN install_xray.sh network priority"
+readonly GAI_END="# END install_xray.sh network priority"
 
 OS_NAME=""
 UUID=""
@@ -15,10 +18,16 @@ PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
 REALITY_SERVER_NAME="${REALITY_SERVER_NAME:-www.microsoft.com}"
-readonly XRAY_PORT=443
-readonly XRAY_LISTEN_ADDRESS="::"
+XRAY_PORT="${XRAY_PORT:-}"
+readonly DEFAULT_XRAY_PORT=443
+XRAY_LISTEN_ADDRESS="::"
 SSH_PORTS=""
 ASSUME_YES=false
+NETWORK_PRIORITY="${NETWORK_PRIORITY:-}"
+NETWORK_PRIORITY_LABEL=""
+XRAY_PRIORITIZE_IPV6=false
+LOON_IP_MODE="prefer-v4"
+LOON_SERVER_IP="${LOON_SERVER_IP:-}"
 PUBLIC_IPV4="未检测到"
 PUBLIC_IPV6="未检测到"
 BBR_STATUS="未启用"
@@ -26,6 +35,7 @@ IPV6_STATUS="待检测"
 TEMP_INSTALL_SCRIPT=""
 TEMP_CONFIG_FILE=""
 TEMP_SYSCTL_FILE=""
+TEMP_GAI_FILE=""
 
 # 清理临时文件
 function cleanup {
@@ -38,6 +48,9 @@ function cleanup {
   if [[ -n "${TEMP_SYSCTL_FILE}" && -f "${TEMP_SYSCTL_FILE}" ]]; then
     rm -f -- "${TEMP_SYSCTL_FILE}"
   fi
+  if [[ -n "${TEMP_GAI_FILE}" && -f "${TEMP_GAI_FILE}" ]]; then
+    rm -f -- "${TEMP_GAI_FILE}"
+  fi
 }
 
 trap cleanup EXIT
@@ -49,12 +62,52 @@ function parse_arguments {
     -y | --yes)
       ASSUME_YES=true
       ;;
+    --network-priority)
+      if (($# < 2)); then
+        echo "错误: --network-priority 需要 ipv4 或 ipv6 参数。" >&2
+        exit 1
+      fi
+      NETWORK_PRIORITY=$2
+      shift
+      ;;
+    --network-priority=*)
+      NETWORK_PRIORITY=${1#*=}
+      ;;
+    --port)
+      if (($# < 2)); then
+        echo "错误: --port 需要端口号参数。" >&2
+        exit 1
+      fi
+      XRAY_PORT=$2
+      shift
+      ;;
+    --port=*)
+      XRAY_PORT=${1#*=}
+      ;;
+    --loon-address)
+      if (($# < 2)); then
+        echo "错误: --loon-address 需要 IP 地址参数。" >&2
+        exit 1
+      fi
+      LOON_SERVER_IP=$2
+      shift
+      ;;
+    --loon-address=*)
+      LOON_SERVER_IP=${1#*=}
+      ;;
     -h | --help)
-      echo "用法: $0 [--yes]"
-      echo "  -y, --yes    跳过确认，执行无人值守安装"
-      echo "  -h, --help   显示帮助"
-      echo "固定配置: 双栈监听 [::]:443，自动生成全部连接凭据"
-      echo "环境变量: REALITY_SERVER_NAME（默认: www.microsoft.com）"
+      echo "用法: $0 [--yes] [--network-priority ipv4|ipv6] [--port 端口] [--loon-address IP]"
+      echo "  -y, --yes                      跳过确认，执行无人值守安装"
+      echo "  --network-priority ipv4|ipv6   指定出站网络优先级"
+      echo "  --port 端口                    指定 Xray 监听端口（默认: 443）"
+      echo "  --loon-address IP              指定或覆盖 Loon 节点 IP"
+      echo "  -h, --help                     显示帮助"
+      echo "交互运行时会询问网络优先级和端口；--yes 未指定时默认 IPv4/443。"
+      echo "环境变量:"
+      echo "  NETWORK_PRIORITY=ipv4|ipv6"
+      echo "  XRAY_PORT=1-65535"
+      echo "  LOON_SERVER_IP=与所选网络一致的 IP 地址"
+      echo "  REALITY_SERVER_NAME（默认: www.microsoft.com）"
       exit 0
       ;;
     *)
@@ -67,10 +120,121 @@ function parse_arguments {
   done
 }
 
+# 规范化并保存网络优先级
+function set_network_priority {
+  case "${1:-}" in
+  4 | ipv4 | IPv4 | IPV4)
+    NETWORK_PRIORITY="ipv4"
+    NETWORK_PRIORITY_LABEL="IPv4 优先，IPv6 回退"
+    XRAY_PRIORITIZE_IPV6=false
+    LOON_IP_MODE="prefer-v4"
+    ;;
+  6 | ipv6 | IPv6 | IPV6)
+    NETWORK_PRIORITY="ipv6"
+    NETWORK_PRIORITY_LABEL="IPv6 优先，IPv4 回退"
+    XRAY_PRIORITIZE_IPV6=true
+    LOON_IP_MODE="prefer-v6"
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
+# 交互选择出站优先级；无人值守默认选择兼容性更好的 IPv4
+function select_network_priority {
+  local choice=""
+
+  if [[ -n "${NETWORK_PRIORITY}" ]]; then
+    set_network_priority "${NETWORK_PRIORITY}" || {
+      echo "错误: NETWORK_PRIORITY/--network-priority 只能是 ipv4 或 ipv6。" >&2
+      exit 1
+    }
+  elif [[ "${ASSUME_YES}" == true ]]; then
+    set_network_priority "ipv4"
+    echo "未指定网络优先级，无人值守模式默认选择 IPv4 优先。"
+  else
+    if [[ ! -t 0 ]]; then
+      echo "错误: 非交互环境无法询问网络优先级。" >&2
+      echo "请添加 --network-priority ipv4|ipv6，并使用 --yes 跳过确认。" >&2
+      exit 1
+    fi
+    echo "请选择 Xray 出站网络优先级："
+    echo "  1) IPv4 优先，IPv6 不可用时自动回退（推荐）"
+    echo "  2) IPv6 优先，IPv4 不可用时自动回退"
+    while true; do
+      read -r -p "请输入选项 [1-2]（默认 1）: " choice
+      choice=${choice:-1}
+      case "${choice}" in
+      1 | 4 | ipv4 | IPv4)
+        set_network_priority "ipv4"
+        break
+        ;;
+      2 | 6 | ipv6 | IPv6)
+        set_network_priority "ipv6"
+        break
+        ;;
+      *)
+        echo "无效选项，请输入 1 或 2。"
+        ;;
+      esac
+    done
+  fi
+
+  echo "已选择: ${NETWORK_PRIORITY_LABEL}"
+}
+
+# 校验并保存 Xray 监听端口
+function set_xray_port {
+  local port=${1:-}
+
+  if [[ ! "${port}" =~ ^[0-9]+$ || ${#port} -gt 5 ]] || \
+    ((10#${port} < 1 || 10#${port} > 65535)); then
+    return 1
+  fi
+  XRAY_PORT=$((10#${port}))
+}
+
+# 交互选择端口；无人值守模式默认使用 443
+function select_xray_port {
+  local port=""
+
+  if [[ -n "${XRAY_PORT}" ]]; then
+    set_xray_port "${XRAY_PORT}" || {
+      echo "错误: XRAY_PORT/--port 必须是 1-65535 的整数。" >&2
+      exit 1
+    }
+  elif [[ "${ASSUME_YES}" == true ]]; then
+    set_xray_port "${DEFAULT_XRAY_PORT}"
+    echo "未指定 Xray 端口，无人值守模式默认使用 ${XRAY_PORT}。"
+  else
+    if [[ ! -t 0 ]]; then
+      echo "错误: 非交互环境无法询问 Xray 端口。" >&2
+      echo "请添加 --port 端口号，并使用 --yes 跳过确认。" >&2
+      exit 1
+    fi
+    while true; do
+      read -r -p "请输入 Xray 监听端口 [1-65535]（默认 ${DEFAULT_XRAY_PORT}）: " port
+      port=${port:-${DEFAULT_XRAY_PORT}}
+      if set_xray_port "${port}"; then
+        break
+      fi
+      echo "无效端口，请输入 1-65535 的整数。"
+    done
+  fi
+
+  echo "Xray 监听端口: ${XRAY_PORT}"
+}
+
 # 安全提示
 function confirm_action {
   if [[ "${ASSUME_YES}" == true ]]; then
     return
+  fi
+
+  if [[ ! -t 0 ]]; then
+    echo "错误: 非交互环境请添加 --yes。" >&2
+    exit 1
   fi
 
   echo -e "注意: 此脚本将安装 Xray、应用网络优化、写入服务端配置并修改防火墙规则。"
@@ -82,12 +246,61 @@ function confirm_action {
   fi
 }
 
-# 配置保守的 Linux 网络优化，并启用 IPv6 协议栈
-function optimize_network {
-  local available_congestion backup_file=""
+# 生成 glibc 地址选择表：保留双栈，只改变首选协议
+function prepare_gai_config {
+  local source_file=$1 output_file=$2
 
-  echo "正在配置服务器网络优化..."
+  if [[ -f "${source_file}" ]]; then
+    awk -v begin="${GAI_BEGIN}" -v end="${GAI_END}" '
+      $0 == begin { in_managed = 1; next }
+      $0 == end   { in_managed = 0; next }
+      in_managed  { next }
+      /^[[:space:]]*#/ { print; next }
+      /^[[:space:]]*precedence[[:space:]]/ {
+        print "# install_xray.sh disabled: " $0
+        next
+      }
+      { print }
+    ' "${source_file}" >"${output_file}"
+  else
+    : >"${output_file}"
+  fi
+
+  cat >>"${output_file}" <<EOF
+
+${GAI_BEGIN}
+# 定义任意 precedence 都会替换 glibc 默认表，因此必须保留完整规则。
+EOF
+
+  if [[ "${NETWORK_PRIORITY}" == "ipv4" ]]; then
+    cat >>"${output_file}" <<'EOF'
+precedence ::1/128       50
+precedence ::/0          40
+precedence 2002::/16     30
+precedence ::/96         20
+precedence ::ffff:0:0/96 100
+EOF
+  else
+    cat >>"${output_file}" <<'EOF'
+precedence ::1/128       110
+precedence ::/0          100
+precedence 2002::/16     30
+precedence ::/96         20
+precedence ::ffff:0:0/96 40
+EOF
+  fi
+
+  printf '%s\n' "${GAI_END}" >>"${output_file}"
+}
+
+# 配置保守的 Linux 网络优化，并按选择设置系统地址优先级
+function optimize_network {
+  local available_congestion sysctl_backup="" gai_backup=""
+  local sysctl_existed=false
+
+  echo "正在配置服务器网络优化（${NETWORK_PRIORITY_LABEL}）..."
   TEMP_SYSCTL_FILE=$(mktemp /tmp/xray-network.XXXXXX.conf)
+  TEMP_GAI_FILE=$(mktemp /tmp/xray-gai.XXXXXX.conf)
 
   # BBR 需要 tcp_bbr，FQ 是其推荐的队列调度器。
   if command -v modprobe >/dev/null 2>&1; then
@@ -122,21 +335,32 @@ EOF
   fi
 
   if [[ -f "${NETWORK_SYSCTL_FILE}" ]]; then
-    backup_file="${NETWORK_SYSCTL_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
-    cp -a "${NETWORK_SYSCTL_FILE}" "${backup_file}"
-    echo "已备份原网络配置到: ${backup_file}"
+    sysctl_existed=true
+    sysctl_backup="${NETWORK_SYSCTL_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -a "${NETWORK_SYSCTL_FILE}" "${sysctl_backup}"
+    echo "已备份原 sysctl 配置到: ${sysctl_backup}"
   fi
 
+  if [[ -f "${GAI_CONFIG_FILE}" ]]; then
+    gai_backup="${GAI_CONFIG_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -a "${GAI_CONFIG_FILE}" "${gai_backup}"
+    echo "已备份原地址选择配置到: ${gai_backup}"
+  fi
+
+  prepare_gai_config "${GAI_CONFIG_FILE}" "${TEMP_GAI_FILE}"
   install -m 644 -o root -g root "${TEMP_SYSCTL_FILE}" "${NETWORK_SYSCTL_FILE}"
+  install -m 644 -o root -g root "${TEMP_GAI_FILE}" "${GAI_CONFIG_FILE}"
   rm -f -- "${TEMP_SYSCTL_FILE}"
   TEMP_SYSCTL_FILE=""
+  rm -f -- "${TEMP_GAI_FILE}"
+  TEMP_GAI_FILE=""
 
   if ! sysctl -p "${NETWORK_SYSCTL_FILE}" >/dev/null; then
-    echo "警告: 当前虚拟化环境不允许完整应用网络优化，将恢复原 sysctl 配置并继续安装。" >&2
-    if [[ -n "${backup_file}" && -f "${backup_file}" ]]; then
-      cp -a "${backup_file}" "${NETWORK_SYSCTL_FILE}"
+    echo "警告: 当前虚拟化环境不允许完整应用 sysctl 优化，将恢复原 sysctl 配置并继续安装。" >&2
+    if [[ "${sysctl_existed}" == true && -f "${sysctl_backup}" ]]; then
+      cp -a "${sysctl_backup}" "${NETWORK_SYSCTL_FILE}"
       sysctl -p "${NETWORK_SYSCTL_FILE}" >/dev/null 2>&1 || true
-      echo "已自动恢复原网络配置: ${backup_file}" >&2
+      echo "已自动恢复原 sysctl 配置: ${sysctl_backup}" >&2
     else
       rm -f -- "${NETWORK_SYSCTL_FILE}"
     fi
@@ -148,21 +372,53 @@ EOF
     BBR_STATUS="未启用"
   fi
 
-  if [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || true)" == "0" ]]; then
-    IPV6_STATUS="已启用，入站双栈监听、出站 IPv6 优先"
-  else
-    IPV6_STATUS="不可用"
+  echo "系统地址选择策略已设置为: ${NETWORK_PRIORITY_LABEL}"
+}
+
+# 在修改系统配置前，确认首选协议至少具备基本出站条件
+function validate_selected_network {
+  local default_route=""
+
+  if [[ "${NETWORK_PRIORITY}" == "ipv6" ]]; then
+    if [[ ! -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]] || \
+      [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || true)" != "0" ]]; then
+      echo "错误: 已选择 IPv6 优先，但当前内核或虚拟化环境没有启用 IPv6 协议栈。" >&2
+      exit 1
+    fi
+    if command -v ip >/dev/null 2>&1; then
+      default_route=$(ip -6 route show default 2>/dev/null || true)
+      if [[ -z "${default_route}" ]]; then
+        echo "错误: 已选择 IPv6 优先，但未检测到 IPv6 默认路由。" >&2
+        echo "请先配置可用的 IPv6 网络，或重新运行并选择 IPv4 优先。" >&2
+        exit 1
+      fi
+    fi
+  elif command -v ip >/dev/null 2>&1; then
+    default_route=$(ip -4 route show default 2>/dev/null || true)
+    if [[ -z "${default_route}" ]]; then
+      echo "警告: 已选择 IPv4 优先，但未检测到 IPv4 默认路由；Xray 将在失败时尝试 IPv6。" >&2
+    fi
   fi
 }
 
-# 双栈监听依赖可用的 IPv6 协议栈；不能满足时拒绝生成不可靠配置
-function require_ipv6_dual_stack {
-  if [[ ! -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]] || \
-    [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || true)" != "0" ]]; then
-    echo "错误: 当前内核或虚拟化环境未启用 IPv6，无法同时监听 IPv4 和 IPv6。" >&2
-    echo "请先为服务器启用 IPv6，或确认宿主机允许修改 IPv6 sysctl。" >&2
-    exit 1
+# 根据实际协议栈决定使用双栈或仅 IPv4 监听
+function configure_network_mode {
+  local ipv6_enabled=false
+
+  if [[ -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]] && \
+    [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || true)" == "0" ]]; then
+    ipv6_enabled=true
   fi
+
+  if [[ "${ipv6_enabled}" == true ]]; then
+    XRAY_LISTEN_ADDRESS="::"
+    IPV6_STATUS="已启用，入站监听 IPv4/IPv6 双栈"
+  else
+    XRAY_LISTEN_ADDRESS="0.0.0.0"
+    IPV6_STATUS="不可用，入站仅监听 IPv4"
+  fi
+
+  echo "监听模式: ${XRAY_LISTEN_ADDRESS}:${XRAY_PORT}（${IPV6_STATUS}）"
 }
 
 # 权限及运行环境检查
@@ -218,7 +474,7 @@ function prepare_configuration {
     exit 1
   fi
 
-  echo "安装参数: [${XRAY_LISTEN_ADDRESS}]:${XRAY_PORT}（IPv4/IPv6 双栈），REALITY 伪装域名: ${REALITY_SERVER_NAME}"
+  echo "安装参数: TCP ${XRAY_PORT}，${NETWORK_PRIORITY_LABEL}，REALITY 伪装域名: ${REALITY_SERVER_NAME}"
 }
 
 # 将合法端口加入 SSH 端口列表并自动去重
@@ -259,14 +515,14 @@ function detect_ssh_ports {
   echo "检测到 SSH 端口: ${SSH_PORTS}"
 }
 
-# 在固定使用 443 前检查是否被非 Xray 进程占用
+# 在安装前检查用户选择的端口是否被非 Xray 进程占用
 function check_xray_port {
   local listeners non_xray_listeners
 
   listeners=$(ss -H -ltnp "sport = :${XRAY_PORT}" 2>/dev/null || true)
   non_xray_listeners=$(printf '%s\n' "${listeners}" | awk 'index($0, "\"xray\"") == 0')
   if [[ -n "${non_xray_listeners}" ]]; then
-    echo "错误: TCP ${XRAY_PORT} 已被其他进程占用，无法监听 [${XRAY_LISTEN_ADDRESS}]:${XRAY_PORT}。" >&2
+    echo "错误: TCP ${XRAY_PORT} 已被其他进程占用，无法启动 Xray。" >&2
     echo "当前监听信息: ${non_xray_listeners}" >&2
     exit 1
   fi
@@ -329,7 +585,7 @@ function setup_xray {
       "port": ${XRAY_PORT},
       "protocol": "vless",
       "settings": {
-        "clients": [
+        "users": [
           {
             "id": "${UUID}",
             "flow": "xtls-rprx-vision"
@@ -353,9 +609,16 @@ function setup_xray {
         },
         "sockopt": {
           "V6Only": false,
+          "domainStrategy": "UseIP",
           "tcpFastOpen": true,
-          "tcpKeepAliveIdle": 600,
-          "tcpKeepAliveInterval": 30
+          "tcpKeepAliveIdle": 300,
+          "tcpKeepAliveInterval": 30,
+          "happyEyeballs": {
+            "tryDelayMs": 250,
+            "prioritizeIPv6": ${XRAY_PRIORITIZE_IPV6},
+            "interleave": 1,
+            "maxConcurrentTry": 4
+          }
         }
       },
       "sniffing": {
@@ -379,7 +642,7 @@ function setup_xray {
           "tcpFastOpen": true,
           "happyEyeballs": {
             "tryDelayMs": 250,
-            "prioritizeIPv6": true,
+            "prioritizeIPv6": ${XRAY_PRIORITIZE_IPV6},
             "interleave": 1,
             "maxConcurrentTry": 4
           }
@@ -443,7 +706,8 @@ function configure_firewall {
   echo "正在配置防火墙规则..."
 
   if command -v ufw >/dev/null 2>&1; then
-    if [[ -f /etc/default/ufw ]] && ! grep -Eqi '^IPV6=yes$' /etc/default/ufw; then
+    if [[ "${XRAY_LISTEN_ADDRESS}" == "::" && -f /etc/default/ufw ]] && \
+      ! grep -Eqi '^IPV6=yes$' /etc/default/ufw; then
       ufw_backup="/etc/default/ufw.bak.$(date +%Y%m%d-%H%M%S)"
       cp -a /etc/default/ufw "${ufw_backup}"
       if grep -Eq '^IPV6=' /etc/default/ufw; then
@@ -475,6 +739,38 @@ function configure_firewall {
   fi
 }
 
+# 去除用户可能附带的 IPv6 方括号
+function normalize_ip_literal {
+  local address=${1:-}
+
+  address=$(printf '%s' "${address}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if [[ "${address}" == \[*\] ]]; then
+    address=${address#[}
+    address=${address%]}
+  fi
+  printf '%s' "${address}"
+}
+
+# 使用 iproute2 校验字面 IP，并确保地址族与用户选择一致
+function is_valid_ip_address {
+  local address=$1 family=$2
+
+  [[ -n "${address}" ]] || return 1
+  case "${family}" in
+  ipv4)
+    [[ "${address}" != *:* ]] || return 1
+    ip -4 route get "${address}" >/dev/null 2>&1
+    ;;
+  ipv6)
+    [[ "${address}" == *:* ]] || return 1
+    ip -6 route get "${address}" >/dev/null 2>&1
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
 # 获取公网 IP 地址
 function get_public_ip {
   local ipv4 ipv6
@@ -484,31 +780,82 @@ function get_public_ip {
   ipv6=$(curl -6 -fsS --max-time 8 https://api64.ipify.org 2>/dev/null || \
     curl -6 -fsS --max-time 8 https://6.ipw.cn 2>/dev/null || true)
 
-  if [[ -n "${ipv4}" ]]; then
+  ipv4=$(normalize_ip_literal "${ipv4}")
+  ipv6=$(normalize_ip_literal "${ipv6}")
+
+  if is_valid_ip_address "${ipv4}" "ipv4"; then
     PUBLIC_IPV4=${ipv4}
   fi
-  if [[ -n "${ipv6}" ]]; then
+  if is_valid_ip_address "${ipv6}" "ipv6"; then
     PUBLIC_IPV6=${ipv6}
   fi
 }
 
-# 生成客户端连接信息
-function write_client_info {
-  local loon_config server_address
+# 选择写入 Loon 和 Xray 客户端示例的服务器 IP
+function select_loon_server_ip {
+  local candidate="" family_label=""
 
-  if [[ "${PUBLIC_IPV6}" != "未检测到" ]]; then
-    server_address=${PUBLIC_IPV6}
-  elif [[ "${PUBLIC_IPV4}" != "未检测到" ]]; then
-    server_address=${PUBLIC_IPV4}
+  if [[ "${NETWORK_PRIORITY}" == "ipv4" ]]; then
+    family_label="IPv4"
   else
-    server_address="<服务器IP>"
+    family_label="IPv6"
   fi
 
-  loon_config="Xray-REALITY = VLESS,${server_address},${XRAY_PORT},\"${UUID}\",transport=tcp,flow=xtls-rprx-vision,public-key=\"${PUBLIC_KEY}\",short-id=${SHORT_ID},over-tls=true,sni=${REALITY_SERVER_NAME},tls-profile=chrome,udp=true,block-quic=false"
+  if [[ -n "${LOON_SERVER_IP}" ]]; then
+    candidate=$(normalize_ip_literal "${LOON_SERVER_IP}")
+    if ! is_valid_ip_address "${candidate}" "${NETWORK_PRIORITY}"; then
+      echo "错误: LOON_SERVER_IP/--loon-address 不是有效的 ${family_label} 地址。" >&2
+      exit 1
+    fi
+    LOON_SERVER_IP=${candidate}
+    echo "使用指定的 Loon 节点 IP: ${LOON_SERVER_IP}"
+    return
+  fi
+
+  if [[ "${NETWORK_PRIORITY}" == "ipv4" ]]; then
+    candidate=${PUBLIC_IPV4}
+  else
+    candidate=${PUBLIC_IPV6}
+  fi
+
+  if [[ "${candidate}" != "未检测到" ]]; then
+    LOON_SERVER_IP=${candidate}
+    echo "已自动选择 Loon 节点 ${family_label}: ${LOON_SERVER_IP}"
+    return
+  fi
+
+  echo "警告: 未能自动检测公网 ${family_label} 地址。" >&2
+  echo "当前检测结果: IPv4=${PUBLIC_IPV4}，IPv6=${PUBLIC_IPV6}" >&2
+  if [[ "${ASSUME_YES}" == true || ! -t 0 ]]; then
+    echo "错误: 无人值守模式无法询问 Loon 节点 IP。" >&2
+    echo "请重新运行并添加 --loon-address ${family_label}地址。" >&2
+    exit 1
+  fi
+
+  while true; do
+    read -r -p "请输入 Loon 节点使用的 ${family_label} 地址: " candidate
+    candidate=$(normalize_ip_literal "${candidate}")
+    if is_valid_ip_address "${candidate}" "${NETWORK_PRIORITY}"; then
+      LOON_SERVER_IP=${candidate}
+      break
+    fi
+    echo "无效地址，请输入有效的 ${family_label} 字面地址，不要输入域名。"
+  done
+
+  echo "Loon 节点 IP: ${LOON_SERVER_IP}"
+}
+
+# 生成客户端连接信息
+function write_client_info {
+  local loon_config server_address=${LOON_SERVER_IP}
+
+  loon_config="Xray-REALITY = VLESS,${server_address},${XRAY_PORT},\"${UUID}\",transport=tcp,flow=xtls-rprx-vision,public-key=\"${PUBLIC_KEY}\",short-id=${SHORT_ID},over-tls=true,sni=${REALITY_SERVER_NAME},tls-profile=chrome,udp=true,block-quic=false,ip-mode=${LOON_IP_MODE}"
 
   cat >"${CLIENT_INFO_FILE}" <<EOF
 VLESS + REALITY + XTLS Vision 客户端参数
 ==========================================
+网络策略: ${NETWORK_PRIORITY_LABEL}
+BBR 状态: ${BBR_STATUS}
 推荐服务器地址: ${server_address}
 公网 IPv4 地址: ${PUBLIC_IPV4}
 公网 IPv6 地址: ${PUBLIC_IPV6}
@@ -526,13 +873,22 @@ SpiderX: /
 
 Xray 客户端出站示例:
 {
+  "tag": "proxy",
   "protocol": "vless",
   "settings": {
-    "address": "${server_address}",
-    "port": ${XRAY_PORT},
-    "id": "${UUID}",
-    "encryption": "none",
-    "flow": "xtls-rprx-vision"
+    "vnext": [
+      {
+        "address": "${server_address}",
+        "port": ${XRAY_PORT},
+        "users": [
+          {
+            "id": "${UUID}",
+            "encryption": "none",
+            "flow": "xtls-rprx-vision"
+          }
+        ]
+      }
+    ]
   },
   "streamSettings": {
     "network": "raw",
@@ -557,7 +913,12 @@ EOF
   echo "Xray 服务状态: 运行中"
   echo "Xray 配置文件: ${XRAY_CONFIG_FILE}"
   echo "客户端信息文件: ${CLIENT_INFO_FILE}"
+  echo "网络策略: ${NETWORK_PRIORITY_LABEL}"
+  echo "监听状态: ${IPV6_STATUS}"
+  echo "BBR 状态: ${BBR_STATUS}"
   echo -e "\n客户端手动配置参数："
+  echo "推荐服务器地址: ${server_address}"
+  echo "公网 IPv4 地址: ${PUBLIC_IPV4}"
   echo "公网 IPv6 地址: ${PUBLIC_IPV6}"
   echo "端口: ${XRAY_PORT}"
   echo "UUID: ${UUID}"
@@ -577,20 +938,24 @@ EOF
 # 主函数
 function main {
   parse_arguments "$@"
-  confirm_action
   check_environment
   get_os
+  select_network_priority
+  select_xray_port
+  confirm_action
   install_dependencies
   prepare_configuration
   detect_ssh_ports
   check_xray_port
+  validate_selected_network
+  optimize_network
+  configure_network_mode
   install_xray
   generate_credentials
-  optimize_network
-  require_ipv6_dual_stack
   setup_xray
   configure_firewall
   get_public_ip
+  select_loon_server_ip
   write_client_info
 }
 
