@@ -10,3 +10,7 @@ bash -c "$(curl -sSL https://raw.githubusercontent.com/teaoea/shell/refs/heads/m
 ```shell
 bash -c "$(curl -sSL https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_%20hysteria2_warp.sh)"
 ```
+
+IPv4网络优化
+```shell
+bash -c "$(curl -sSL https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/ipv4.sh)"
