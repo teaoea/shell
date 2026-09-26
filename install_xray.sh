@@ -14,8 +14,8 @@ readonly NETWORK_SYSCTL_FILE="/etc/sysctl.d/99-xray-network.conf"
 readonly GAI_CONFIG_FILE="/etc/gai.conf"
 readonly GAI_BEGIN="# BEGIN install_xray.sh network priority"
 readonly GAI_END="# END install_xray.sh network priority"
-readonly XRAY_SERVICE_USER="xray"
-readonly XRAY_SERVICE_GROUP="xray"
+readonly XRAY_SERVICE_USER="root"
+readonly XRAY_SERVICE_GROUP="root"
 readonly XRAY_SERVICE_OVERRIDE_DIR="/etc/systemd/system/xray.service.d"
 readonly XRAY_SERVICE_OVERRIDE_FILE="${XRAY_SERVICE_OVERRIDE_DIR}/30-install-xray-runtime-user.conf"
 
@@ -44,6 +44,33 @@ TEMP_CONFIG_FILE=""
 TEMP_SYSCTL_FILE=""
 TEMP_GAI_FILE=""
 TEMP_SERVICE_OVERRIDE=""
+REMOVED_CONFIG_BACKUP=""
+CONFIG_REPLACEMENT_PENDING=false
+
+function restore_removed_xray_config {
+  if [[ "${CONFIG_REPLACEMENT_PENDING}" != true || -z "${REMOVED_CONFIG_BACKUP}" || \
+    ! -f "${REMOVED_CONFIG_BACKUP}" ]]; then
+    return 1
+  fi
+
+  cp -a -- "${REMOVED_CONFIG_BACKUP}" "${XRAY_CONFIG_FILE}"
+  systemctl restart xray >/dev/null 2>&1 || true
+  CONFIG_REPLACEMENT_PENDING=false
+  echo "已恢复删除前的 Xray 配置: ${REMOVED_CONFIG_BACKUP}" >&2
+}
+
+function on_error {
+  local exit_code=$1 line=$2
+
+  trap - ERR
+  echo "错误: install_xray.sh 在第 ${line} 行中断（退出码 ${exit_code}）。" >&2
+  if [[ "${CONFIG_REPLACEMENT_PENDING}" == true ]]; then
+    restore_removed_xray_config || \
+      echo "警告: 没有可恢复的旧 Xray 配置；服务将保持停止状态。" >&2
+  fi
+  echo "请保留本行之前的终端输出；脚本不会把失败误报为安装成功。" >&2
+  exit "${exit_code}"
+}
 
 # 清理临时文件
 function cleanup {
@@ -65,6 +92,7 @@ function cleanup {
 }
 
 trap cleanup EXIT
+trap 'on_error $? ${LINENO}' ERR
 
 # 命令行参数
 function parse_arguments {
@@ -113,7 +141,7 @@ function parse_arguments {
       echo "  --port 端口                    指定 Xray 监听端口（默认: 443）"
       echo "  --loon-address IP              指定或覆盖 Loon 节点 IP"
       echo "  -h, --help                     显示帮助"
-      echo "必须以 root 身份运行；Xray 服务本身固定使用非管理员账户 xray:xray。"
+      echo "必须以 root 身份运行；Xray 服务也固定使用 root:root，不创建 xray 用户。"
       echo "交互运行时会询问网络优先级和端口；--yes 未指定时默认 IPv4/443。"
       echo "环境变量:"
       echo "  NETWORK_PRIORITY=ipv4|ipv6"
@@ -250,7 +278,7 @@ function confirm_action {
     exit 1
   fi
 
-  echo -e "注意: 此脚本将创建无登录的 xray 服务账户、安装 Xray、应用网络优化并修改防火墙规则。"
+  echo -e "注意: 此脚本将以 root 身份安装并运行 Xray、应用网络优化并修改防火墙规则；不会创建 xray 用户。"
   read -r -p "是否继续执行？ (y/N): " CONFIRM
   CONFIRM=${CONFIRM:-N}
   if [[ ! "${CONFIRM}" =~ ^[Yy]$ ]]; then
@@ -460,81 +488,8 @@ function initialize_runtime_environment {
   }
 }
 
-# 确保 xray 是锁定密码、禁止登录且不属于任何管理/附加组的专用系统账户
-function ensure_xray_service_account {
-  local account_groups account_shell account_status nologin_shell sudo_rules uid
-
-  if ! id "${XRAY_SERVICE_USER}" >/dev/null 2>&1; then
-    nologin_shell=$(command -v nologin || true)
-    [[ -n "${nologin_shell}" ]] || nologin_shell="/usr/sbin/nologin"
-    echo "正在创建专用服务账户 ${XRAY_SERVICE_USER}:${XRAY_SERVICE_GROUP}..."
-    run_as_root useradd \
-      --system \
-      --user-group \
-      --no-create-home \
-      --home-dir /nonexistent \
-      --shell "${nologin_shell}" \
-      "${XRAY_SERVICE_USER}"
-    run_as_root passwd --lock "${XRAY_SERVICE_USER}" >/dev/null
-  fi
-
-  uid=$(id -u "${XRAY_SERVICE_USER}")
-  [[ "${uid}" -ne 0 ]] || {
-    echo "错误: ${XRAY_SERVICE_USER} 的 UID 是 0，拒绝将其作为服务账户。" >&2
-    exit 1
-  }
-
-  [[ "$(id -gn "${XRAY_SERVICE_USER}")" == "${XRAY_SERVICE_GROUP}" ]] || {
-    echo "错误: ${XRAY_SERVICE_USER} 的主组不是 ${XRAY_SERVICE_GROUP}，拒绝复用该账户。" >&2
-    exit 1
-  }
-
-  account_groups=$(id -nG "${XRAY_SERVICE_USER}")
-  [[ " ${account_groups} " == " ${XRAY_SERVICE_GROUP} " ]] || {
-    echo "错误: ${XRAY_SERVICE_USER} 存在附加组 (${account_groups})，拒绝将其作为专用服务账户。" >&2
-    exit 1
-  }
-
-  account_shell=$(getent passwd "${XRAY_SERVICE_USER}" | awk -F: '{print $7; exit}')
-  case "${account_shell}" in
-  */nologin | */false) ;;
-  *)
-    echo "错误: ${XRAY_SERVICE_USER} 具有可登录 Shell (${account_shell})，拒绝复用该账户。" >&2
-    exit 1
-    ;;
-  esac
-
-  account_status=$(run_as_root env LC_ALL=C passwd --status "${XRAY_SERVICE_USER}" 2>/dev/null | awk '{print $2; exit}')
-  case "${account_status}" in
-  L | LK) ;;
-  *)
-    echo "错误: ${XRAY_SERVICE_USER} 的密码未锁定，拒绝将其作为服务账户。" >&2
-    exit 1
-    ;;
-  esac
-
-  if command -v sudo >/dev/null 2>&1; then
-    sudo_rules=$(run_as_root env LC_ALL=C sudo -n -l -U "${XRAY_SERVICE_USER}" 2>/dev/null || true)
-    if printf '%s\n' "${sudo_rules}" | grep -Eq '^[[:space:]]*\('; then
-      echo "错误: ${XRAY_SERVICE_USER} 拥有 sudo 规则，拒绝将其作为非管理员服务账户。" >&2
-      exit 1
-    fi
-  fi
-
-  if run_as_root test -d "${XRAY_CONFIG_DIR}"; then
-    run_as_root chown root:"${XRAY_SERVICE_GROUP}" "${XRAY_CONFIG_DIR}"
-    run_as_root chmod 750 "${XRAY_CONFIG_DIR}"
-  fi
-  if run_as_root test -f "${XRAY_CONFIG_FILE}"; then
-    run_as_root chown root:"${XRAY_SERVICE_GROUP}" "${XRAY_CONFIG_FILE}"
-    run_as_root chmod 640 "${XRAY_CONFIG_FILE}"
-  fi
-
-  echo "服务账户检查通过: ${XRAY_SERVICE_USER}:${XRAY_SERVICE_GROUP}（禁止登录、密码锁定、无附加管理组）"
-}
-
-# 使用 systemd drop-in 固定运行用户并收紧服务权限
-function configure_xray_service_account {
+# 使用 systemd drop-in 固定 Xray 以 root 身份运行
+function configure_xray_root_service {
   local effective_group effective_user verify=${1:-true}
 
   TEMP_SERVICE_OVERRIDE=$(mktemp /tmp/xray-service-user.XXXXXX.conf)
@@ -544,16 +499,7 @@ User=${XRAY_SERVICE_USER}
 Group=${XRAY_SERVICE_GROUP}
 UMask=0027
 NoNewPrivileges=true
-CapabilityBoundingSet=
-AmbientCapabilities=
 EOF
-
-  if ((XRAY_PORT < 1024)); then
-    cat >>"${TEMP_SERVICE_OVERRIDE}" <<'EOF'
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-EOF
-  fi
 
   cat >>"${TEMP_SERVICE_OVERRIDE}" <<'EOF'
 PrivateTmp=true
@@ -582,7 +528,7 @@ EOF
   effective_user=$(systemctl show xray --property=User --value 2>/dev/null || true)
   effective_group=$(systemctl show xray --property=Group --value 2>/dev/null || true)
   [[ "${effective_user}" == "${XRAY_SERVICE_USER}" && "${effective_group}" == "${XRAY_SERVICE_GROUP}" ]] || {
-    echo "错误: systemd 未应用专用账户配置（User=${effective_user:-空}, Group=${effective_group:-空}）。" >&2
+    echo "错误: systemd 未应用 root 运行配置（User=${effective_user:-空}, Group=${effective_group:-空}）。" >&2
     exit 1
   }
 }
@@ -596,10 +542,6 @@ function check_environment {
     exit 1
   fi
 
-  command -v getent >/dev/null 2>&1 || {
-    echo "错误: 缺少必需命令 getent。" >&2
-    exit 1
-  }
 }
 
 # 检测系统包管理器
@@ -616,17 +558,30 @@ function get_os {
 
 # 安装必要工具
 function install_dependencies {
+  local command_name dependencies_ready=true
+
+  for command_name in curl openssl sysctl modprobe ip ss awk sed install; do
+    if ! command -v "${command_name}" >/dev/null 2>&1; then
+      dependencies_ready=false
+      break
+    fi
+  done
+  if [[ "${dependencies_ready}" == true ]]; then
+    echo "所需系统工具已存在，跳过软件包更新。"
+    return
+  fi
+
   case "${OS_NAME}" in
   ubuntu | debian)
     run_as_root apt-get update
     run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      curl ca-certificates openssl procps kmod iproute2 passwd
+      curl ca-certificates openssl procps kmod iproute2
     ;;
   centos | rhel | fedora | rocky | almalinux | ol)
     if command -v dnf >/dev/null 2>&1; then
-      run_as_root dnf install -y curl ca-certificates openssl procps-ng kmod iproute shadow-utils
+      run_as_root dnf install -y curl ca-certificates openssl procps-ng kmod iproute
     else
-      run_as_root yum install -y curl ca-certificates openssl procps-ng kmod iproute shadow-utils
+      run_as_root yum install -y curl ca-certificates openssl procps-ng kmod iproute
     fi
     ;;
   *)
@@ -710,6 +665,32 @@ function install_xray {
   fi
 }
 
+# 官方安装完成后停止服务，备份并删除安装器生成或遗留的配置，再创建本脚本配置
+function remove_installer_generated_config {
+  local timestamp
+
+  echo "正在停止 Xray，并删除安装器生成或遗留的配置文件..."
+  run_as_root systemctl stop xray
+
+  if run_as_root test -f "${XRAY_CONFIG_FILE}"; then
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    REMOVED_CONFIG_BACKUP="${XRAY_CONFIG_FILE}.before-reality.${timestamp}"
+    run_as_root cp -a -- "${XRAY_CONFIG_FILE}" "${REMOVED_CONFIG_BACKUP}"
+    CONFIG_REPLACEMENT_PENDING=true
+    run_as_root rm -f -- "${XRAY_CONFIG_FILE}"
+    echo "已删除原配置；安全备份保存在: ${REMOVED_CONFIG_BACKUP}"
+  else
+    REMOVED_CONFIG_BACKUP=""
+    CONFIG_REPLACEMENT_PENDING=false
+    echo "安装器未生成 ${XRAY_CONFIG_FILE}，继续创建新配置。"
+  fi
+
+  if run_as_root test -e "${XRAY_CONFIG_FILE}"; then
+    echo "错误: 无法删除 ${XRAY_CONFIG_FILE}。" >&2
+    exit 1
+  fi
+}
+
 # 生成 UUID、X25519 密钥对和 Short ID
 function generate_credentials {
   local key_output
@@ -737,8 +718,6 @@ function generate_credentials {
 
 # 配置 VLESS + REALITY + XTLS Vision
 function setup_xray {
-  local backup_created=false backup_file=""
-
   run_as_root mkdir -p "${XRAY_CONFIG_DIR}"
   run_as_root chown root:"${XRAY_SERVICE_GROUP}" "${XRAY_CONFIG_DIR}"
   run_as_root chmod 750 "${XRAY_CONFIG_DIR}"
@@ -831,14 +810,7 @@ EOF
   echo "正在校验 Xray 配置..."
   "${XRAY_BIN}" run -test -config "${TEMP_CONFIG_FILE}"
 
-  if run_as_root test -f "${XRAY_CONFIG_FILE}"; then
-    backup_file="${XRAY_CONFIG_FILE}.bak.$(date +%Y%m%d-%H%M%S)"
-    run_as_root cp -a "${XRAY_CONFIG_FILE}" "${backup_file}"
-    backup_created=true
-    echo "已备份原配置到: ${backup_file}"
-  fi
-
-  run_as_root install -m 640 -o root -g "${XRAY_SERVICE_GROUP}" "${TEMP_CONFIG_FILE}" "${XRAY_CONFIG_FILE}"
+  run_as_root install -m 600 -o root -g root "${TEMP_CONFIG_FILE}" "${XRAY_CONFIG_FILE}"
   rm -f -- "${TEMP_CONFIG_FILE}"
   TEMP_CONFIG_FILE=""
 
@@ -846,24 +818,18 @@ EOF
   if ! run_as_root systemctl restart xray; then
     echo "错误: Xray 启动失败，最近的服务日志如下：" >&2
     run_as_root journalctl -u xray --no-pager -n 30 >&2 || true
-    if [[ "${backup_created}" == true ]]; then
-      run_as_root cp -a "${backup_file}" "${XRAY_CONFIG_FILE}"
-      run_as_root systemctl restart xray >/dev/null 2>&1 || true
-      echo "已自动恢复原配置: ${backup_file}" >&2
-    fi
+    restore_removed_xray_config || true
     exit 1
   fi
 
   if ! systemctl is-active --quiet xray; then
     echo "错误: Xray 服务未处于运行状态。" >&2
     run_as_root journalctl -u xray --no-pager -n 30 >&2 || true
-    if [[ "${backup_created}" == true ]]; then
-      run_as_root cp -a "${backup_file}" "${XRAY_CONFIG_FILE}"
-      run_as_root systemctl restart xray >/dev/null 2>&1 || true
-      echo "已自动恢复原配置: ${backup_file}" >&2
-    fi
+    restore_removed_xray_config || true
     exit 1
   fi
+
+  CONFIG_REPLACEMENT_PENDING=false
 }
 
 # 防火墙配置：放行 SSH 和 Xray 端口，不擅自启用当前未启用的防火墙
@@ -1079,7 +1045,7 @@ EOF
 
   echo -e "\n配置完成！"
   echo "Xray 服务状态: 运行中"
-  echo "Xray 运行用户: ${XRAY_SERVICE_USER}:${XRAY_SERVICE_GROUP}（非 root）"
+  echo "Xray 运行用户: ${XRAY_SERVICE_USER}:${XRAY_SERVICE_GROUP}"
   echo "Xray 配置文件: ${XRAY_CONFIG_FILE}"
   echo "客户端信息文件: ${CLIENT_INFO_FILE}"
   echo "网络策略: ${NETWORK_PRIORITY_LABEL}"
@@ -1119,10 +1085,9 @@ function main {
   validate_selected_network
   optimize_network
   configure_network_mode
-  ensure_xray_service_account
-  configure_xray_service_account false
   install_xray
-  configure_xray_service_account true
+  remove_installer_generated_config
+  configure_xray_root_service true
   generate_credentials
   setup_xray
   configure_firewall
