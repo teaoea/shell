@@ -868,7 +868,10 @@ function verify_reality_proxy {
   local listener_ready=false test_passed=false
 
   echo "正在验证 REALITY 握手、VLESS/Vision 认证及 HTTPS 代理请求..."
-  if [[ "${XRAY_LISTEN_ADDRESS}" == "::" ]]; then
+  # IPv6 may be enabled while the ::1 loopback route is unavailable (for
+  # example, when IPv6 is disabled on lo). The listener accepts IPv4 too.
+  if [[ "${XRAY_LISTEN_ADDRESS}" == "::" ]] &&
+    ip -6 route get ::1 >/dev/null 2>&1; then
     test_address="::1"
   fi
 
