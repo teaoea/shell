@@ -24,7 +24,7 @@ UUID=""
 PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
-REALITY_SERVER_NAME="${REALITY_SERVER_NAME:-www.microsoft.com}"
+REALITY_SERVER_NAME="${REALITY_SERVER_NAME:-apple.com}"
 XRAY_PORT="${XRAY_PORT:-}"
 readonly DEFAULT_XRAY_PORT=443
 XRAY_LISTEN_ADDRESS="::"
@@ -44,8 +44,28 @@ TEMP_CONFIG_FILE=""
 TEMP_SYSCTL_FILE=""
 TEMP_GAI_FILE=""
 TEMP_SERVICE_OVERRIDE=""
+TEMP_PROXY_TEST_CONFIG=""
+TEMP_PROXY_TEST_LOG=""
+PROXY_TEST_PID=""
+PROXY_TEST_STATUS="待检查"
 REMOVED_CONFIG_BACKUP=""
 CONFIG_REPLACEMENT_PENDING=false
+
+function cleanup_proxy_test {
+  if [[ -n "${PROXY_TEST_PID}" ]]; then
+    kill "${PROXY_TEST_PID}" 2>/dev/null || true
+    wait "${PROXY_TEST_PID}" 2>/dev/null || true
+    PROXY_TEST_PID=""
+  fi
+  if [[ -n "${TEMP_PROXY_TEST_CONFIG}" ]]; then
+    rm -f -- "${TEMP_PROXY_TEST_CONFIG}"
+    TEMP_PROXY_TEST_CONFIG=""
+  fi
+  if [[ -n "${TEMP_PROXY_TEST_LOG}" ]]; then
+    rm -f -- "${TEMP_PROXY_TEST_LOG}"
+    TEMP_PROXY_TEST_LOG=""
+  fi
+}
 
 function restore_removed_xray_config {
   if [[ "${CONFIG_REPLACEMENT_PENDING}" != true || -z "${REMOVED_CONFIG_BACKUP}" || \
@@ -74,6 +94,7 @@ function on_error {
 
 # 清理临时文件
 function cleanup {
+  cleanup_proxy_test
   if [[ -n "${TEMP_INSTALL_SCRIPT}" && -f "${TEMP_INSTALL_SCRIPT}" ]]; then
     rm -f -- "${TEMP_INSTALL_SCRIPT}"
   fi
@@ -147,7 +168,7 @@ function parse_arguments {
       echo "  NETWORK_PRIORITY=ipv4|ipv6"
       echo "  XRAY_PORT=1-65535"
       echo "  LOON_SERVER_IP=与所选网络一致的 IP 地址"
-      echo "  REALITY_SERVER_NAME（默认: www.microsoft.com）"
+      echo "  REALITY_SERVER_NAME（默认: apple.com）"
       echo "  XRAY_CLIENT_INFO_FILE（默认: /root/xray-reality-client.txt）"
       exit 0
       ;;
@@ -716,6 +737,8 @@ function generate_credentials {
   fi
 }
 
+# VLESS 入站使用 clients：v26.3.27 只读取 clients，新版也保留兼容。
+# 客户端的 settings.vnext[].users 是另一个字段，不能一起替换。
 # 配置 VLESS + REALITY + XTLS Vision
 function setup_xray {
   run_as_root mkdir -p "${XRAY_CONFIG_DIR}"
@@ -735,7 +758,7 @@ function setup_xray {
       "port": ${XRAY_PORT},
       "protocol": "vless",
       "settings": {
-        "users": [
+        "clients": [
           {
             "id": "${UUID}",
             "flow": "xtls-rprx-vision"
@@ -758,7 +781,7 @@ function setup_xray {
           ]
         },
         "sockopt": {
-          "V6Only": false,
+          "v6only": false,
           "domainStrategy": "UseIP",
           "tcpFastOpen": true,
           "tcpKeepAliveIdle": 300,
@@ -829,7 +852,101 @@ EOF
     exit 1
   fi
 
+  if ! verify_reality_proxy; then
+    echo "错误: REALITY 实际代理请求未通过，未生成新的 Loon 节点。" >&2
+    restore_removed_xray_config || true
+    exit 1
+  fi
   CONFIG_REPLACEMENT_PENDING=false
+}
+
+# 用同一组 UUID、公钥、Short ID、SNI 和 Vision 参数完成真正的代理请求。
+# 仅在 loopback 上临时监听 SOCKS；验证结束即关闭，不写入正式客户端服务。
+# 此检查验证协议认证和 VPS 出站，不代表手机到 VPS 的公网线路已通过检查。
+function verify_reality_proxy {
+  local test_port="" candidate attempt url test_address="127.0.0.1"
+  local listener_ready=false test_passed=false
+
+  echo "正在验证 REALITY 握手、VLESS/Vision 认证及 HTTPS 代理请求..."
+  if [[ "${XRAY_LISTEN_ADDRESS}" == "::" ]]; then
+    test_address="::1"
+  fi
+
+  for ((attempt = 0; attempt < 20; attempt++)); do
+    candidate=$((20000 + RANDOM % 20000))
+    if [[ "${candidate}" != "${XRAY_PORT}" && \
+      -z "$(ss -H -ltn "sport = :${candidate}")" ]]; then
+      test_port=${candidate}
+      break
+    fi
+  done
+  [[ -n "${test_port}" ]] || {
+    echo "错误: 未找到临时自检监听端口。" >&2
+    return 1
+  }
+
+  TEMP_PROXY_TEST_CONFIG=$(mktemp /tmp/xray-proxy-test.XXXXXX.json) || return 1
+  TEMP_PROXY_TEST_LOG=$(mktemp /tmp/xray-proxy-test.XXXXXX.log) || return 1
+  cat >"${TEMP_PROXY_TEST_CONFIG}" <<EOF
+{
+  "log": {"loglevel": "info"},
+  "inbounds": [{
+    "listen": "127.0.0.1", "port": ${test_port}, "protocol": "socks",
+    "settings": {"auth": "noauth", "udp": false}
+  }],
+  "outbounds": [{
+    "protocol": "vless",
+    "settings": {"vnext": [{
+      "address": "${test_address}", "port": ${XRAY_PORT},
+      "users": [{"id": "${UUID}", "encryption": "none", "flow": "xtls-rprx-vision"}]
+    }]},
+    "streamSettings": {
+      "network": "raw", "security": "reality",
+      "realitySettings": {
+        "serverName": "${REALITY_SERVER_NAME}", "fingerprint": "chrome",
+        "publicKey": "${PUBLIC_KEY}", "shortId": "${SHORT_ID}", "spiderX": "/"
+      }
+    }
+  }]
+}
+EOF
+  if ! "${XRAY_BIN}" run -test -config "${TEMP_PROXY_TEST_CONFIG}" >"${TEMP_PROXY_TEST_LOG}" 2>&1; then
+    cat "${TEMP_PROXY_TEST_LOG}" >&2
+    cleanup_proxy_test
+    return 1
+  fi
+  "${XRAY_BIN}" run -config "${TEMP_PROXY_TEST_CONFIG}" >>"${TEMP_PROXY_TEST_LOG}" 2>&1 &
+  PROXY_TEST_PID=$!
+
+  for ((attempt = 0; attempt < 50; attempt++)); do
+    kill -0 "${PROXY_TEST_PID}" 2>/dev/null || break
+    if [[ -n "$(ss -H -ltn "sport = :${test_port}")" ]]; then
+      listener_ready=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "${listener_ready}" == true ]]; then
+    for url in https://www.debian.org/ https://www.cloudflare.com/cdn-cgi/trace; do
+      if curl -q --proxy "socks5h://127.0.0.1:${test_port}" --noproxy "" \
+        --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+        --output /dev/null "${url}" 2>>"${TEMP_PROXY_TEST_LOG}"; then
+        test_passed=true
+        break
+      fi
+    done
+  fi
+
+  if [[ "${test_passed}" != true ]]; then
+    echo "REALITY 自检失败：请检查授权用户、密钥、Short ID、SNI/伪装站及 VPS 出站。" >&2
+    tail -n 30 "${TEMP_PROXY_TEST_LOG}" >&2
+    journalctl -u xray --no-pager -n 20 >&2 || true
+    cleanup_proxy_test
+    return 1
+  fi
+  cleanup_proxy_test
+  PROXY_TEST_STATUS="已通过 REALITY/VLESS/Vision HTTPS 实际请求（本机回环）"
+  echo "${PROXY_TEST_STATUS}"
 }
 
 # 防火墙配置：放行 SSH 和 Xray 端口，不擅自启用当前未启用的防火墙
@@ -990,6 +1107,8 @@ VLESS + REALITY + XTLS Vision 客户端参数
 Xray 运行用户: ${XRAY_SERVICE_USER}:${XRAY_SERVICE_GROUP}
 网络策略: ${NETWORK_PRIORITY_LABEL}
 BBR 状态: ${BBR_STATUS}
+协议自检: ${PROXY_TEST_STATUS}
+自检范围: 本机协议认证及 VPS 出站，不包含手机到 VPS 的公网入口连通性。
 推荐服务器地址: ${server_address}
 公网 IPv4 地址: ${PUBLIC_IPV4}
 公网 IPv6 地址: ${PUBLIC_IPV6}
@@ -1045,6 +1164,7 @@ EOF
 
   echo -e "\n配置完成！"
   echo "Xray 服务状态: 运行中"
+  echo "协议自检: ${PROXY_TEST_STATUS}"
   echo "Xray 运行用户: ${XRAY_SERVICE_USER}:${XRAY_SERVICE_GROUP}"
   echo "Xray 配置文件: ${XRAY_CONFIG_FILE}"
   echo "客户端信息文件: ${CLIENT_INFO_FILE}"
