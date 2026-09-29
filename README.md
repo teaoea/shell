@@ -44,9 +44,11 @@ hysteria_script=$(curl -fsSL --retry 3 'https://raw.githubusercontent.com/teaoea
 network_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/networt_optimization.sh) && sudo bash -c "$network_script"
 ```
 
-也可指定 `--ipv4` 或 `--ipv6`；非交互运行时还需加 `--yes`。IPv4 模式支持 Debian，IPv6 模式仅支持 Debian 13。脚本调整 `/etc/gai.conf` 的双栈地址选择顺序，设置 TCP Fast Open 和 MTU probing；内核支持时启用 BBR + FQ。IPv6 模式会启用 IPv6 协议栈，但不会配置 IPv6 地址、默认路由、DNS、防火墙或接口 MTU。IPv6 连接失败后的 IPv4 回退取决于应用自身是否支持多地址重试或 Happy Eyeballs。
+也可指定 `--ipv4` 或 `--ipv6`；非交互运行时还需加 `--yes`。IPv4 模式支持 Debian，IPv6 模式仅支持 Debian 13。脚本根据全局地址和默认路由识别可用的地址族：仅 IPv6 的 VPS 使用 Cloudflare IPv6 DNS `2606:4700:4700::1111`、`2606:4700:4700::1001`；有 IPv4 的 VPS 使用 `1.1.1.1`、`1.0.0.1`，即使选择 IPv6 优先也能解析 IPv6 地址。所选优先模式缺少对应地址或默认路由时，脚本会在修改配置前停止。脚本调整 `/etc/gai.conf` 的地址选择顺序，设置 TCP Fast Open 和 MTU probing；内核支持时启用 BBR + FQ。IPv6 模式会启用 IPv6 协议栈，但不会配置 IPv6 地址、默认路由、防火墙或接口 MTU。IPv6 连接失败后的 IPv4 回退取决于应用自身是否支持多地址重试或 Happy Eyeballs。
 
-应用前会把现有配置和运行时参数备份到 `/var/lib/network-optimizer/backups/`。脚本还支持 `--status` 查看状态并用 `curl` 分别测试 IPv4、IPv6 到 Cloudflare 固定 IP 的 HTTPS 直连，`--rollback` 恢复最近一次修改。直连测试不经过 DNS 或代理，失败也可能是测试目标不可达，不能单凭结果判断整个网络。已有长期运行的进程可能需要重启，才会重新读取地址选择策略。
+DNS 修改会保留普通 `/etc/resolv.conf` 中的搜索域等设置；运行中的 `systemd-resolved` 会通过配置片段设置 DNS。遇到由其他程序管理的符号链接时，脚本会停止并提示先修改对应程序的配置。部分 VPS 会在续租或重启时重新生成普通 `resolv.conf`，此时需在其网络管理程序中设置持久 DNS。
+
+应用前会把现有配置和运行时参数备份到 `/var/lib/network-optimizer/backups/`。脚本还支持 `--status` 查看状态并用 `curl` 测试已配置地址族到 Cloudflare 固定 IP 的 HTTPS 直连，`--rollback` 恢复最近一次修改。直连测试不经过 DNS 或代理；脚本不额外验证 Cloudflare DNS 的解析可用性。已有长期运行的进程可能需要重启，才会重新读取地址选择策略。
 
 ## 许可证
 
