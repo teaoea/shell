@@ -26,14 +26,14 @@ const player = concat(status, ad, opaque, [0x3a, 0x00]);
 
 function run(body, { endpoint = 'player', host = 'youtubei.googleapis.com',
   url = `https://${host}/youtubei/v1/${endpoint}`, type = 'application/x-protobuf',
-  statusCode = 200, debug = true, response = true } = {}) {
+  statusCode = 200, debug = true, response = true, umpEnabled = false, umpMode = 'inspect' } = {}) {
   let output;
   let calls = 0;
   const logs = [];
   const original = typeof body === 'string' ? body : body && ArrayBuffer.isView(body) ? Array.from(new Uint8Array(body.buffer, body.byteOffset, body.byteLength)) : null;
   const context = {
     $request: { url },
-    $argument: { script_debug: debug },
+    $argument: { script_debug: debug, ump_enabled: umpEnabled, ump_mode: umpMode },
     $done(value) { calls++; output = value; },
     console: { log(value) { logs.push(value); } },
     Uint8Array, ArrayBuffer, TextDecoder, TextEncoder
@@ -52,7 +52,7 @@ function passed(result) {
 
 test('plugin uses one self-owned script and does not touch streaming media', () => {
   const entries = plugin.split('\n').filter(line => /^http-(request|response) /.test(line));
-  assert.equal(entries.length, 1);
+  assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTubeNoAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
   assert.ok(entries[0].includes('argument=[{script_debug}]'));
@@ -65,7 +65,11 @@ test('plugin uses one self-owned script and does not touch streaming media', () 
     'https://youtubei.googleapis.com.evil.test/youtubei/v1/player',
     'https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1&c=IOS']) assert.equal(regex.test(url), false);
   const active = plugin.split('\n').filter(line => !line.startsWith('#')).join('\n');
-  assert.ok(!active.includes('googlevideo.com'));
+  assert.ok(!active.split('[Mitm]')[1].includes('*.googlevideo.com'));
+  assert.ok(active.includes('ump_enabled = switch,false,'));
+  assert.ok(entries[1].includes('enable={ump_enabled}'));
+  assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
+  assert.ok(!active.includes('DOMAIN-SUFFIX,googlevideo.com'));
   assert.ok(!active.includes('reject(502)'));
   assert.ok(!active.includes('Maasea'));
   assert.ok(!source.includes('$httpClient') && !source.includes('$persistentStore'));
