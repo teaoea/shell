@@ -1,25 +1,16 @@
 #!name = YouTube去广告
 
-# 不使用 ctier=L / videoplayback 的 502、空响应或媒体拒绝规则。
-# 此类拦截在设备实测中造成几秒黑屏，已撤销；不保证清除 UMP 播放广告。
 
 [Argument]
-captionLang = select,"off",tag=字幕翻译,desc=保持关闭
-blockUpload = switch,false,tag=隐藏上传按钮
-blockImmersive = switch,false,tag=隐藏选段按钮
-blockShorts = switch,false,tag=隐藏 Shorts 按钮
 script_debug = switch,true,tag=排查日志,desc=验证完成后可关闭
 
 [Rule]
-# 仅拒绝这些域名的 UDP/443，促使 QUIC 播放连接回退到可处理的 TCP。
-AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
+# 只促使 API 接口的 QUIC 回退到 TCP；不处理 googlevideo 播放媒体。
 AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
-http-response ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js,requires-body=true,binary-body-mode=true,timeout=20,debug={script_debug},argument=[{captionLang},{blockUpload},{blockImmersive},{blockShorts}],tag=YouTube 广告响应处理
-http-request ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback\?(?:[^#]*&)?ack(?:=[^&#]*)?(?:&[^#]*)?$ script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js,requires-body=true,binary-body-mode=true,timeout=20,debug={script_debug},argument=[{captionLang},{blockUpload},{blockImmersive},{blockShorts}],tag=YouTube 播放请求处理
-http-request ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/log_event(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js,requires-body=true,binary-body-mode=true,timeout=20,debug={script_debug},argument=[{captionLang},{blockUpload},{blockImmersive},{blockShorts}],tag=YouTube 日志请求处理
+http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTubeNoAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug}],tag=YouTube 自有广告响应处理
 
 [Mitm]
-hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, *.googlevideo.com
+hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com
