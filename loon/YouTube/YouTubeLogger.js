@@ -1,4 +1,4 @@
-/* YouTubeLogger 1.2.0 — shared diagnostic cache, levels and .log export.
+/* YouTubeLogger 1.3.0 — shared diagnostic cache, levels and .log export.
  * No network calls, filesystem assumptions, third-party code, or automatic uploads.
  * Enabled manually in the main plugin; no separate Logger plugin.
  */
@@ -6,10 +6,10 @@
   "use strict";
   var CONFIG = "ytads.logger.config.v1";
   var CACHE = "ytads.logger.entries.v2";
-  var SOURCES = ["YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeLogger"];
+  var SOURCES = ["YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeLogger"];
   var BASE = "http://youtube-logs.invalid/";
   var LIMIT = 600;
-  var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(?:\?[^#]*)?$/i;
+  var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$/i;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var ranks = {debug:0, info:1, warn:2, error:3};
@@ -211,7 +211,7 @@
         // Read only the owned schema; never dump arbitrary store contents.
         if (!r || SOURCES.indexOf(r.source) === -1 || !Object.prototype.hasOwnProperty.call(ranks, r.level) || typeof r.time !== "string" || !/^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(r.time) ||
             typeof r.version !== "string" || !/^\d+\.\d+\.\d+$/.test(r.version) ||
-            !/^(player|get_watch|ump|unknown)$/.test(r.endpoint) ||
+            !/^(player|get_watch|browse|next|search|ump|unknown)$/.test(r.endpoint) ||
             typeof r.message !== "string" || r.message.length > 600 || /[\r\n<>]/.test(r.message)) return;
         var row = { time:r.time, source:r.source, level:r.level, version:r.version, endpoint:r.endpoint, message:r.message };
         if (r.captureRef && typeof r.captureRef.prefix === "string" &&
@@ -264,13 +264,72 @@
       recording:!!(c && c.enabled), stoppedReason:c && c.haltReason || null,
       settings:{rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
       completeness:{allReferencedSamplesReadable:issues.length === 0, stoppedDueToLimitOrError:!!(c && c.haltReason), issues:issues,
-        limitations:["Only matched player/get_watch and enabled UMP response scripts; not all YouTube traffic.",
+        limitations:["Only matched player/get_watch/browse/next/search and enabled UMP response scripts; not all YouTube traffic.",
           "Media response capture requires ump_enabled=true; inspect is recommended.",
           "Runtime bodies may already be decoded; these are not TLS/HTTP wire bytes.",
           "Missing runtime bodies are marked unavailable; before/after transport headers are not reconstructed.",
           "URL/method hashes are grouping hints, not guaranteed request/response pairs.",
           "Loon storage has no atomic append here; concurrent writers may lose index entries.",
           "Script timeouts, TLS failures and requests bypassing MitM are not observed."]}, events:events};
+  }
+  function exportPage(feedOnly) {
+    // Read small owned chunks, then assemble one JSON file in the browser.
+    // No remote scripts, uploads or additional log caches.
+    var script = '(' + browserExport.toString() + ')(' + (feedOnly ? 'true' : 'false') + ');';
+    return response(200, '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 导出</title><p id="status">正在读取本地记录，请保持 Loon 开启…</p><a id="save" hidden>保存日志文件</a><p>文件生成后点击保存；Safari 也可通过分享菜单存储到“文件”。</p><script>' + script + '</script></html>', "text/html; charset=utf-8", {"Content-Security-Policy":"default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"});
+  }
+  async function browserExport(feedOnly) {
+    var status = document.getElementById("status"), save = document.getElementById("save");
+    try {
+      async function get(path) {
+        var r = await fetch(path, {cache:"no-store"});
+        if (!r.ok) throw new Error("本地读取失败（" + r.status + "），请暂停记录后重新导出。");
+        return await r.json();
+      }
+      function checksum(text) {
+        var hash = 2166136261;
+        for (var i = 0; i < text.length; i++) {hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619);}
+        return "fnv1a32-utf16:" + ("00000000" + (hash >>> 0).toString(16)).slice(-8);
+      }
+      var manifest = await get(feedOnly ? "/export-manifest-feed.json" : "/export-manifest.json");
+      var rows = manifest.rows, data = manifest.data, parts = [];
+      for (var n = 0; n < rows.length; n++) {
+        var row = rows[n], event = {summary:row, capture:null};
+        status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;
+        if (row.captureRef) {
+          var ref = row.captureRef, chunks = [];
+          for (var k = 0; k < ref.chunks; k++) {
+            var piece = await get("/export-chunk/" + manifest.session + "/" + n + "/" + k + (feedOnly ? "?feed=1" : ""));
+            if (typeof piece.chunk !== "string") throw new Error("本地样本块无效，请重新导出。");
+            chunks.push(piece.chunk);
+          }
+          var text = chunks.join("");
+          if (text.length !== ref.chars || checksum(text) !== ref.checksum) throw new Error("样本校验失败，请保留已有记录并检查存储。");
+          var capture = JSON.parse(text);
+          if (capture.schema !== 1 || capture.source !== row.source || capture.time !== row.time || capture.phase !== row.phase) throw new Error("样本元数据不匹配，请重新导出。");
+          event.capture = capture;
+        } else if (row.captureError) {
+          event.captureError = row.captureError;
+          data.completeness.issues.push({time:row.time, source:row.source, reason:row.captureError});
+        }
+        if (n) parts.push(",");
+        parts.push(new Blob([JSON.stringify(event)], {type:"application/json"}));
+      }
+      data.completeness.allReferencedSamplesReadable = data.completeness.issues.length === 0;
+      delete data.events;
+      var blob = new Blob([JSON.stringify(data).slice(0,-1), ',"events":[', ...parts, ']}'], {type:"application/json;charset=utf-8"});
+      save.href = URL.createObjectURL(blob);
+      save.download = "YouTube-" + (feedOnly ? "Feed-" : "") + data.exportedAt.replace(/[:.]/g, "-") + ".json";
+      save.hidden = false;
+      status.textContent = "已合成一个完整 JSON 文件（" + rows.length + " 条记录）。点击下方保存日志文件。";
+    } catch (error) {
+      status.textContent = error.message || "导出失败，请检查 Loon 是否运行。";
+      save.hidden = true;
+    }
+  }
+  function exportRows(c, feedOnly) {
+    var rows = records(c);
+    return feedOnly ? rows.filter(function (r) {return r.source === "YouTubeFeedAds" || (r.source === "YouTubeLogger" && r.message.indexOf("user mark:") === 0);}) : rows;
   }
   function page(c, rows) {
     return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 日志</title>' +
@@ -281,7 +340,7 @@
       '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
       '<form method="post" action="/mark-content"><button>标记：正在播放正片</button></form>' +
       '<a href="/download.log">下载日志文件 .log</a>' +
-      '<a href="/download.json">下载开发记录 .json（含原始样本）</a>' +
+      '<a href="/export">导出完整开发记录 .json（合成一个文件）</a><a href="/export-feed">导出信息流开发记录 .json（排查首页赞助卡片）</a>' +
       '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存原始数据' : '未开启，只保存摘要') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，原始样本另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
@@ -302,7 +361,7 @@
       var api = API_CAPTURE.exec($request.url || "");
       var media = MEDIA_CAPTURE.test($request.url || "");
       if (api || media) {
-        devCapture(api ? "YouTubePlaybackAds" : "YouTubeStreamAds", "request", api ? api[1].toLowerCase() : "ump", "1.2.0", {});
+        devCapture(api ? (/^(browse|next|search)$/i.test(api[1]) ? "YouTubeFeedAds" : "YouTubePlaybackAds") : "YouTubeStreamAds", "request", api ? api[1].toLowerCase() : "ump", "1.3.0", {});
         return {};
       }
     }
@@ -322,7 +381,7 @@
       if (method !== "POST") return response(405, "Use the buttons on the log page.", "text/plain; charset=utf-8", {Allow:"POST"});
       if (path === "/mark-ad" || path === "/mark-content") {
         if (!c || c.enabled !== true) return response(409, "请先开始记录，再标记播放状态。", "text/plain; charset=utf-8");
-        if (!devAppend({source:"YouTubeLogger", version:"1.2.0", endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : "content-playing")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
+        if (!devAppend({source:"YouTubeLogger", version:"1.3.0", endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : "content-playing")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
         return response(303, "", "text/plain; charset=utf-8", {Location:BASE});
       }
       if (path === "/clear") {
@@ -348,11 +407,40 @@
       return response(303, "", "text/plain; charset=utf-8", {Location:BASE});
     }
     if (method !== "GET") return response(405, "Method not allowed", "text/plain; charset=utf-8", {Allow:"GET"});
-    if (path !== "/" && path !== "/download.log" && path !== "/download.json") return response(404, "Not found", "text/plain; charset=utf-8");
+    if (path === "/export" || path === "/export-feed") return exportPage(path === "/export-feed");
+    if (path === "/export-manifest.json" || path === "/export-manifest-feed.json") {
+      if (c && c.enabled) return response(409, "请先在日志页面暂停记录，然后导出。", "text/plain; charset=utf-8");
+      var feedOnlyManifest = path === "/export-manifest-feed.json";
+      var manifestRows = exportRows(c, feedOnlyManifest);
+      var manifestData = developmentExport(c, []);
+      manifestData.exportScope = feedOnlyManifest ? "feed-with-user-marks" : "all";
+      return response(200, JSON.stringify({session:c && c.session || "none", rows:manifestRows, data:manifestData}), "application/json; charset=utf-8");
+    }
+    var chunkPath = /^\/export-chunk\/([a-z0-9-]{1,80})\/(\d{1,3})\/(\d{1,3})$/.exec(path);
+    if (chunkPath) {
+      if (!c || c.enabled || c.session !== chunkPath[1]) return response(409, "记录状态已变化，请暂停后重新导出。", "text/plain; charset=utf-8");
+      var rowNumber = Number(chunkPath[2]), chunkNumber = Number(chunkPath[3]);
+      var chunkRows = exportRows(c, /\?feed=1$/.test($request.url));
+      var ref = chunkRows[rowNumber] && chunkRows[rowNumber].captureRef;
+      if (!ref || chunkNumber >= ref.chunks) return response(404, "Sample not found", "text/plain; charset=utf-8");
+      var chunk = $persistentStore.read(ref.prefix + chunkNumber);
+      if (typeof chunk !== "string" || chunk.length > 131072) return response(503, "样本块丢失或损坏，未生成截断文件。", "text/plain; charset=utf-8");
+      return response(200, JSON.stringify({chunk:chunk}), "application/json; charset=utf-8");
+    }
+    if (path !== "/" && path !== "/download.log" && path !== "/download.json" && path !== "/download-feed.json") return response(404, "Not found", "text/plain; charset=utf-8");
     var rows = records(c);
     if (path === "/") return response(200, page(c, rows));
     var now = new Date().toISOString();
-    if (path === "/download.json") return response(200, JSON.stringify(developmentExport(c, rows)), "application/json; charset=utf-8", {"Content-Disposition":'attachment; filename="YouTube-' + now.replace(/[:.]/g, "-") + '.json"'});
+    if (path === "/download.json" || path === "/download-feed.json") {
+      var feedOnly = path === "/download-feed.json";
+      var data = developmentExport(c, feedOnly ? rows.filter(function (r) {return r.source === "YouTubeFeedAds" || (r.source === "YouTubeLogger" && r.message.indexOf("user mark:") === 0);}) : rows);
+      data.exportScope = feedOnly ? "feed-with-user-marks" : "all";
+      var serialized = JSON.stringify(data);
+      // Bound generated responses, never return a knowingly partial JSON file.
+      // This is a conservative cap, not a guarantee of every device's limit.
+      if (devUTF8Size(serialized) > 4194304) return response(413, "直接下载超过 4 MiB，未返回截断文件。请回到日志页面，暂停记录后选择“导出完整开发记录”，分块读取并合成一个 JSON 文件；首页广告可选择“导出信息流开发记录”。", "text/plain; charset=utf-8");
+      return response(200, serialized, "application/json; charset=utf-8", {"Content-Disposition":'attachment; filename="YouTube-' + (feedOnly ? 'Feed-' : '') + now.replace(/[:.]/g, "-") + '.json"'});
+    }
     var filename = "YouTube-" + now.replace(/[:.]/g, "-") + ".log";
     var lines = ["YouTube diagnostic log", "Exported (UTC): " + now, "Recording: " + (c && c.enabled === true ? "on" : "paused"),
       "Minimum level for new entries: " + minimum,

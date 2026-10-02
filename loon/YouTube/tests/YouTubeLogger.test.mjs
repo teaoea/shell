@@ -45,7 +45,7 @@ function play(store, debug = false, failure = '') {
 
 test('main plugin contains both ad rules and one disabled logger entry; no separate plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
-  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 2);
+  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 3);
   assert.ok(plugin.includes('log_enabled = switch,false'));
   assert.ok(plugin.includes('script_debug = switch,false'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
