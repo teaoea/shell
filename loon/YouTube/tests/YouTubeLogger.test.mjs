@@ -50,9 +50,10 @@ test('main plugin contains both ad rules and one disabled logger entry; no separ
   assert.ok(plugin.includes('script_debug = switch,false'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
   const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
-  assert.equal(loggerLines.length, 2);
-  assert.ok(loggerLines.every(x => x.includes('enable={log_enabled},argument=[{log_enabled},{log_level}]')));
-  const line = plugin.split('\n').find(x => x.startsWith('http-request'));
+  assert.equal(loggerLines.length, 3);
+  assert.ok(loggerLines.filter(x => !x.includes('开发请求抓包')).every(x => x.includes('enable={log_enabled},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget}]')));
+  assert.ok(loggerLines.find(x => x.includes('开发请求抓包')).includes('requires-body=true,binary-body-mode=true'));
+  const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('youtube-logs'));
   const regex = new RegExp(line.split(' ')[1]);
   assert.ok(regex.test(base + '/download.log'));
   assert.ok(!regex.test('http://youtube-logs.invalid.evil/'));
@@ -86,7 +87,7 @@ test('start, collect with console off, pause and export playback results without
   play(store);
   const exportLog = request(store, '/download.log');
   assert.ok(exportLog.body.includes('Entries: 1'));
-  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 1.3.0] player changed'));
+  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 1.4.0] player changed'));
   assert.ok(!exportLog.body.includes('PRIVATE') && !exportLog.body.includes('SECRET'));
 });
 test('playback and stream summaries append to the same buffer and one file', () => {
@@ -102,7 +103,7 @@ test('playback and stream summaries append to the same buffer and one file', () 
   assert.equal(Object.keys(r.output).length, 0);
   const exported = request(store, '/download.log').body;
   assert.ok(exported.includes('Entries: 2'));
-  assert.ok(exported.includes('[YouTubeStreamAds 1.3.0] ump pass: mode=inspect'));
+  assert.ok(exported.includes('[YouTubeStreamAds 1.4.0] ump pass: mode=inspect'));
   assert.ok(exported.includes('parts=21:1'));
   assert.ok(!exported.includes('PRIVATE'));
   const entries = JSON.parse(store.get(cacheKey)).entries;
@@ -173,23 +174,25 @@ test('disabled UMP produces no stream entries', () => {
   execute(stream, store, {$request:{url:'https://rr5.googlevideo.com/videoplayback?x=1'}, $response:{}, $argument:{ump_enabled:false}});
   assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 0);
 });
-test('one shared buffer retains the newest 600 entries and stays within 128 KiB', () => {
+test('shared buffer stops at 600 entries and preserves every prior entry', () => {
   const store = new Map();
   request(store, '/start', 'POST');
   const session = JSON.parse(store.get(configKey)).session;
-  store.set(cacheKey, JSON.stringify({session, entries:Array.from({length:600}, (_, n) => ({time:'2026-10-02T00:00:00.000Z',source:'YouTubePlaybackAds',level:'debug',version:'1.3.0',endpoint:'player',message:'old-' + n}))}));
+  store.set(cacheKey, JSON.stringify({session, entries:Array.from({length:600}, (_, n) => ({time:'2026-10-02T00:00:00.000Z',source:'YouTubePlaybackAds',level:'debug',version:'1.4.0',endpoint:'player',message:'old-' + n}))}));
   play(store);
   const state = JSON.parse(store.get(cacheKey));
   assert.equal(state.entries.length, 600);
-  assert.equal(state.entries[0].message, 'old-1');
-  assert.ok(state.entries.at(-1).message.startsWith('changed'));
+  assert.equal(state.entries[0].message, 'old-0');
+  assert.equal(state.entries.at(-1).message, 'old-599');
+  assert.equal(JSON.parse(store.get(configKey)).enabled, false);
+  assert.equal(JSON.parse(store.get(configKey)).haltReason, 'entry-limit');
   assert.ok(store.get(cacheKey).length <= 131072);
 });
-test('byte budget also trims entries when count is below the maximum', () => {
+test('index byte limit stops new entries without evicting old records', () => {
   const store = new Map();
   request(store, '/start', 'POST');
   const session = JSON.parse(store.get(configKey)).session;
-  const row = {time:'2026-10-02T00:00:00.000Z',source:'YouTubePlaybackAds',level:'debug',version:'1.3.0',endpoint:'player',message:'a'.repeat(600)};
+  const row = {time:'2026-10-02T00:00:00.000Z',source:'YouTubePlaybackAds',level:'debug',version:'1.4.0',endpoint:'player',message:'a'.repeat(600)};
   const entries = Array(170).fill(row);
   let seed = JSON.stringify({session, entries});
   entries.push({...row, message:'b'.repeat(131066 - seed.length - JSON.stringify({...row,message:''}).length - 1)});
@@ -198,7 +201,8 @@ test('byte budget also trims entries when count is below the maximum', () => {
   store.set(cacheKey, seed);
   play(store);
   assert.ok(store.get(cacheKey).length <= 131072);
-  assert.ok(JSON.parse(store.get(cacheKey)).entries.length <= entries.length, 'a new entry forces old entries to be evicted');
+  assert.equal(store.get(cacheKey), seed, 'index remains unchanged');
+  assert.equal(JSON.parse(store.get(configKey)).haltReason, 'log-index-limit');
 });
 test('clear rotates session and preserves other scripts storage', () => {
   const store = new Map([['unrelated', 'keep']]);
@@ -249,7 +253,7 @@ test('export ignores stale sessions and malformed records and sorts timestamps',
   const store = new Map();
   request(store, '/start', 'POST');
   const session = JSON.parse(store.get(configKey)).session;
-  const row = time => ({time,source:'YouTubePlaybackAds',level:'debug',version:'1.3.0',endpoint:'player',message:'pass: removed=0'});
+  const row = time => ({time,source:'YouTubePlaybackAds',level:'debug',version:'1.4.0',endpoint:'player',message:'pass: removed=0'});
   store.set(cacheKey, JSON.stringify({session,entries:[row('2026-10-02T02:00:00.000Z'),row('2026-10-02T01:00:00.000Z'), {...row('2026-10-02T01:00:00.000Z'),message:'bad\nline'}]}));
   const valid = store.get(cacheKey);
   store.set(cacheKey, JSON.stringify({session:'stale',entries:[row('2026-10-02T00:00:00.000Z')]}));

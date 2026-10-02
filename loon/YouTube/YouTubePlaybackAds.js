@@ -1,5 +1,5 @@
 /*
- * YouTubePlaybackAds 1.3.0 — video playback API ad metadata cleanup for Loon.
+ * YouTubePlaybackAds 1.4.0 — video playback API ad metadata cleanup for Loon.
  * Handles player/get_watch JSON and known Protobuf responses only.
  * Standalone: no imports, remote calls, redirects, or UMP processing.
  * Known reverse-engineered schema: Player fields 7/68; get_watch path 1 -> 2.
@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.3.0";
+  var VERSION = "1.4.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug !== false && args.script_debug !== "false";
@@ -17,37 +17,162 @@
   var MAX_JSON_NODES = 20000;
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(?:\?[^#]*)?$/i;
 
-  // Optional shared local log collection controlled by the main plugin.
-  // One bounded cache retains source/level tags; failures never alter playback.
-  function saveLog(message) {
-    try {
-      if (args.log_enabled !== true && args.log_enabled !== "true") return;
-      if (typeof $persistentStore === "undefined") return;
-      var ranks = {debug:0, info:1, warn:2, error:3};
-      var level = message.indexOf("changed:") === 0 ? "info" :
-        message === "pass: parse/schema check failed" ? "error" :
-        /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
-      var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-      if (ranks[level] < ranks[minimum]) return;
-      var rawConfig = $persistentStore.read("ytads.logger.config.v1");
-      if (!rawConfig || rawConfig.length > 2048) return;
-      var config = JSON.parse(rawConfig);
-      if (!config || config.enabled !== true || typeof config.session !== "string" || !/^[a-z0-9-]{1,80}$/.test(config.session)) return;
-      var key = "ytads.logger.entries.v2";
-      var raw = $persistentStore.read(key);
-      var state = raw && raw.length <= 131072 ? JSON.parse(raw) : null;
-      var entries = state && state.session === config.session && Array.isArray(state.entries) ? state.entries.slice(-599) : [];
-      entries.push({source:"YouTubePlaybackAds", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message.slice(0, 600)});
-      var serialized = JSON.stringify({session:config.session, entries:entries});
-      while (serialized.length > 131072 && entries.length > 1) {
-        entries.shift();
-        serialized = JSON.stringify({session:config.session, entries:entries});
-      }
-      if ($persistentStore.write(serialized, key) !== true && debug && typeof console !== "undefined") console.log("[YouTubePlaybackAds] local-log-write-failed");
-    } catch (_) {
-      // A broken log store must not prevent $done from committing ad cleanup.
-      if (debug && typeof console !== "undefined") console.log("[YouTubePlaybackAds] local-log-store-unavailable");
+  var devMessages = [];
+  var devException = null;
+  function devFailure(error) {
+    if (!devFlag(args.capture_raw)) return;
+    try { devException = {name:String(error.name || "Error"), message:String(error.message || ""), stack:typeof error.stack === "string" ? error.stack : null, code:error.ytNoAdsCode || null}; } catch (_) {}
+  }
+  var devStarted = Date.now();
+
+  function devFlag(value) { return value === true || value === "true"; }
+  function devConfig() {
+    if (!devFlag(args.log_enabled) || typeof $persistentStore === "undefined") return null;
+    var raw = $persistentStore.read("ytads.logger.config.v1");
+    var c = raw && raw.length <= 2048 ? JSON.parse(raw) : null;
+    return c && c.enabled === true && typeof c.session === "string" && /^[a-z0-9-]{1,80}$/.test(c.session) ? c : null;
+  }
+  function devUTF8Size(text) {
+    var size = 0;
+    for (var i = 0; i < text.length; i++) {
+      var code = text.charCodeAt(i);
+      if (code < 128) size++;
+      else if (code < 2048) size += 2;
+      else if (code >= 55296 && code <= 56319 && i + 1 < text.length && text.charCodeAt(i + 1) >= 56320 && text.charCodeAt(i + 1) <= 57343) { size += 4; i++; }
+      else size += 3;
     }
+    return size;
+  }
+  function devBase64(bytes) {
+    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var parts = [], text = "";
+    for (var i = 0; i < bytes.length; i += 3) {
+      var a = bytes[i], b = i + 1 < bytes.length ? bytes[i + 1] : 0, c = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      text += alphabet[a >> 2] + alphabet[((a & 3) << 4) | (b >> 4)] +
+        (i + 1 < bytes.length ? alphabet[((b & 15) << 2) | (c >> 6)] : "=") + (i + 2 < bytes.length ? alphabet[c & 63] : "=");
+      if (text.length >= 32768) { parts.push(text); text = ""; }
+    }
+    parts.push(text);
+    return parts.join("");
+  }
+  function devBody(body) {
+    if (body === undefined || body === null) return {available:false, reason:"not-provided-by-runtime"};
+    if (typeof body === "string") {
+      var size = devUTF8Size(body);
+      if (size > 8388608) throw new Error("capture-body-limit");
+      return {available:true, encoding:"utf8-text", bytes:size, data:body};
+    }
+    var bytes;
+    if (body instanceof Uint8Array) bytes = body;
+    else if (body instanceof ArrayBuffer) bytes = new Uint8Array(body);
+    else if (ArrayBuffer.isView(body)) bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    else return {available:false, reason:"unsupported-runtime-body-type"};
+    if (bytes.length > 8388608) throw new Error("capture-body-limit");
+    return {available:true, encoding:"base64", bytes:bytes.length, data:devBase64(bytes)};
+  }
+  function devHalt(c, reason) {
+    if (c) {
+      c.enabled = false;
+      c.haltReason = reason;
+      c.haltedAt = new Date().toISOString();
+      $persistentStore.write(JSON.stringify(c), "ytads.logger.config.v1");
+    }
+    if (typeof console !== "undefined") console.log("[YouTubeLogger] recording-stopped: " + reason);
+  }
+  function devAppend(entry, payload) {
+    var written = [], c = null;
+    try {
+      c = devConfig();
+      if (!c) return false;
+      var raw = $persistentStore.read("ytads.logger.entries.v2");
+      if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");
+      var old = raw ? JSON.parse(raw) : null;
+      var state = old && old.session === c.session && Array.isArray(old.entries) ? old : {session:c.session, entries:[], captureBytes:0};
+      if (state.entries.length >= 600) { devHalt(c, "entry-limit"); return false; }
+      var serialized = payload ? JSON.stringify(payload) : null;
+      if (serialized && serialized.length > 33554432) { devHalt(c, "capture-event-limit"); return false; }
+      var used = state.captureBytes || 0;
+      var budget = [16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) * 1048576 : 33554432;
+      var size = serialized ? devUTF8Size(serialized) : 0;
+      if (used + size > budget) { devHalt(c, "capture-budget-limit"); return false; }
+      var chunks = [];
+      if (serialized) {
+        for (var start = 0; start < serialized.length;) {
+          var end = Math.min(start + 131072, serialized.length);
+          if (end < serialized.length && serialized.charCodeAt(end - 1) >= 55296 && serialized.charCodeAt(end - 1) <= 56319 && serialized.charCodeAt(end) >= 56320 && serialized.charCodeAt(end) <= 57343) end--;
+          chunks.push(serialized.slice(start, end));
+          start = end;
+        }
+        if (chunks.length > 256) { devHalt(c, "capture-event-limit"); return false; }
+        var prefix = "ytads.capture." + c.session + "." + payload.id + ".";
+        entry.captureRef = {prefix:prefix, chunks:chunks.length, chars:serialized.length, storedBytes:size, checksum:devChecksum(serialized)};
+      }
+      var next = {session:c.session, entries:state.entries.concat([entry]), captureBytes:used + size};
+      var index = JSON.stringify(next);
+      if (devUTF8Size(index) > 131072) { devHalt(c, "log-index-limit"); return false; }
+      if (serialized) {
+        for (var i = 0; i < entry.captureRef.chunks; i++) {
+          var key = entry.captureRef.prefix + i;
+          if ($persistentStore.write(chunks[i], key) !== true) throw new Error("capture-write-failed");
+          written.push(key);
+        }
+      }
+      if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
+      return true;
+    } catch (_) {
+      written.forEach(function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} });
+      try { devHalt(c, "storage-or-serialization-failed"); } catch (_) {}
+      return false;
+    }
+  }
+  function devChecksum(text) {
+    var hash = 2166136261;
+    for (var i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+    return "fnv1a32-utf16:" + ("00000000" + (hash >>> 0).toString(16)).slice(-8);
+  }
+  function devCorrelation(method, url) {
+    // A grouping hint, never a claim of a unique request/response pairing.
+    return devChecksum(method + " " + url);
+  }
+  function devCapture(source, phase, endpoint, version, output) {
+    if (!devFlag(args.capture_raw)) return;
+    var c = null;
+    try {
+      c = devConfig();
+      if (!c || typeof $request === "undefined") return;
+      var now = new Date().toISOString();
+      var id = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 14);
+      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:devBody($request.body)};
+      var payload = {schema:1, id:id, time:now, source:source, version:version, phase:phase, endpoint:endpoint,
+        runtime:typeof $loon === "string" ? $loon : null,
+        correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
+        request:request,
+        processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
+          arguments:{ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
+      if (phase === "response" && typeof $response !== "undefined") {
+        payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
+        var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
+        payload.responseAfter = {changed:!!changed, status:output && output.status !== undefined ? output.status : $response.status,
+          headerOverrides:output && output.headers || null, transportHeadersRecomputedByLoon:true,
+          body:changed ? devBody(output.body) : {reference:"responseBefore.body"}};
+      }
+      devAppend({source:source, version:version, endpoint:endpoint, level:"debug", time:now, phase:phase,
+        message:"development capture: " + phase + (payload.responseAfter ? " changed=" + payload.responseAfter.changed : "")}, payload);
+    } catch (error) {
+      try { devHalt(c, error.message === "capture-body-limit" ? "capture-body-limit" : "capture-serialization-failed"); } catch (_) {}
+    }
+  }
+
+  function saveLog(message) {
+    devMessages.push(message);
+    // Raw mode saves one complete response event, irrespective of log level.
+    if (devFlag(args.capture_raw)) return;
+    var ranks = {debug:0, info:1, warn:2, error:3};
+    var level = message.indexOf("changed:") === 0 ? "info" :
+      message === "pass: parse/schema check failed" ? "error" :
+      /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
+    var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
+    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubePlaybackAds", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
   function log(message) {
@@ -298,9 +423,11 @@
   var output = {};
   try { output = run(); }
   catch (error) {
+    devFailure(error);
     // Do not log exception messages from JSON/UTF-8 parsers: they may contain
     // pieces of response data. Failed parsing leaves the complete body intact.
     log("pass: " + (error.ytNoAdsCode || "parse/schema check failed"));
   }
+  if (typeof $request !== "undefined" && typeof $response !== "undefined" && API.test($request.url || "")) devCapture("YouTubePlaybackAds", "response", endpoint, VERSION, output);
   $done(output);
 })();

@@ -55,7 +55,7 @@ test('plugin routes playback and stream responses to distinct standalone scripts
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(entries[0].includes('argument=[{script_debug},{log_enabled},{log_level}]'));
+  assert.ok(entries[0].includes('argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget}]'));
   const regex = new RegExp(entries[0].split(' ')[1], 'i');
   for (const host of ['youtubei.googleapis.com', 'youtubei-att.googleapis.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube.com']) {
     assert.ok(regex.test(`https://${host}/youtubei/v1/player?key=redacted`));
@@ -183,7 +183,7 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const url = prefix + 'player?key=PRIVATE_KEY&sig=PRIVATE_SIGNATURE';
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
-  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 1.3.0]')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 1.4.0]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));
