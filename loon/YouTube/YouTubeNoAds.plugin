@@ -16,6 +16,6 @@ http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|musi
 http-response ^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTubeNoAds.js,requires-body=true,binary-body-mode=true,timeout=10,enable={ump_enabled},debug={script_debug},argument=[{script_debug},{ump_enabled},{ump_mode}],tag=YouTube UMP 试验处理
 
 [Mitm]
-hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com
-# UMP 试验时，在上方 hostname 列表末尾添加 , *.googlevideo.com。
+hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, *.googlevideo.com
+# UMP 试验入口默认关闭；媒体域名的 MitM 仍生效，完整撤销需移除该 hostname。
 # 先确认播放请求走 TCP；默认不对媒体添加 UDP 拒绝规则。

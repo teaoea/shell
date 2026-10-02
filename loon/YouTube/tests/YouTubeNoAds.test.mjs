@@ -50,7 +50,7 @@ function passed(result) {
   assert.deepEqual(Object.keys(result.output), [], 'must return no changes');
 }
 
-test('plugin uses one self-owned script and does not touch streaming media', () => {
+test('plugin uses one self-owned script with UMP processing disabled by default', () => {
   const entries = plugin.split('\n').filter(line => /^http-(request|response) /.test(line));
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTubeNoAds.js'));
@@ -65,7 +65,7 @@ test('plugin uses one self-owned script and does not touch streaming media', () 
     'https://youtubei.googleapis.com.evil.test/youtubei/v1/player',
     'https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1&c=IOS']) assert.equal(regex.test(url), false);
   const active = plugin.split('\n').filter(line => !line.startsWith('#')).join('\n');
-  assert.ok(!active.split('[Mitm]')[1].includes('*.googlevideo.com'));
+  assert.ok(active.split('[Mitm]')[1].includes('*.googlevideo.com'));
   assert.ok(active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={ump_enabled}'));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
