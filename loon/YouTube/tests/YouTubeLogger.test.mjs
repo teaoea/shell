@@ -87,7 +87,7 @@ test('start, collect with console off, pause and export playback results without
   play(store);
   const exportLog = request(store, '/download.log');
   assert.ok(exportLog.body.includes('Entries: 1'));
-  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 1.4.0] player changed'));
+  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 1.5.0] player changed'));
   assert.ok(!exportLog.body.includes('PRIVATE') && !exportLog.body.includes('SECRET'));
 });
 test('playback and stream summaries append to the same buffer and one file', () => {

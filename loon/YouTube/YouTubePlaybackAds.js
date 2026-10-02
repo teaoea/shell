@@ -1,17 +1,19 @@
 /*
- * YouTubePlaybackAds 1.4.0 — video playback API ad metadata cleanup for Loon.
+ * YouTubePlaybackAds 1.5.0 — playback API ad cleanup and optional background playback for Loon.
  * Handles player/get_watch JSON and known Protobuf responses only.
  * Standalone: no imports, remote calls, redirects, or UMP processing.
- * Known reverse-engineered schema: Player fields 7/68; get_watch path 1 -> 2.
+ * Known reverse-engineered schema: Player fields 2/7/68; PlayabilityStatus field 4;
+ * get_watch path 1 -> 2.
  * Shared wire helpers are included here so Loon can run this file directly.
  */
 (function () {
   "use strict";
 
-  var VERSION = "1.4.0";
+  var VERSION = "1.5.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug !== false && args.script_debug !== "false";
+  var backgroundPlayback = args.background_playback === true || args.background_playback === "true";
   var endpoint = "unknown";
   var MAX_BYTES = 2 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -148,7 +150,7 @@
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
+          arguments:{ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", background_playback:backgroundPlayback, log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
@@ -288,9 +290,43 @@
       encodeLength(body.length), body]);
   }
 
+  function varintIsTrue(bytes, record) {
+    for (var i = record.tagEnd; i < record.end; i++) {
+      if ((bytes[i] & 127) !== 0) return true;
+    }
+    return false;
+  }
+
+  // PlayabilityStatus.playable_in_background is field 4, bool. Only this
+  // explicit capability bit is changed; no membership or entitlement is made.
+  function enableBackground(bytes, records) {
+    var matches = [];
+    for (var i = 0; i < records.length; i++) {
+      if (records[i].no !== 4) continue;
+      if (records[i].wire !== 0) fail("background-schema-mismatch");
+      matches.push(i);
+    }
+    if (matches.length === 1 && varintIsTrue(bytes, records[matches[0]])) {
+      return { body: bytes, background: 0 };
+    }
+    var enabled = new Uint8Array([32, 1]);
+    if (!matches.length) return { body: join([bytes, enabled]), background: 1 };
+    var first = matches[0];
+    var parts = [];
+    for (var j = 0; j < records.length; j++) {
+      if (records[j].no === 4) {
+        if (j === first) parts.push(enabled);
+      } else {
+        parts.push(bytes.subarray(records[j].start, records[j].end));
+      }
+    }
+    return { body: join(parts), background: 1 };
+  }
+
   function cleanPlayer(bytes, budget) {
     var records = parse(bytes, budget);
     var recognized = false;
+    var statusChanges = [];
     for (var i = 0; i < records.length; i++) {
       var r = records[i];
       if (r.no === 2) {
@@ -299,19 +335,25 @@
         for (var s = 0; s < status.length; s++) {
           if (status[s].no === 1 && status[s].wire !== 0) fail("status-schema-mismatch");
         }
+        if (backgroundPlayback) statusChanges[i] = enableBackground(bytes.subarray(r.payloadStart, r.end), status);
         recognized = true;
       }
       if ((r.no === 7 || r.no === 68) && r.wire !== 2) fail("ad-schema-mismatch");
     }
-    if (!recognized) return { body: bytes, removed: 0 };
+    if (!recognized) return { body: bytes, removed: 0, background: 0 };
     var parts = [];
     var removed = 0;
+    var background = 0;
     for (var j = 0; j < records.length; j++) {
       var field = records[j];
       if (field.no === 7 || field.no === 68) removed++;
+      else if (statusChanges[j] && statusChanges[j].background) {
+        parts.push(replaceChild(bytes, field, statusChanges[j].body));
+        background += statusChanges[j].background;
+      }
       else parts.push(bytes.subarray(field.start, field.end));
     }
-    return { body: removed ? join(parts) : bytes, removed: removed };
+    return { body: removed || background ? join(parts) : bytes, removed: removed, background: background };
   }
 
   // Rebuild only the enclosing length when a known child changes. Everything
@@ -321,6 +363,7 @@
     var target = level === 0 ? 1 : 2;
     var parts = [];
     var removed = 0;
+    var background = 0;
     for (var i = 0; i < records.length; i++) {
       var r = records[i];
       if (r.no !== target) {
@@ -331,20 +374,22 @@
       var payload = bytes.subarray(r.payloadStart, r.end);
       var result = level === 0 ? cleanWatch(payload, budget, 1) : cleanPlayer(payload, budget);
       removed += result.removed;
-      parts.push(result.removed ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
+      background += result.background;
+      parts.push(result.removed || result.background ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
     }
-    return { body: removed ? join(parts) : bytes, removed: removed };
+    return { body: removed || background ? join(parts) : bytes, removed: removed, background: background };
   }
 
   function cleanJSON(text) {
     var root = JSON.parse(text);
-    if (!root || typeof root !== "object") return { body: text, removed: 0 };
-    var queue = [{ value: root, depth: 0, player: endpoint === "player" }];
+    if (!root || typeof root !== "object") return { body: text, removed: 0, background: 0 };
+    var queue = [{ value: root, depth: 0, player: endpoint === "player", backgroundTarget: endpoint === "player" }];
     var count = 0;
     var removed = 0;
-    function enqueue(value, depth, player) {
+    var background = 0;
+    function enqueue(value, depth, player, backgroundTarget) {
       if (count + queue.length >= MAX_JSON_NODES || depth > 64) fail("json-limit");
-      queue.push({ value: value, depth: depth, player: player });
+      queue.push({ value: value, depth: depth, player: player, backgroundTarget: backgroundTarget });
     }
     while (queue.length) {
       var item = queue.pop();
@@ -353,7 +398,7 @@
       if (Array.isArray(value)) {
         for (var a = 0; a < value.length; a++) {
           if (value[a] && typeof value[a] === "object") {
-            enqueue(value[a], item.depth + 1, item.player);
+            enqueue(value[a], item.depth + 1, item.player, item.backgroundTarget);
           }
         }
         continue;
@@ -369,16 +414,23 @@
           }
         }
       }
+      if (backgroundPlayback && item.backgroundTarget && value.playabilityStatus &&
+          typeof value.playabilityStatus === "object" && !Array.isArray(value.playabilityStatus) &&
+          value.playabilityStatus.playableInBackground !== true) {
+        value.playabilityStatus.playableInBackground = true;
+        background++;
+      }
       var keys = Object.keys(value);
       for (var j = 0; j < keys.length; j++) {
         var key = keys[j];
         var child = value[key];
         if (child && typeof child === "object") {
-          enqueue(child, item.depth + 1, key === "playerResponse" || key === "player");
+          var playerWrapper = key === "playerResponse" || key === "player";
+          enqueue(child, item.depth + 1, playerWrapper, playerWrapper);
         }
       }
     }
-    return { body: removed ? JSON.stringify(root) : text, removed: removed };
+    return { body: removed || background ? JSON.stringify(root) : text, removed: removed, background: background };
   }
 
   function run() {
@@ -404,7 +456,7 @@
         text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       }
       result = cleanJSON(text);
-      if (result.removed && bytes) {
+      if ((result.removed || result.background) && bytes) {
         if (typeof TextEncoder !== "function") { log("pass: no UTF-8 encoder"); return {}; }
         result.body = new TextEncoder().encode(result.body);
       }
@@ -415,9 +467,10 @@
       var budget = { fields: 0 };
       result = endpoint === "player" ? cleanPlayer(bytes, budget) : cleanWatch(bytes, budget, 0);
     }
-    log((result.removed ? "changed" : "pass") + ": removed=" + result.removed +
+    log((result.removed || result.background ? "changed" : "pass") + ": removed=" + result.removed +
+      " background_modified=" + result.background +
       " format=" + (typeof body === "string" || json ? "json" : "protobuf"));
-    return result.removed ? { body: result.body } : {};
+    return result.removed || result.background ? { body: result.body } : {};
   }
 
   var output = {};

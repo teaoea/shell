@@ -20,20 +20,21 @@ function msg(field, payload) {
 // recursively interpreted without a known enclosing message schema.
 const opaque = msg(99, [0x3a, 0x00, 0xa2, 0x04, 0x00, 0xff]);
 const status = u8([0x12, 0x02, 0x08, 0x00]);
+const statusBackground = msg(2, [0x08, 0x00, 0x20, 0x01]);
 const clean = concat(status, opaque);
 const ad = concat([0x3a, 0x03, 0x08, 0x01, 0x10], [0xa2, 0x04, 0x00]);
 const player = concat(status, ad, opaque, [0x3a, 0x00]);
 
 function run(body, { endpoint = 'player', host = 'youtubei.googleapis.com',
   url = `https://${host}/youtubei/v1/${endpoint}`, type = 'application/x-protobuf',
-  statusCode = 200, debug = true, response = true } = {}) {
+  statusCode = 200, debug = true, response = true, background = false } = {}) {
   let output;
   let calls = 0;
   const logs = [];
   const original = typeof body === 'string' ? body : body && ArrayBuffer.isView(body) ? Array.from(new Uint8Array(body.buffer, body.byteOffset, body.byteLength)) : null;
   const context = {
     $request: { url },
-    $argument: { script_debug: debug },
+    $argument: { script_debug: debug, background_playback: background },
     $done(value) { calls++; output = value; },
     console: { log(value) { logs.push(value); } },
     Uint8Array, ArrayBuffer, TextDecoder, TextEncoder
@@ -57,7 +58,7 @@ test('plugin routes playback and stream responses to distinct standalone scripts
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(entries[0].includes('argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget}]'));
+  assert.ok(entries[0].includes('argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{background_playback}]'));
   const regex = new RegExp(entries[0].split(' ')[1], 'i');
   for (const host of ['youtubei.googleapis.com', 'youtubei-att.googleapis.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube.com']) {
     assert.ok(regex.test(`https://${host}/youtubei/v1/player?key=redacted`));
@@ -68,6 +69,7 @@ test('plugin routes playback and stream responses to distinct standalone scripts
     'https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1&c=IOS']) assert.equal(regex.test(url), false);
   const active = plugin.split('\n').filter(line => !line.startsWith('#')).join('\n');
   assert.ok(active.split('[Mitm]')[1].includes('*.googlevideo.com'));
+  assert.ok(active.includes('background_playback = switch,false,'));
   assert.ok(active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={ump_enabled}'));
   assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js'));
@@ -116,6 +118,35 @@ test('preserves byte-view offsets and accepts ArrayBuffer input', () => {
   assert.deepEqual(Array.from(run(player.buffer.slice(0)).output.body), Array.from(clean));
 });
 
+test('background switch adds the explicit Protobuf capability and keeps unknown bytes', () => {
+  const result = run(clean, { background: true });
+  assert.deepEqual(Array.from(result.output.body), Array.from(concat(statusBackground, opaque)));
+  assert.ok(result.logs.some(line => line.includes('removed=0 background_modified=1')));
+});
+
+test('background switch enables false value, preserves true value, and collapses duplicates', () => {
+  const falseStatus = msg(2, [0x08, 0x00, 0x20, 0x00]);
+  assert.deepEqual(Array.from(run(concat(falseStatus, opaque), { background: true }).output.body),
+    Array.from(concat(statusBackground, opaque)));
+  passed(run(concat(statusBackground, opaque), { background: true }));
+  const duplicate = msg(2, [0x08, 0x00, 0x20, 0x01, 0x2a, 0x01, 0x7f, 0x20, 0x00]);
+  const expected = msg(2, [0x08, 0x00, 0x20, 0x01, 0x2a, 0x01, 0x7f]);
+  assert.deepEqual(Array.from(run(concat(duplicate, opaque), { background: true }).output.body),
+    Array.from(concat(expected, opaque)));
+});
+
+test('background switch modifies get_watch and repairs enclosing lengths', () => {
+  const bigOpaque = msg(99, new Uint8Array(110).fill(42));
+  const input = msg(1, msg(2, concat(status, bigOpaque)));
+  const expected = msg(1, msg(2, concat(statusBackground, bigOpaque)));
+  assert.deepEqual(Array.from(run(input, { endpoint: 'get_watch', background: true }).output.body), Array.from(expected));
+});
+
+test('background switch rejects a mismatched capability wire type without partial ad cleanup', () => {
+  const invalidStatus = msg(2, [0x08, 0x00, 0x22, 0x00]);
+  passed(run(concat(invalidStatus, ad), { background: true }));
+});
+
 test('JSON strips only player ad metadata, preserves playback/configuration', () => {
   const payload = {
     playabilityStatus: { status: 'OK' }, adPlacements: [{}], adSlots: [{}], playerAds: [{}],
@@ -141,6 +172,24 @@ test('JSON get_watch supports arrays and named player wrappers, including UTF-8 
     { content: { player: { streamingData: { value: 'keep' } } } },
     { unrelated: { adSlots: [3] } }
   ]);
+});
+
+test('JSON background switch changes only recognized player objects', () => {
+  const payload = {
+    playerResponse: { playabilityStatus: { status: 'OK', playableInBackground: false }, videoDetails: { title: 'keep' } },
+    unrelated: { playabilityStatus: { status: 'OK', playableInBackground: false } }
+  };
+  const result = run(JSON.stringify(payload), { endpoint: 'get_watch', type: 'application/json', background: true });
+  const output = JSON.parse(result.output.body);
+  assert.equal(output.playerResponse.playabilityStatus.playableInBackground, true);
+  assert.equal(output.unrelated.playabilityStatus.playableInBackground, false);
+});
+
+test('JSON background switch defaults off and does not rewrite an already enabled response', () => {
+  const disabled = JSON.stringify({ playabilityStatus: { status: 'OK', playableInBackground: false } });
+  passed(run(disabled, { type: 'application/json' }));
+  const enabled = JSON.stringify({ playabilityStatus: { status: 'OK', playableInBackground: true } });
+  passed(run(enabled, { type: 'application/json', background: true }));
 });
 
 for (const [label, body, options] of [
@@ -185,7 +234,8 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const url = prefix + 'player?key=PRIVATE_KEY&sig=PRIVATE_SIGNATURE';
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
-  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 1.4.0]')));
+  assert.ok(result.logs.some(line => line.includes('background_modified=0')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 1.5.0]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));
