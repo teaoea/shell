@@ -1,19 +1,22 @@
 /*
- * YouTubeFeedAds 1.2.2 — sponsored feed cards and optional home Shorts hiding.
+ * YouTubeFeedAds 2.0.0 — sponsored feed cards and optional home Shorts hiding.
  * browse/next/search JSON; narrowly mapped browse/next Protobuf list envelopes.
  * Protocol mapping reference: davidzeng0/innertube (2025-02-18 schema).
- * Known EML ads require a template/model pair and a structural ad command.
+ * Browser-derived strategy: remove complete promoted list entries before render.
+ * Known EML ads require a template/model pair and a structural ad command;
+ * optional adaptive mode recognizes pagead only inside a confirmed card entry.
  * Sample-derived mapping: YouTube iOS 21.39.4, 2026-10-02. Unknown EML stays raw.
  */
 (function () {
   "use strict";
-  var VERSION = "1.2.2";
+  var VERSION = "2.0.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug === true || args.script_debug === "true";
   var hideHomeShorts = args.hide_home_shorts === true || args.hide_home_shorts === "true";
+  var adaptiveFeedAds = args.adaptive_feed_ads !== false && args.adaptive_feed_ads !== "false";
   var endpoint = "unknown";
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(?:\?[^#]*)?$/i;
   var devMessages = [];
@@ -147,7 +150,7 @@
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{hide_home_shorts:hideHomeShorts, ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
+          arguments:{hide_home_shorts:hideHomeShorts, adaptive_feed_ads:adaptiveFeedAds, ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
@@ -331,6 +334,19 @@
     }
     return text;
   }
+  function containsASCII(bytes, marker) {
+    if (!bytes || bytes.length < marker.length) return false;
+    var needle = [];
+    for (var i = 0; i < marker.length; i++) needle.push(marker.charCodeAt(i));
+    for (var p = 0; p <= bytes.length - needle.length; p++) {
+      var ok = true;
+      for (var n = 0; n < needle.length; n++) {
+        if (bytes[p + n] !== needle[n]) {ok = false; break;}
+      }
+      if (ok) return true;
+    }
+    return false;
+  }
   function hasAdCommand(bytes, route, depth, budget) {
     var records = parse(bytes, budget);
     if (depth === route.length) {
@@ -460,7 +476,7 @@
   function cleanProto(bytes, kind, budget, depth, homeContext) {
     if (depth > 32) fail("protobuf-depth-limit");
     var records = parse(bytes, budget), edges = EDGES[kind] || {}, adFields = ADS[kind] || {};
-    var parts = [], removed = 0, shorts = 0, opaque = 0, eml = 0, dividers = 0, adSeen = false, drop = false;
+    var parts = [], removed = 0, adaptive = 0, shorts = 0, opaque = 0, eml = 0, dividers = 0, adSeen = false, drop = false;
     if (hideHomeShorts && endpoint === "browse") {
       if (kind === "tab") homeContext = ascii(child(bytes, 11, budget)) === "FEwhat_to_watch";
       if (kind === "sectionList" && !homeContext) homeContext = protoHomeContinuation(bytes, records, budget);
@@ -484,7 +500,12 @@
       if (next === "opaqueElement") { opaque++; parts.push(bytes.subarray(r.start, r.end)); return; }
       var result;
       if (next === "cardElement") {
-        var identity = classifyElement(bytes.subarray(r.payloadStart, r.end), budget);
+        var cardBytes = bytes.subarray(r.payloadStart, r.end);
+        var identity = classifyElement(cardBytes, budget);
+        if (!identity.ad && adaptiveFeedAds && cardBytes.length >= 1000 && containsASCII(cardBytes, "pagead")) {
+          identity.ad = true;
+          adaptive++;
+        }
         if (identity.ad && records.some(function (other) {return other.no >= 1000000 && other.no !== 153515154;})) fail("feed-mixed-renderer");
         if (identity.ad) {removed++; eml++; drop = true; return;}
         opaque++;
@@ -493,7 +514,7 @@
         return;
       }
       result = cleanProto(bytes.subarray(r.payloadStart, r.end), next, budget, depth + 1, homeContext);
-      removed += result.removed; shorts += result.shorts; opaque += result.opaque; eml += result.eml; dividers += result.dividers;
+      removed += result.removed; adaptive += result.adaptive || 0; shorts += result.shorts; opaque += result.opaque; eml += result.eml; dividers += result.dividers;
       if ((kind === "sectionList" || kind === "secondaryList" || kind === "itemSection") && r.no === 1) {
         listCount++;
         if (result.drop) {pendingAd = result.removed > 0; return;}
@@ -516,7 +537,7 @@
       drop = removed > 0 && listCount > 0 && keptListCount === 0 && safeMetadata;
       divider = divider && listCount === 1 && safeMetadata;
     }
-    return {body:removed || shorts || dividers ? join(parts) : bytes, removed:removed, shorts:shorts, opaque:opaque, eml:eml, dividers:dividers, drop:drop, divider:divider};
+    return {body:removed || shorts || dividers ? join(parts) : bytes, removed:removed, adaptive:adaptive, shorts:shorts, opaque:opaque, eml:eml, dividers:dividers, drop:drop, divider:divider};
   }
 
   var AD_KEYS = ["adSlotRenderer", "adPlacementRenderer", "inFeedAdLayoutRenderer",
@@ -649,7 +670,7 @@
       if (endpoint === "search") {log("pass: search protobuf schema unsupported"); return {};}
       result = cleanProto(bytes, endpoint, {fields:0}, 0, requestHome());
     }
-    log((result.removed || result.shorts ? "changed" : "pass") + ": removed=" + result.removed + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque + " removed_eml=" + (result.eml || 0) + " removed_dividers=" + (result.dividers || 0) + " hidden_shorts=" + (result.shorts || 0));
+    log((result.removed || result.shorts ? "changed" : "pass") + ": removed=" + result.removed + " adaptive_removed=" + (result.adaptive || 0) + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque + " removed_eml=" + (result.eml || 0) + " removed_dividers=" + (result.dividers || 0) + " hidden_shorts=" + (result.shorts || 0));
     return result.removed || result.shorts ? {body:result.body} : {};
   }
   var output = {};

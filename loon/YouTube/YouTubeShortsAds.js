@@ -1,25 +1,21 @@
 /*
- * YouTubePlaybackAds 2.0.0 — playback API ad cleanup and optional background playback for Loon.
- * Handles player/get_watch JSON and known Protobuf responses only.
- * Standalone: no imports, remote calls, redirects, or UMP processing.
- * Browser-derived strategy: remove ad metadata before the player enters ad state.
- * Known reverse-engineered schema: Player fields 2/7/9/68; Tracking field 18;
- * PlayabilityStatus fields 4/11 and BackgroundSupportedRenderer extension 64657230;
- * get_watch path 1 -> 2.
- * Shared wire helpers are included here so Loon can run this file directly.
+ * YouTubeShortsAds 1.0.0 — Shorts playback ad cleanup for Loon.
+ * Removes only entries explicitly carrying reelWatchEndpoint.adClientParams.isAd.
+ * Standalone: no imports, remote calls, redirects, DOM access, or media blocking.
+ * Schema: response entries 2 -> command 1 -> endpoint 139608561 -> params 16 -> isAd 1.
  */
 (function () {
   "use strict";
 
-  var VERSION = "2.0.0";
+  var VERSION = "1.0.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug !== false && args.script_debug !== "false";
-  var backgroundPlayback = args.background_playback === true || args.background_playback === "true";
+  var removeShortsAds = args.remove_shorts_ads !== false && args.remove_shorts_ads !== "false";
   var endpoint = "unknown";
   var MAX_BYTES = 2 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
-  var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(?:\?[^#]*)?$/i;
+  var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/reel\/reel_watch_sequence(?:\?[^#]*)?$/i;
 
   var devMessages = [];
   var devException = null;
@@ -152,7 +148,7 @@
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", background_playback:backgroundPlayback, log_level:args.log_level || "info"}}};
+          arguments:{remove_shorts_ads:removeShortsAds, log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
@@ -176,13 +172,13 @@
       message === "pass: parse/schema check failed" ? "error" :
       /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
     var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubePlaybackAds", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
+    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubeShortsAds", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
   function log(message) {
     saveLog(message);
     if (debug && typeof console !== "undefined") {
-      console.log("[YouTubePlaybackAds " + VERSION + "] " + endpoint + " " + message);
+      console.log("[YouTubeShortsAds " + VERSION + "] " + endpoint + " " + message);
     }
   }
 
@@ -303,273 +299,112 @@
     return false;
   }
 
-  function enableNestedBoolean(bytes, extensionNo) {
-    var records = parse(bytes, {fields:0});
-    var extension = encodeField(extensionNo, 2, new Uint8Array([8, 1]));
-    var parts = [], found = false, changed = false;
-    for (var i = 0; i < records.length; i++) {
-      var r = records[i];
-      if (r.no !== extensionNo) { parts.push(bytes.subarray(r.start, r.end)); continue; }
-      if (r.wire !== 2) fail("background-schema-mismatch");
-      found = true;
-      var childBytes = bytes.subarray(r.payloadStart, r.end);
-      var childRecords = parse(childBytes, {fields:0});
-      var childParts = [], active = false;
-      for (var j = 0; j < childRecords.length; j++) {
-        var c = childRecords[j];
-        if (c.no === 1) {
-          if (c.wire !== 0) fail("background-schema-mismatch");
-          if (varintIsTrue(childBytes, c)) active = true;
-          continue;
-        }
-        childParts.push(childBytes.subarray(c.start, c.end));
-      }
-      childParts.push(new Uint8Array([8, 1]));
-      var normalized = join(childParts);
-      parts.push(encodeField(extensionNo, 2, normalized));
-      if (!active || childRecords.filter(function (item) {return item.no === 1;}).length !== 1) changed = true;
-    }
-    if (!found) { parts.push(extension); changed = true; }
-    return {body:changed ? join(parts) : bytes, changed:changed};
+  function oneMessage(bytes, no, budget) {
+    var records = parse(bytes, budget), matches = [];
+    for (var i = 0; i < records.length; i++) if (records[i].no === no) matches.push(records[i]);
+    if (matches.length !== 1 || matches[0].wire !== 2) return null;
+    return bytes.subarray(matches[0].payloadStart, matches[0].end);
   }
 
-  // Keep the older direct field 4 for compatibility and also write the current
-  // nested field 11 capability used by recent iOS player responses.
-  function enableBackground(bytes, records) {
-    var matches = [];
+  // Shorts response schema:
+  // entries(2) -> command(1) -> reelWatchEndpoint(139608561)
+  // -> adClientParams(16) -> isAd(1, bool).
+  function protobufAdEntry(bytes, budget) {
+    var command = oneMessage(bytes, 1, budget);
+    if (!command) return false;
+    var endpointMessage = oneMessage(command, 139608561, budget);
+    if (!endpointMessage) return false;
+    var params = oneMessage(endpointMessage, 16, budget);
+    if (!params) return false;
+    var records = parse(params, budget), found = false;
     for (var i = 0; i < records.length; i++) {
-      if (records[i].no !== 4) continue;
-      if (records[i].wire !== 0) fail("background-schema-mismatch");
-      matches.push(i);
+      if (records[i].no !== 1) continue;
+      if (records[i].wire !== 0) fail("shorts-ad-schema-mismatch");
+      if (varintIsTrue(params, records[i])) found = true;
     }
-    var enabled = new Uint8Array([32, 1]);
-    var directChanged = !(matches.length === 1 && varintIsTrue(bytes, records[matches[0]]));
-    var parts = [];
-    for (var j = 0; j < records.length; j++) {
-      if (records[j].no === 4) {
-        if (j === matches[0]) parts.push(enabled);
-      } else {
-        parts.push(bytes.subarray(records[j].start, records[j].end));
-      }
-    }
-    if (!matches.length) parts.push(enabled);
-    var directBody = directChanged ? join(parts) : bytes;
-    var directRecords = parse(directBody, {fields:0});
-    var nestedFound = false, nestedChanged = false, nestedParts = [];
-    for (var k = 0; k < directRecords.length; k++) {
-      var record = directRecords[k];
-      if (record.no !== 11) {nestedParts.push(directBody.subarray(record.start, record.end)); continue;}
-      if (record.wire !== 2) fail("background-schema-mismatch");
-      nestedFound = true;
-      var nested = enableNestedBoolean(directBody.subarray(record.payloadStart, record.end), 64657230);
-      nestedChanged = nestedChanged || nested.changed;
-      nestedParts.push(nested.changed ? encodeField(11, 2, nested.body) : directBody.subarray(record.start, record.end));
-    }
-    if (!nestedFound) {
-      nestedParts.push(encodeField(11, 2, encodeField(64657230, 2, new Uint8Array([8, 1]))));
-      nestedChanged = true;
-    }
-    return { body:directChanged || nestedChanged ? join(nestedParts) : bytes, background:directChanged || nestedChanged ? 1 : 0 };
+    return found;
   }
 
-  function cleanTracking(bytes, budget) {
-    var records = parse(bytes, budget), parts = [], removed = 0;
+  function cleanProto(bytes, budget) {
+    var records = parse(bytes, budget), parts = [], removed = 0, entries = 0;
     for (var i = 0; i < records.length; i++) {
       var r = records[i];
-      if (r.no === 18) {
-        if (r.wire !== 2) fail("tracking-schema-mismatch");
-        removed++;
-      } else parts.push(bytes.subarray(r.start, r.end));
+      if (r.no !== 2) {parts.push(bytes.subarray(r.start, r.end)); continue;}
+      entries++;
+      if (r.wire !== 2) fail("shorts-entry-schema-mismatch");
+      if (protobufAdEntry(bytes.subarray(r.payloadStart, r.end), budget)) removed++;
+      else parts.push(bytes.subarray(r.start, r.end));
     }
-    return {body:removed ? join(parts) : bytes, removed:removed};
+    return {body:removed ? join(parts) : bytes, removed:removed, entries:entries};
   }
 
-  function cleanPlayer(bytes, budget) {
-    var records = parse(bytes, budget);
-    var recognized = false;
-    var statusChanges = [], trackingChanges = [];
-    for (var i = 0; i < records.length; i++) {
-      var r = records[i];
-      if (r.no === 2) {
-        if (r.wire !== 2) fail("player-schema-mismatch");
-        var status = parse(bytes.subarray(r.payloadStart, r.end), budget);
-        for (var s = 0; s < status.length; s++) {
-          if (status[s].no === 1 && status[s].wire !== 0) fail("status-schema-mismatch");
-        }
-        if (backgroundPlayback) statusChanges[i] = enableBackground(bytes.subarray(r.payloadStart, r.end), status);
-        recognized = true;
-      }
-      if ((r.no === 7 || r.no === 68) && r.wire !== 2) fail("ad-schema-mismatch");
-      if (r.no === 9) {
-        if (r.wire !== 2) fail("tracking-schema-mismatch");
-        trackingChanges[i] = cleanTracking(bytes.subarray(r.payloadStart, r.end), budget);
-      }
-    }
-    if (!recognized) return { body: bytes, removed: 0, tracking: 0, background: 0 };
-    var parts = [];
-    var removed = 0;
-    var tracking = 0;
-    var background = 0;
-    for (var j = 0; j < records.length; j++) {
-      var field = records[j];
-      if (field.no === 7 || field.no === 68) removed++;
-      else if (trackingChanges[j] && trackingChanges[j].removed) {
-        parts.push(replaceChild(bytes, field, trackingChanges[j].body));
-        removed += trackingChanges[j].removed;
-        tracking += trackingChanges[j].removed;
-      }
-      else if (statusChanges[j] && statusChanges[j].background) {
-        parts.push(replaceChild(bytes, field, statusChanges[j].body));
-        background += statusChanges[j].background;
-      }
-      else parts.push(bytes.subarray(field.start, field.end));
-    }
-    return { body: removed || background ? join(parts) : bytes, removed: removed, tracking: tracking, background: background };
-  }
-
-  // Rebuild only the enclosing length when a known child changes. Everything
-  // else, including unknown fields, ordering and original varints, stays raw.
-  function cleanWatch(bytes, budget, level) {
-    var records = parse(bytes, budget);
-    var target = level === 0 ? 1 : 2;
-    var parts = [];
-    var removed = 0;
-    var tracking = 0;
-    var background = 0;
-    for (var i = 0; i < records.length; i++) {
-      var r = records[i];
-      if (r.no !== target) {
-        parts.push(bytes.subarray(r.start, r.end));
-        continue;
-      }
-      if (r.wire !== 2) fail("watch-schema-mismatch");
-      var payload = bytes.subarray(r.payloadStart, r.end);
-      var result = level === 0 ? cleanWatch(payload, budget, 1) : cleanPlayer(payload, budget);
-      removed += result.removed;
-      tracking += result.tracking || 0;
-      background += result.background;
-      parts.push(result.removed || result.background ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
-    }
-    return { body: removed || background ? join(parts) : bytes, removed: removed, tracking: tracking, background: background };
+  function object(value) {return !!value && typeof value === "object" && !Array.isArray(value);}
+  function jsonAdEntry(entry) {
+    var endpointValue = entry && entry.command && entry.command.reelWatchEndpoint;
+    return object(endpointValue) && object(endpointValue.adClientParams) && endpointValue.adClientParams.isAd === true;
   }
 
   function cleanJSON(text) {
-    var root = JSON.parse(text);
-    if (!root || typeof root !== "object") return { body: text, removed: 0, tracking: 0, background: 0 };
-    var queue = [{ value: root, depth: 0, player: endpoint === "player", backgroundTarget: endpoint === "player" }];
-    var count = 0;
-    var removed = 0;
-    var tracking = 0;
-    var background = 0;
-    function enqueue(value, depth, player, backgroundTarget) {
-      if (count + queue.length >= MAX_JSON_NODES || depth > 64) fail("json-limit");
-      queue.push({ value: value, depth: depth, player: player, backgroundTarget: backgroundTarget });
-    }
+    var root = JSON.parse(text), queue = [root], nodes = 0, removed = 0, entries = 0;
     while (queue.length) {
-      var item = queue.pop();
-      var value = item.value;
-      if (++count > MAX_JSON_NODES || item.depth > 64) fail("json-limit");
+      var value = queue.pop();
+      if (!value || typeof value !== "object") continue;
+      if (++nodes > MAX_JSON_NODES) fail("json-limit");
       if (Array.isArray(value)) {
-        for (var a = 0; a < value.length; a++) {
-          if (value[a] && typeof value[a] === "object") {
-            enqueue(value[a], item.depth + 1, item.player, item.backgroundTarget);
-          }
-        }
+        for (var a = 0; a < value.length; a++) queue.push(value[a]);
         continue;
       }
-      var isPlayer = item.player || Object.prototype.hasOwnProperty.call(value, "playabilityStatus") ||
-        Object.prototype.hasOwnProperty.call(value, "streamingData");
-      if (isPlayer) {
-        var adKeys = ["adPlacements", "adSlots", "playerAds"];
-        for (var k = 0; k < adKeys.length; k++) {
-          if (Object.prototype.hasOwnProperty.call(value, adKeys[k])) {
-            delete value[adKeys[k]];
-            removed++;
-          }
-        }
-        if (value.playbackTracking && typeof value.playbackTracking === "object" &&
-            Object.prototype.hasOwnProperty.call(value.playbackTracking, "pageadViewthroughconversion")) {
-          delete value.playbackTracking.pageadViewthroughconversion;
-          removed++;
-          tracking++;
-        }
-      }
-      if (backgroundPlayback && item.backgroundTarget && value.playabilityStatus &&
-          typeof value.playabilityStatus === "object" && !Array.isArray(value.playabilityStatus)) {
-        var backgroundChanged = false;
-        if (value.playabilityStatus.playableInBackground !== true) {
-          value.playabilityStatus.playableInBackground = true;
-          backgroundChanged = true;
-        }
-        var renderer = value.playabilityStatus.backgroundPlayerRender;
-        if (!renderer || !renderer.backgroundAbility || renderer.backgroundAbility.active !== true) {
-          value.playabilityStatus.backgroundPlayerRender = {backgroundAbility:{active:true}};
-          backgroundChanged = true;
-        }
-        if (backgroundChanged) background++;
-      }
       var keys = Object.keys(value);
-      for (var j = 0; j < keys.length; j++) {
-        var key = keys[j];
-        var child = value[key];
-        if (child && typeof child === "object") {
-          var playerWrapper = key === "playerResponse" || key === "player";
-          enqueue(child, item.depth + 1, playerWrapper, playerWrapper);
+      for (var i = 0; i < keys.length; i++) {
+        var key = keys[i], child = value[key];
+        if (key === "entries" && Array.isArray(child)) {
+          entries += child.length;
+          value[key] = child.filter(function (entry) {
+            if (jsonAdEntry(entry)) {removed++; return false;}
+            return true;
+          });
+          child = value[key];
         }
+        if (child && typeof child === "object") queue.push(child);
       }
     }
-    return { body: removed || background ? JSON.stringify(root) : text, removed: removed, tracking: tracking, background: background };
+    return {body:removed ? JSON.stringify(root) : text, removed:removed, entries:entries};
   }
 
   function run() {
     var match = API.exec(typeof $request !== "undefined" ? $request.url || "" : "");
-    if (!match || typeof $response === "undefined") return {};
-    endpoint = match[1].toLowerCase();
-    var status = $response.status;
-    if (status !== undefined && Number(status) !== 200) { log("pass: non-200"); return {}; }
+    if (!match || typeof $response === "undefined" || !removeShortsAds) return {};
+    endpoint = "reel_watch_sequence";
+    if ($response.status !== undefined && Number($response.status) !== 200) {log("pass: non-200"); return {};}
     var type = header($response.headers, "content-type").split(";")[0].trim();
-    if (type === "application/vnd.yt-ump") { log("pass: UMP unsupported"); return {}; }
-    var body = $response.body;
-    var bytes = bytesOf(body);
-    if (typeof body !== "string" && !bytes) { log("pass: body unavailable"); return {}; }
-    if ((bytes ? bytes.length : body.length) > MAX_BYTES) { log("pass: size-limit"); return {}; }
-    if (!(bytes ? bytes.length : body.length)) { log("pass: empty"); return {}; }
-    if (bytes && bytes[0] === 31 && bytes[1] === 139) { log("pass: compressed body"); return {}; }
-    var json = /^(?:application\/(?:json|[\w.+-]+\+json)|text\/json)$/.test(type);
-    var result;
+    var body = $response.body, bytes = bytesOf(body);
+    if (typeof body !== "string" && !bytes) {log("pass: body unavailable"); return {};}
+    if ((bytes ? bytes.length : body.length) > MAX_BYTES) {log("pass: size-limit"); return {};}
+    if (!(bytes ? bytes.length : body.length)) {log("pass: empty"); return {};}
+    if (bytes && bytes[0] === 31 && bytes[1] === 139) {log("pass: compressed body"); return {};}
+    var json = /^(?:application\/(?:json|[\w.+-]+\+json)|text\/json)$/.test(type), result;
     if (typeof body === "string" || json) {
       var text = body;
       if (bytes) {
-        if (typeof TextDecoder !== "function") { log("pass: no UTF-8 decoder"); return {}; }
-        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        if (typeof TextDecoder !== "function") {log("pass: no UTF-8 decoder"); return {};}
+        text = new TextDecoder("utf-8", {fatal:true}).decode(bytes);
       }
       result = cleanJSON(text);
-      if ((result.removed || result.background) && bytes) {
-        if (typeof TextEncoder !== "function") { log("pass: no UTF-8 encoder"); return {}; }
+      if (result.removed && bytes) {
+        if (typeof TextEncoder !== "function") {log("pass: no UTF-8 encoder"); return {};}
         result.body = new TextEncoder().encode(result.body);
       }
     } else {
-      if (type && !/^(?:application\/(?:x-protobuf|protobuf|vnd\.google\.protobuf|octet-stream))$/.test(type)) {
-        log("pass: unsupported content type"); return {};
-      }
-      var budget = { fields: 0 };
-      result = endpoint === "player" ? cleanPlayer(bytes, budget) : cleanWatch(bytes, budget, 0);
+      if (!bytes || !/^(?:application\/(?:x-protobuf|protobuf|vnd\.google\.protobuf|octet-stream))$/.test(type)) {log("pass: unsupported content type"); return {};}
+      result = cleanProto(bytes, {fields:0});
     }
-    log((result.removed || result.background ? "changed" : "pass") + ": removed=" + result.removed +
-      " tracking_removed=" + (result.tracking || 0) +
-      " background_modified=" + result.background +
-      " format=" + (typeof body === "string" || json ? "json" : "protobuf"));
-    return result.removed || result.background ? { body: result.body } : {};
+    log((result.removed ? "changed" : "pass") + ": removed=" + result.removed + " entries=" + result.entries + " format=" + (typeof body === "string" || json ? "json" : "protobuf"));
+    return result.removed ? {body:result.body} : {};
   }
 
   var output = {};
-  try { output = run(); }
-  catch (error) {
-    devFailure(error);
-    // Do not log exception messages from JSON/UTF-8 parsers: they may contain
-    // pieces of response data. Failed parsing leaves the complete body intact.
-    log("pass: " + (error.ytNoAdsCode || "parse/schema check failed"));
-  }
-  if (typeof $request !== "undefined" && typeof $response !== "undefined" && API.test($request.url || "")) devCapture("YouTubePlaybackAds", "response", endpoint, VERSION, output);
+  try {output = run();}
+  catch (error) {devFailure(error); log("pass: " + (error.ytNoAdsCode || "parse/schema check failed"));}
+  if (typeof $request !== "undefined" && typeof $response !== "undefined" && API.test($request.url || "")) devCapture("YouTubeShortsAds", "response", endpoint, VERSION, output);
   $done(output);
 })();

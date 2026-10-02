@@ -134,6 +134,17 @@ test('EML continuation and mixed ItemSection remove only identified ad contents'
  const expected=msg(10,msg(49399797,msg(1,section(keep,keep))));
  assert.deepEqual(Buffer.from(run(original,{type:'application/x-protobuf'}).output.body),Buffer.from(expected));
 });
+test('adaptive browser-derived pagead marker removes only a confirmed card entry',()=>{
+ const opaque=cat(new Uint8Array(1100).fill(65),text('pagead'));
+ const candidate=msg(1,section(element('unknown_layout',{model:777777,modelData:opaque,command:false})));
+ const keep=msg(1,normalEml());
+ const input=home(cat(candidate,keep)),expected=home(keep);
+ const result=run(input,{type:'application/x-protobuf'});
+ assert.deepEqual(Buffer.from(result.output.body),Buffer.from(expected));
+ assert.ok(result.logs.join('').includes('adaptive_removed=1'));
+ const disabled=run(input,{type:'application/x-protobuf',extra:{$argument:{script_debug:true,adaptive_feed_ads:false}}});
+ assert.equal(Object.keys(disabled.output).length,0);
+});
 for(const [label,name,options] of [
  ['normal template containing ad model','video_lockup_with_attachment',{model:491441836,route:emlRoutes.video_display_button_group_layout.route}],
  ['unknown template','unknown_ad_layout',{model:491441836,route:emlRoutes.video_display_button_group_layout.route}],

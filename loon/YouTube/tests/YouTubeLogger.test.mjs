@@ -45,7 +45,7 @@ function play(store, debug = false, failure = '') {
 
 test('main plugin contains both ad rules and one disabled logger entry; no separate plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
-  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 3);
+  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 4);
   assert.ok(plugin.includes('log_enabled = switch,false'));
   assert.ok(plugin.includes('script_debug = switch,false'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
@@ -87,7 +87,7 @@ test('start, collect with console off, pause and export playback results without
   play(store);
   const exportLog = request(store, '/download.log');
   assert.ok(exportLog.body.includes('Entries: 1'));
-  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 1.5.0] player changed'));
+  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 2.0.0] player changed'));
   assert.ok(!exportLog.body.includes('PRIVATE') && !exportLog.body.includes('SECRET'));
 });
 test('playback and stream summaries append to the same buffer and one file', () => {

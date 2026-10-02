@@ -16,11 +16,15 @@ function v(n) {
 function msg(field, payload) {
   return concat(v(field * 8 + 2), v(payload.length), payload);
 }
+function scalar(field, value) {
+  return concat(v(field * 8), v(value));
+}
 // Unknown payload deliberately contains ad-looking tags; it must not be
 // recursively interpreted without a known enclosing message schema.
 const opaque = msg(99, [0x3a, 0x00, 0xa2, 0x04, 0x00, 0xff]);
 const status = u8([0x12, 0x02, 0x08, 0x00]);
-const statusBackground = msg(2, [0x08, 0x00, 0x20, 0x01]);
+const backgroundRenderer = msg(11, msg(64657230, scalar(1, 1)));
+const statusBackground = msg(2, concat([0x08, 0x00, 0x20, 0x01], backgroundRenderer));
 const clean = concat(status, opaque);
 const ad = concat([0x3a, 0x03, 0x08, 0x01, 0x10], [0xa2, 0x04, 0x00]);
 const player = concat(status, ad, opaque, [0x3a, 0x00]);
@@ -53,8 +57,8 @@ function passed(result) {
 
 test('plugin routes playback and stream responses to distinct standalone scripts', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
-  assert.equal(allEntries.length, 3);
-  const entries = allEntries.filter(line => !line.includes('YouTubeFeedAds.js'));
+  assert.equal(allEntries.length, 4);
+  const entries = allEntries.filter(line => !line.includes('YouTubeFeedAds.js') && !line.includes('YouTubeShortsAds.js'));
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
@@ -130,7 +134,7 @@ test('background switch enables false value, preserves true value, and collapses
     Array.from(concat(statusBackground, opaque)));
   passed(run(concat(statusBackground, opaque), { background: true }));
   const duplicate = msg(2, [0x08, 0x00, 0x20, 0x01, 0x2a, 0x01, 0x7f, 0x20, 0x00]);
-  const expected = msg(2, [0x08, 0x00, 0x20, 0x01, 0x2a, 0x01, 0x7f]);
+  const expected = msg(2, concat([0x08, 0x00, 0x20, 0x01, 0x2a, 0x01, 0x7f], backgroundRenderer));
   assert.deepEqual(Array.from(run(concat(duplicate, opaque), { background: true }).output.body),
     Array.from(concat(expected, opaque)));
 });
@@ -161,6 +165,17 @@ test('JSON strips only player ad metadata, preserves playback/configuration', ()
   assert.deepEqual(output, expected);
 });
 
+test('removes pagead view-through tracking while preserving other tracking URLs', () => {
+  const tracking = msg(9, concat(msg(1, [1]), msg(18, [2]), msg(5, [3])));
+  const input = concat(status, tracking, opaque);
+  const expected = concat(status, msg(9, concat(msg(1, [1]), msg(5, [3]))), opaque);
+  assert.deepEqual(Array.from(run(input).output.body), Array.from(expected));
+  const payload = {playabilityStatus:{status:'OK'},playbackTracking:{pageadViewthroughconversion:{baseUrl:'drop'},qoeUrl:{baseUrl:'keep'}}};
+  assert.deepEqual(JSON.parse(run(JSON.stringify(payload),{type:'application/json'}).output.body),
+    {playabilityStatus:{status:'OK'},playbackTracking:{qoeUrl:{baseUrl:'keep'}}});
+  assert.ok(run(input).logs.some(line => line.includes('tracking_removed=1')));
+});
+
 test('JSON get_watch supports arrays and named player wrappers, including UTF-8 bytes', () => {
   const payload = [{ playerResponse: { adPlacements: [1], videoDetails: { title: '测试影片' } } },
     { content: { player: { adSlots: [2], streamingData: { value: 'keep' } } } },
@@ -185,11 +200,13 @@ test('JSON background switch changes only recognized player objects', () => {
   assert.equal(output.unrelated.playabilityStatus.playableInBackground, false);
 });
 
-test('JSON background switch defaults off and does not rewrite an already enabled response', () => {
+test('JSON background switch defaults off and requires direct plus nested capabilities', () => {
   const disabled = JSON.stringify({ playabilityStatus: { status: 'OK', playableInBackground: false } });
   passed(run(disabled, { type: 'application/json' }));
   const enabled = JSON.stringify({ playabilityStatus: { status: 'OK', playableInBackground: true } });
-  passed(run(enabled, { type: 'application/json', background: true }));
+  const changed = JSON.parse(run(enabled, { type: 'application/json', background: true }).output.body);
+  assert.equal(changed.playabilityStatus.backgroundPlayerRender.backgroundAbility.active, true);
+  passed(run(JSON.stringify(changed), { type: 'application/json', background: true }));
 });
 
 for (const [label, body, options] of [
@@ -235,7 +252,7 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
   assert.ok(result.logs.some(line => line.includes('background_modified=0')));
-  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 1.5.0]')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 2.0.0]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));
