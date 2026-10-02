@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const source = fs.readFileSync(new URL('../YouTubeNoAds.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../YouTubeStreamAds.js', import.meta.url), 'utf8');
 const context = { module: { exports: {} }, Uint8Array, ArrayBuffer };
 vm.runInNewContext(source, context);
 const { processUMP, readUMPInt, encodeUMPInt } = context.module.exports;
@@ -109,19 +109,20 @@ for (const [label, input] of [
   assert.throws(() => processUMP(bytes(input), 'clean_prefetch'));
 });
 
-function runtime(body, mode = 'clean_prefetch', enabled = true, type = 'application/vnd.yt-ump') {
+function runtime(body, mode = 'clean_prefetch', enabled = true, type = 'application/vnd.yt-ump', url = 'https://rr5.googlevideo.com/videoplayback?ctier=L&sig=PRIVATE_SIG') {
   let output;
   let calls = 0;
   const logs = [];
   vm.runInNewContext(source, {
     Uint8Array, ArrayBuffer, TextDecoder, TextEncoder,
-    $request: { url: 'https://rr5.googlevideo.com/videoplayback?ctier=L&sig=PRIVATE_SIG' },
+    $request: { url },
     $response: { status: 200, body, headers: { 'Content-Type': type } },
     $argument: { ump_enabled: enabled, ump_mode: mode, script_debug: true },
     $done(result) { output = result; calls++; }, console: { log(line) { logs.push(line); } }
   }, { timeout: 1000 });
   assert.equal(calls, 1);
   assert.ok(!logs.join('\n').includes('PRIVATE_SIG'));
+  assert.ok(logs.every(line => line.startsWith('[YouTubeStreamAds 1.2.1]')));
   return { output, logs };
 }
 
@@ -142,4 +143,17 @@ test('live adapter has a real cleanup route, inspect default, and an off switch'
 test('UMP resource limits pass the whole original response through', () => {
   assert.deepEqual(Object.keys(runtime(new Uint8Array(8 * 1024 * 1024 + 1)).output), []);
   assert.deepEqual(Object.keys(runtime(new Uint8Array(20002)).output), []);
+});
+
+test('standalone stream script leaves playback APIs and unrelated hosts untouched', () => {
+  assert.ok(!source.includes('function cleanPlayer('));
+  assert.ok(!source.includes('function cleanJSON('));
+  const input = shortPart(69, adPrefetch);
+  for (const url of ['https://youtubei.googleapis.com/youtubei/v1/player',
+    'https://youtubei-att.googleapis.com/youtubei/v1/get_watch',
+    'https://rr5.googlevideo.com.evil.test/videoplayback?ctier=L']) {
+    const result = runtime(input, 'clean_prefetch', true, 'application/vnd.yt-ump', url);
+    assert.deepEqual(Object.keys(result.output), []);
+    assert.equal(result.logs.length, 0);
+  }
 });

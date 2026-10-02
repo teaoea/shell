@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const source = fs.readFileSync(new URL('../YouTubeNoAds.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../YouTubePlaybackAds.js', import.meta.url), 'utf8');
 const plugin = fs.readFileSync(new URL('../YouTubeNoAds.plugin', import.meta.url), 'utf8');
 const prefix = 'https://youtubei.googleapis.com/youtubei/v1/';
 const u8 = value => Uint8Array.from(value);
@@ -26,14 +26,14 @@ const player = concat(status, ad, opaque, [0x3a, 0x00]);
 
 function run(body, { endpoint = 'player', host = 'youtubei.googleapis.com',
   url = `https://${host}/youtubei/v1/${endpoint}`, type = 'application/x-protobuf',
-  statusCode = 200, debug = true, response = true, umpEnabled = false, umpMode = 'inspect' } = {}) {
+  statusCode = 200, debug = true, response = true } = {}) {
   let output;
   let calls = 0;
   const logs = [];
   const original = typeof body === 'string' ? body : body && ArrayBuffer.isView(body) ? Array.from(new Uint8Array(body.buffer, body.byteOffset, body.byteLength)) : null;
   const context = {
     $request: { url },
-    $argument: { script_debug: debug, ump_enabled: umpEnabled, ump_mode: umpMode },
+    $argument: { script_debug: debug },
     $done(value) { calls++; output = value; },
     console: { log(value) { logs.push(value); } },
     Uint8Array, ArrayBuffer, TextDecoder, TextEncoder
@@ -50,10 +50,10 @@ function passed(result) {
   assert.deepEqual(Object.keys(result.output), [], 'must return no changes');
 }
 
-test('plugin uses one self-owned script with UMP processing disabled by default', () => {
+test('plugin routes playback and stream responses to distinct standalone scripts', () => {
   const entries = plugin.split('\n').filter(line => /^http-(request|response) /.test(line));
   assert.equal(entries.length, 2);
-  assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTubeNoAds.js'));
+  assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
   assert.ok(entries[0].includes('argument=[{script_debug}]'));
   const regex = new RegExp(entries[0].split(' ')[1], 'i');
@@ -68,11 +68,14 @@ test('plugin uses one self-owned script with UMP processing disabled by default'
   assert.ok(active.split('[Mitm]')[1].includes('*.googlevideo.com'));
   assert.ok(active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={ump_enabled}'));
+  assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js'));
+  assert.ok(!source.includes('function processUMP('));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
   assert.ok(!active.includes('DOMAIN-SUFFIX,googlevideo.com'));
   assert.ok(!active.includes('reject(502)'));
   assert.ok(!active.includes('Maasea'));
-  assert.ok(!source.includes('$httpClient') && !source.includes('$persistentStore'));
+  assert.ok(!source.includes('$httpClient'));
+  assert.ok(source.includes('$persistentStore'), 'optional local logging uses Loon storage');
 });
 
 for (const host of ['youtubei.googleapis.com', 'youtubei-att.googleapis.com']) {
@@ -180,6 +183,7 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const url = prefix + 'player?key=PRIVATE_KEY&sig=PRIVATE_SIGNATURE';
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 1.2.1]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));
