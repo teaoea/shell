@@ -1,5 +1,8 @@
 #!name = YouTube去广告
 
+# 不使用 ctier=L / videoplayback 的 502、空响应或媒体拒绝规则。
+# 此类拦截在设备实测中造成几秒黑屏，已撤销；不保证清除 UMP 播放广告。
+
 [Argument]
 captionLang = select,"off",tag=字幕翻译,desc=保持关闭
 blockUpload = switch,false,tag=隐藏上传按钮
