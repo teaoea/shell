@@ -1,4 +1,4 @@
-/* YouTubeLogger 1.4.0 — shared diagnostic cache, levels and .log export.
+/* YouTubeLogger 1.5.0 — shared diagnostic cache, levels and .log export.
  * No network calls, filesystem assumptions, third-party code, or automatic uploads.
  * Enabled manually in the main plugin; no separate Logger plugin.
  */
@@ -6,7 +6,7 @@
   "use strict";
   var CONFIG = "ytads.logger.config.v1";
   var CACHE = "ytads.logger.entries.v2";
-  var SOURCES = ["YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeLogger"];
+  var SOURCES = ["YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeLogger"];
   var BASE = "http://youtube-logs.invalid/";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$/i;
@@ -211,7 +211,7 @@
         // Read only the owned schema; never dump arbitrary store contents.
         if (!r || SOURCES.indexOf(r.source) === -1 || !Object.prototype.hasOwnProperty.call(ranks, r.level) || typeof r.time !== "string" || !/^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(r.time) ||
             typeof r.version !== "string" || !/^\d+\.\d+\.\d+$/.test(r.version) ||
-            !/^(player|get_watch|browse|next|search|reel_watch_sequence|ump|unknown)$/.test(r.endpoint) ||
+            !/^(player|get_watch|browse|next|search|reel_watch_sequence|ad_break|ump|unknown)$/.test(r.endpoint) ||
             typeof r.message !== "string" || r.message.length > 600 || /[\r\n<>]/.test(r.message)) return;
         var row = { time:r.time, source:r.source, level:r.level, version:r.version, endpoint:r.endpoint, message:r.message };
         if (r.captureRef && typeof r.captureRef.prefix === "string" &&
@@ -264,7 +264,7 @@
       recording:!!(c && c.enabled), stoppedReason:c && c.haltReason || null,
       settings:{rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
       completeness:{allReferencedSamplesReadable:issues.length === 0, stoppedDueToLimitOrError:!!(c && c.haltReason), issues:issues,
-        limitations:["Only matched player/get_watch/browse/next/search/reel_watch_sequence and enabled UMP response scripts; not all YouTube traffic.",
+        limitations:["Only matched player/get_watch/browse/next/search/reel_watch_sequence/player/ad_break and enabled UMP response scripts; not all YouTube traffic.",
           "Media response capture requires ump_enabled=true; inspect is recommended.",
           "Runtime bodies may already be decoded; these are not TLS/HTTP wire bytes.",
           "Missing runtime bodies are marked unavailable; before/after transport headers are not reconstructed.",
@@ -363,7 +363,7 @@
       if (api || media) {
         var apiName = api ? api[1].toLowerCase() : "ump";
         var source = apiName === "reel/reel_watch_sequence" ? "YouTubeShortsAds" : /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeedAds" : api ? "YouTubePlaybackAds" : "YouTubeStreamAds";
-        devCapture(source, "request", apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName, "1.4.0", {});
+        devCapture(source, "request", apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName, "1.5.0", {});
         return {};
       }
     }
@@ -383,7 +383,7 @@
       if (method !== "POST") return response(405, "Use the buttons on the log page.", "text/plain; charset=utf-8", {Allow:"POST"});
       if (path === "/mark-ad" || path === "/mark-content") {
         if (!c || c.enabled !== true) return response(409, "请先开始记录，再标记播放状态。", "text/plain; charset=utf-8");
-        if (!devAppend({source:"YouTubeLogger", version:"1.4.0", endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : "content-playing")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
+        if (!devAppend({source:"YouTubeLogger", version:"1.5.0", endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : "content-playing")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
         return response(303, "", "text/plain; charset=utf-8", {Location:BASE});
       }
       if (path === "/clear") {

@@ -154,6 +154,8 @@ test('background switch rejects a mismatched capability wire type without partia
 test('JSON strips only player ad metadata, preserves playback/configuration', () => {
   const payload = {
     playabilityStatus: { status: 'OK' }, adPlacements: [{}], adSlots: [{}], playerAds: [{}],
+    adBreakHeartbeatParams: 'drop', adParams: 'drop',
+    playerConfig: {adPlacementConfig:{enabled:true},adSignalsConfig:{token:'drop'},keep:'value'},
     streamingData: { serverAbrStreamingUrl: 'https://rr5.googlevideo.com/videoplayback?ctier=L&sig=secret' },
     captions: { language: 'zh' }, unrelated: { adSlots: ['keep'], value: 3 },
     playbackTracking: { videostatsPlaybackUrl: { baseUrl: 'https://s.youtube.com/example' } }
@@ -162,6 +164,8 @@ test('JSON strips only player ad metadata, preserves playback/configuration', ()
   const output = JSON.parse(result.output.body);
   const expected = structuredClone(payload);
   delete expected.adPlacements; delete expected.adSlots; delete expected.playerAds;
+  delete expected.adBreakHeartbeatParams; delete expected.adParams;
+  delete expected.playerConfig.adPlacementConfig; delete expected.playerConfig.adSignalsConfig;
   assert.deepEqual(output, expected);
 });
 
@@ -252,7 +256,7 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
   assert.ok(result.logs.some(line => line.includes('background_modified=0')));
-  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 2.0.0]')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 2.1.0]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));

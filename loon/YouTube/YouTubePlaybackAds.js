@@ -1,5 +1,5 @@
 /*
- * YouTubePlaybackAds 2.0.0 — playback API ad cleanup and optional background playback for Loon.
+ * YouTubePlaybackAds 2.1.0 — playback API ad cleanup and optional background playback for Loon.
  * Handles player/get_watch JSON and known Protobuf responses only.
  * Standalone: no imports, remote calls, redirects, or UMP processing.
  * Browser-derived strategy: remove ad metadata before the player enters ad state.
@@ -11,7 +11,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "2.0.0";
+  var VERSION = "2.1.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug !== false && args.script_debug !== "false";
@@ -480,7 +480,7 @@
       var isPlayer = item.player || Object.prototype.hasOwnProperty.call(value, "playabilityStatus") ||
         Object.prototype.hasOwnProperty.call(value, "streamingData");
       if (isPlayer) {
-        var adKeys = ["adPlacements", "adSlots", "playerAds"];
+        var adKeys = ["adPlacements", "adSlots", "playerAds", "adBreakHeartbeatParams", "adParams"];
         for (var k = 0; k < adKeys.length; k++) {
           if (Object.prototype.hasOwnProperty.call(value, adKeys[k])) {
             delete value[adKeys[k]];
@@ -492,6 +492,15 @@
           delete value.playbackTracking.pageadViewthroughconversion;
           removed++;
           tracking++;
+        }
+        if (value.playerConfig && typeof value.playerConfig === "object" && !Array.isArray(value.playerConfig)) {
+          var configKeys = ["adPlacementConfig", "adSignalsConfig"];
+          for (var c = 0; c < configKeys.length; c++) {
+            if (Object.prototype.hasOwnProperty.call(value.playerConfig, configKeys[c])) {
+              delete value.playerConfig[configKeys[c]];
+              removed++;
+            }
+          }
         }
       }
       if (backgroundPlayback && item.backgroundTarget && value.playabilityStatus &&

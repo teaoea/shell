@@ -1,10 +1,11 @@
 #!name = YouTube去广告
-#!desc = 按功能拆分的 YouTube App 广告处理：清理首页/推荐/搜索赞助卡片、播放器广告位、广告追踪和 Shorts 播放广告；可开启自适应信息流识别、后台播放、隐藏首页 Shorts，并提供 UMP 试验、分级日志和开发抓包。需开启 MitM 并信任证书；不以阻断 googlevideo 媒体请求的方式跳过广告，避免播放器等待导致黑屏。
+#!desc = 按功能拆分的 YouTube App 广告处理：清理首页/推荐/搜索赞助卡片、播放器广告位和追踪、拦截 player/ad_break 片头/中插广告配置，并清理 Shorts 播放广告；可开启后台播放、隐藏首页 Shorts，提供 UMP 试验、分级日志和开发抓包。需开启 MitM 并信任证书；不阻断 googlevideo 媒体请求，避免播放器等待导致黑屏。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/loon/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
 
 [Argument]
+block_ad_break = switch,true,tag=拦截片头/中插广告配置,desc=对明确的 player/ad_break 请求返回空 Protobuf；不拦截视频媒体
 background_playback = switch,false,tag=后台播放,desc=开启后允许普通视频在切换 App 或锁屏后继续播放音频；直播和受限内容仍由 YouTube 决定
 remove_shorts_ads = switch,true,tag=清理 Shorts 广告,desc=删除明确标记 isAd 的 Shorts 播放条目；保留普通 Shorts
 adaptive_feed_ads = switch,true,tag=自适应信息流广告,desc=在已确认的信息流卡片内识别 pagead 标记，补充固定 EML 映射
@@ -24,6 +25,7 @@ AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch|browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget},{ump_enabled},{ump_mode},{background_playback},{remove_shorts_ads},{adaptive_feed_ads}],tag=YouTube 开发请求抓包
+http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeAdBreak.js,requires-body=true,binary-body-mode=true,timeout=10,enable={block_ad_break},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{block_ad_break}],tag=YouTube 片头与中插广告配置拦截
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeFeedAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{hide_home_shorts},{adaptive_feed_ads}],tag=YouTube 信息流广告与首页 Shorts 处理
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{background_playback}],tag=YouTube 播放广告位清理与后台播放
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/reel\/reel_watch_sequence(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeShortsAds.js,requires-body=true,binary-body-mode=true,timeout=10,enable={remove_shorts_ads},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{remove_shorts_ads}],tag=YouTube Shorts 播放广告清理
