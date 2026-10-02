@@ -1,0 +1,18 @@
+#!name = YouTube 视频贴片去广告
+#!desc = 主要针对 YouTube 播放前与播放中插入的贴片广告，引用 Maasea 脚本。需要启用 MitM 并安装、信任证书；效果受客户端与服务端更新影响。
+#!author = Maasea（脚本），本仓库（Loon 配置适配）
+#!homepage = https://github.com/Maasea/sgmodule
+#!loon_version = 3.5.1(983)
+#!tag = 去广告,YouTube
+
+# 使用 Loon 新版 Script 语法。参数为 JSON 字符串，供上游脚本解析。
+# 保留上传、选段和 Shorts 按钮；关闭字幕翻译与调试日志。
+# player / get_watch 等响应及 initplayback 请求用于处理播放广告；
+# 保留上游配套接口，以免影响客户端配置与播放请求处理。
+[Script]
+response if ${url} ~= /^https:\/\/youtubei\.googleapis\.com\/(youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config))(\?(.*))?$/ then script("https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js", `{"captionLang":"off","blockUpload":false,"blockImmersive":false,"blockShorts":false,"debug":false}`) with requires_body=true, binary_body_mode=true, timeout=20, tag="YouTube 广告响应处理"
+request if ${url} ~= /^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.*/ then script("https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js", `{"captionLang":"off"}`) with requires_body=true, binary_body_mode=true, timeout=20, tag="YouTube 播放请求处理"
+request if ${url} ~= /^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/log_event/ then script("https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js") with requires_body=true, binary_body_mode=true, timeout=20, tag="YouTube 日志请求处理"
+
+[Mitm]
+hostname = youtubei.googleapis.com, *.googlevideo.com
