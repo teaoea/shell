@@ -104,6 +104,9 @@ const emlRoutes={
  video_display_button_group_layout:{model:491441836,route:[19,8,10,4,169495254,138681778,2,138681066,3,449330433]},
  full_width_portrait_image_layout:{model:478840678,route:[27,7,10,4,169495254,138681778,2,138681066,3,449330433]},
  full_width_square_image_layout:{model:461080918,route:[55,7,10,4,169495254,138681778,2,138681066,3,449330433]},
+ full_width_square_image_carousel_layout:{model:33562350,route:[5,5,10,4,169495254,138681778,2,138681066,3,449330433]},
+ carousel_footered_layout:{model:505359416,route:[31,8,10,4,169495254,138681778,2,138681066,3,449330433]},
+ video_display_full_buttoned_layout:{model:454362329,route:[32,8,10,4,169495254,138681778,2,138681066,3,449330433]},
  video_display_carousel_button_group_layout:{model:33561652,route:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]}
 };
 const nested=(path,payload)=>path.reduceRight((b,f)=>msg(f,b),payload);
@@ -289,3 +292,18 @@ for(const [label,options] of [
  const body=home(msg(1,section(element('full_width_square_image_layout',options))));
  assert.equal(Object.keys(run(body,{type:'application/x-protobuf'}).output).length,0);
 });
+for(const name of ['full_width_square_image_carousel_layout','carousel_footered_layout','video_display_full_buttoned_layout']) {
+ for(const [label,options] of [
+  ['missing ad command',{command:false}],
+  ['mismatched model',{model:232954548}],
+  ['marker at wrong command route',{route:emlRoutes.video_display_button_group_layout.route}],
+  ['map key without value',{modelData:nested(emlRoutes[name].route,msg(8,msg(1,text('skip_ad_on_block'))))}],
+ ])test(`${name} retains unverified cards: ${label}`,()=>{
+  assert.equal(Object.keys(run(home(msg(1,section(element(name,options)))),{type:'application/x-protobuf'}).output).length,0);
+ });
+ test(`${name} continuation removes only the ad and associated divider`,()=>{
+  const before=msg(10,msg(49399797,cat(msg(1,normalEml()),msg(1,section(element(name))),msg(1,divider()),msg(1,normalEml()),msg(2,text('KEEP_TOKEN')))));
+  const after=msg(10,msg(49399797,cat(msg(1,normalEml()),msg(1,normalEml()),msg(2,text('KEEP_TOKEN')))));
+  assert.deepEqual(Buffer.from(run(before,{type:'application/x-protobuf'}).output.body),Buffer.from(after));
+ });
+}
