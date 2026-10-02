@@ -1,10 +1,11 @@
 #!name = YouTube去广告
-#!desc = 用于 YouTube App 广告处理：清理已识别的首页、推荐及搜索赞助卡片（含已适配的 iOS EML 视频、轮播及竖图广告）和播放接口广告位，提供 UMP 视频流广告预取提示清理试验，并支持分级日志、开发抓包和文件导出。需开启 MitM 并信任证书；UMP、日志和抓包默认关闭。UMP 去广告效果仍需验证，不能保证全部贴片广告消失或无黑屏；抓包可能增加播放等待。
+#!desc = 用于 YouTube App 广告处理：清理已识别的首页、推荐及搜索赞助卡片（含已适配的 iOS EML 视频、轮播及竖图广告）和播放接口广告位，可手动隐藏首页 Shorts 推荐区，提供 UMP 视频流广告预取提示清理试验，并支持分级日志、开发抓包和文件导出。需开启 MitM 并信任证书；隐藏 Shorts、UMP、日志和抓包默认关闭。UMP 去广告效果仍需验证，不能保证全部贴片广告消失或无黑屏；抓包可能增加播放等待。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/loon/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
 
 [Argument]
+hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
 script_debug = switch,false,tag=控制台日志,desc=需要查看 Loon 脚本日志时手动开启
 log_enabled = switch,false,tag=日志工具,desc=手动开启后访问日志页面开始记录；关闭即停止写入
 log_level = select,"info","debug","warn","error",tag=日志保存级别,desc=仅保存此级别及更高严重程度；排查 UMP 请选择 debug
@@ -20,7 +21,7 @@ AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch|browse|next|search)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget},{ump_enabled},{ump_mode}],tag=YouTube 开发请求抓包
-http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeFeedAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 信息流赞助广告清理
+http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeFeedAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{hide_home_shorts}],tag=YouTube 信息流广告与首页 Shorts 处理
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 播放广告位清理
 http-response ^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js,requires-body=true,binary-body-mode=true,timeout=10,enable={ump_enabled},debug={script_debug},argument=[{script_debug},{ump_enabled},{ump_mode},{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 视频流广告提示清理（试验）
 

@@ -1,5 +1,5 @@
 /*
- * YouTubeFeedAds 1.1.0 — sponsored feed cards, independently implemented for Loon.
+ * YouTubeFeedAds 1.2.0 — sponsored feed cards and optional home Shorts hiding.
  * browse/next/search JSON; narrowly mapped browse/next Protobuf list envelopes.
  * Protocol mapping reference: davidzeng0/innertube (2025-02-18 schema).
  * Known EML ads require a template/model pair and a structural ad command.
@@ -7,12 +7,13 @@
  */
 (function () {
   "use strict";
-  var VERSION = "1.1.0";
+  var VERSION = "1.2.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug === true || args.script_debug === "true";
+  var hideHomeShorts = args.hide_home_shorts === true || args.hide_home_shorts === "true";
   var endpoint = "unknown";
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(?:\?[^#]*)?$/i;
   var devMessages = [];
@@ -146,7 +147,7 @@
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
+          arguments:{hide_home_shorts:hideHomeShorts, ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
@@ -376,10 +377,90 @@
     if (!mapping) return {ad:false, divider:true};
     return {ad:hasAdCommand(model.subarray(field.payloadStart, field.end), mapping.command, 0, budget), divider:false};
   }
-  function cleanProto(bytes, kind, budget, depth) {
+  // Homepage identity is local to each Tab/list. Other browse pages are not home.
+  // Continuation tokens: sample-derived wrapper 80226972 -> browse_id (2).
+  function continuationBrowseId(token, budget) {
+    if (typeof token !== "string" || token.length > 16384) return "";
+    try {
+      token = decodeURIComponent(token).replace(/-/g, "+").replace(/_/g, "/");
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(token) || token.length % 4 === 1) return "";
+      var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      var parts = [], value = 0, bits = 0;
+      for (var i = 0; i < token.length && token[i] !== "="; i++) {
+        value = (value << 6) | alphabet.indexOf(token[i]); bits += 6;
+        if (bits >= 8) {bits -= 8; parts.push((value >>> bits) & 255);}
+      }
+      var wrapper = child(new Uint8Array(parts), 80226972, budget);
+      return wrapper ? ascii(child(wrapper, 2, budget)) : "";
+    } catch (error) {
+      if (error.ytNoAdsCode === "field-limit") throw error;
+      return "";
+    }
+  }
+  function protoHomeContinuation(bytes, records, budget) {
+    var ids = [];
+    records.forEach(function (r) {
+      if (r.no !== 2 || r.wire !== 2) return;
+      var continuation = bytes.subarray(r.payloadStart, r.end);
+      [52047593, 60487319].forEach(function (no) {
+        var data = child(continuation, no, budget);
+        if (data) {
+          var token = child(data, 1, budget);
+          if (token) ids.push(continuationBrowseId(asciiToken(token), budget));
+        }
+      });
+    });
+    return ids.length > 0 && ids.every(function (id) {return id === "FEwhat_to_watch";});
+  }
+  function asciiToken(bytes) {
+    if (!bytes || bytes.length > 16384) return "";
+    var text = "";
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] < 32 || bytes[i] > 126) return "";
+      text += String.fromCharCode(bytes[i]);
+    }
+    return text;
+  }
+  function shortsCell(bytes, budget) {
+    var records = parse(bytes, budget);
+    if (records.some(function (r) {return r.no >= 1000000 && r.no !== 153515154;})) return false;
+    var renderer = child(bytes, 153515154, budget);
+    if (!renderer || parse(renderer, budget).some(function (r) {return r.no >= 1000000 && r.no !== 172660663;})) return false;
+    var element = child(renderer, 172660663, budget);
+    if (!element || parse(element, budget).some(function (r) {return r.no === 3;})) return false;
+    var type = child(element, 1, budget);
+    if (!type || parse(type, budget).length !== 1) return false;
+    var component = child(type, 168777401, budget);
+    if (!component) return false;
+    var templateType = child(component, 3, budget), model = child(component, 5, budget);
+    if (!templateType || !model || parse(templateType, budget).length !== 1) return false;
+    var template = child(templateType, 172035250, budget);
+    if (!template || !/^shorts_video_cell\.eml-fe\|[0-9a-f]{16}$/.test(ascii(child(template, 1, budget)))) return false;
+    var fields = parse(model, budget);
+    return fields.length === 1 && fields[0].no === 519005951 && fields[0].wire === 2;
+  }
+  function shortsShelf(bytes, budget) {
+    // Observed iOS Shelf -> content (5) -> HorizontalList (51431404) -> items (1).
+    var content = child(bytes, 5, budget);
+    if (!content || parse(content, budget).length !== 1) return false;
+    var list = child(content, 51431404, budget);
+    if (!list) return false;
+    var records = parse(list, budget), count = 0, valid = true;
+    records.forEach(function (r) {
+      if (r.no !== 1) return;
+      count++;
+      if (r.wire !== 2 || !shortsCell(list.subarray(r.payloadStart, r.end), budget)) valid = false;
+    });
+    return count > 0 && valid;
+  }
+  function cleanProto(bytes, kind, budget, depth, homeContext) {
     if (depth > 32) fail("protobuf-depth-limit");
     var records = parse(bytes, budget), edges = EDGES[kind] || {}, adFields = ADS[kind] || {};
-    var parts = [], removed = 0, opaque = 0, eml = 0, dividers = 0, adSeen = false, drop = false;
+    var parts = [], removed = 0, shorts = 0, opaque = 0, eml = 0, dividers = 0, adSeen = false, drop = false;
+    if (hideHomeShorts && endpoint === "browse") {
+      if (kind === "tab") homeContext = ascii(child(bytes, 11, budget)) === "FEwhat_to_watch";
+      if (kind === "sectionList" && !homeContext) homeContext = protoHomeContinuation(bytes, records, budget);
+    }
     var listCount = 0, keptListCount = 0, pendingAd = false, divider = false;
     records.forEach(function (r) {
       if (adFields[r.no]) { if (r.wire !== 2) fail("feed-ad-schema-mismatch"); adSeen = true; }
@@ -387,6 +468,12 @@
     if (adSeen && records.some(function (r) {return r.no >= 1000000 && !adFields[r.no];})) fail("feed-mixed-renderer");
     records.forEach(function (r) {
       if (adFields[r.no]) { removed++; drop = true; return; }
+      if (hideHomeShorts && endpoint === "browse" && homeContext && kind === "sectionItem" && r.no === 51845067) {
+        if (r.wire !== 2) fail("shorts-shelf-schema-mismatch");
+        if (shortsShelf(bytes.subarray(r.payloadStart, r.end), budget) && !records.some(function (other) {return other.no >= 1000000 && other.no !== 51845067;})) {
+          shorts++; drop = true; return;
+        }
+      }
       var next = edges[r.no];
       if (!next) { parts.push(bytes.subarray(r.start, r.end)); return; }
       if (r.wire !== 2) fail("feed-envelope-schema-mismatch");
@@ -401,11 +488,11 @@
         parts.push(bytes.subarray(r.start, r.end));
         return;
       }
-      result = cleanProto(bytes.subarray(r.payloadStart, r.end), next, budget, depth + 1);
-      removed += result.removed; opaque += result.opaque; eml += result.eml; dividers += result.dividers;
+      result = cleanProto(bytes.subarray(r.payloadStart, r.end), next, budget, depth + 1, homeContext);
+      removed += result.removed; shorts += result.shorts; opaque += result.opaque; eml += result.eml; dividers += result.dividers;
       if ((kind === "sectionList" || kind === "secondaryList" || kind === "itemSection") && r.no === 1) {
         listCount++;
-        if (result.drop) {pendingAd = true; return;}
+        if (result.drop) {pendingAd = result.removed > 0; return;}
         // Remove one verified divider immediately following a deleted ad card.
         if (kind !== "itemSection" && pendingAd && result.divider) {dividers++; pendingAd = false; return;}
         pendingAd = false; keptListCount++;
@@ -418,14 +505,14 @@
         }
         divider = result.divider && records.length === 1;
       }
-      parts.push(result.removed || result.dividers ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
+      parts.push(result.removed || result.shorts || result.dividers ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
     });
     if (kind === "itemSection") {
       var safeMetadata = records.every(function (r) {return r.no === 1 || r.no === 4 || r.no === 8;});
       drop = removed > 0 && listCount > 0 && keptListCount === 0 && safeMetadata;
       divider = divider && listCount === 1 && safeMetadata;
     }
-    return {body:removed || dividers ? join(parts) : bytes, removed:removed, opaque:opaque, eml:eml, dividers:dividers, drop:drop, divider:divider};
+    return {body:removed || shorts || dividers ? join(parts) : bytes, removed:removed, shorts:shorts, opaque:opaque, eml:eml, dividers:dividers, drop:drop, divider:divider};
   }
 
   var AD_KEYS = ["adSlotRenderer", "adPlacementRenderer", "inFeedAdLayoutRenderer",
@@ -450,29 +537,85 @@
     }
     return false;
   }
+  function jsonHome(value) {
+    if (!object(value)) return false;
+    if (value.targetId === "browse-feedFEwhat_to_watch") return true;
+    var ids = [], browse = value.endpoint && value.endpoint.browseEndpoint;
+    if (typeof value.tabIdentifier === "string") ids.push(value.tabIdentifier);
+    if (browse && typeof browse.browseId === "string") ids.push(browse.browseId);
+    if (Array.isArray(value.continuations)) value.continuations.forEach(function (entry) {
+      if (!object(entry)) return;
+      ["nextContinuationData", "reloadContinuationData"].forEach(function (key) {
+        if (object(entry[key])) ids.push(continuationBrowseId(entry[key].continuation, {fields:0}));
+      });
+    });
+    return ids.length > 0 && ids.every(function (id) {return id === "FEwhat_to_watch";});
+  }
+  function requestHome() {
+    if (!hideHomeShorts || endpoint !== "browse") return false;
+    try {
+      var body = $request.body, bytes = bytesOf(body), budget = {fields:0};
+      if (typeof body === "string") {
+        if (body.length > MAX_BYTES) return false;
+        var request = JSON.parse(body);
+        return request.browseId === "FEwhat_to_watch" || (!request.browseId && continuationBrowseId(request.continuation, budget) === "FEwhat_to_watch");
+      }
+      if (!bytes || bytes.length > MAX_BYTES) return false;
+      var id = child(bytes, 2, budget);
+      if (id) return ascii(id) === "FEwhat_to_watch";
+      return continuationBrowseId(asciiToken(child(bytes, 7, budget)), budget) === "FEwhat_to_watch";
+    } catch (_) {return false;}
+  }
+  function jsonShortsCard(value, depth) {
+    if (!object(value) || depth > 8) return false;
+    var keys = Object.keys(value), rendererKeys = keys.filter(function (key) {return /(?:Renderer|ViewModel)$/.test(key);});
+    if (rendererKeys.length !== 1) return false;
+    var key = rendererKeys[0], card = value[key];
+    if (!object(card)) return false;
+    if (key === "richSectionRenderer") return jsonShortsCard(card.content, depth + 1);
+    if (key === "itemSectionRenderer") {
+      return Object.keys(card).every(function (k) {return ["contents", "trackingParams", "sectionIdentifier", "targetId"].indexOf(k) >= 0;}) &&
+        Array.isArray(card.contents) && card.contents.length > 0 && card.contents.every(function (item) {return jsonShortsCard(item, depth + 1);});
+    }
+    function shortsItem(item, level) {
+      if (!object(item) || level > 8) return false;
+      var names = Object.keys(item).filter(function (k) {return /(?:Renderer|ViewModel)$/.test(k);});
+      if (names.length !== 1) return false;
+      if (names[0] === "richItemRenderer" && object(item.richItemRenderer)) return shortsItem(item.richItemRenderer.content, level + 1);
+      return (names[0] === "reelItemRenderer" || names[0] === "shortsLockupViewModel") && object(item[names[0]]);
+    }
+    var items;
+    if (key === "reelShelfRenderer") items = card.items;
+    else if (key === "richShelfRenderer" && card.icon && card.icon.iconType === "YOUTUBE_SHORTS_BRAND_24") items = card.contents;
+    else if (key === "shelfRenderer" && card.content && object(card.content.horizontalListRenderer) && Object.keys(card.content).length === 1) items = card.content.horizontalListRenderer.items;
+    return Array.isArray(items) && items.length > 0 && items.every(function (item) {return shortsItem(item, 0);});
+  }
   function cleanJSON(text) {
-    var root = JSON.parse(text), nodes = 0, removed = 0, opaque = 0;
-    function walk(value, depth) {
+    var root = JSON.parse(text), nodes = 0, removed = 0, shorts = 0, opaque = 0;
+    var enabled = hideHomeShorts && endpoint === "browse";
+    function walk(value, depth, homeContext) {
       if (!value || typeof value !== "object") return;
       if (++nodes > MAX_JSON_NODES || depth > 64) fail("json-limit");
-      if (Array.isArray(value)) { value.forEach(function (v) {walk(v, depth + 1);}); return; }
+      if (Array.isArray(value)) { value.forEach(function (v) {walk(v, depth + 1, homeContext);}); return; }
+      if (enabled && jsonHome(value)) homeContext = true;
       Object.keys(value).forEach(function (key) {
         var child = value[key];
         if (key === "elementRenderer") opaque++;
         // Only actual list fields get item removal; renderer-looking metadata
-        // elsewhere, titles, channel sponsors and Shorts stay untouched.
+        // elsewhere and titles stay untouched. Shorts require a home identity.
         if ((key === "contents" || key === "continuationItems" || key === "results" || key === "items") && Array.isArray(child)) {
           value[key] = child.filter(function (entry) {
             if (adCard(entry, 0)) { removed++; return false; }
+            if (enabled && homeContext && jsonShortsCard(entry, 0)) {shorts++; return false;}
             return true;
           });
           child = value[key];
         }
-        walk(child, depth + 1);
+        walk(child, depth + 1, key === "tabRenderer" ? enabled && jsonHome(child) : homeContext);
       });
     }
-    walk(root, 0);
-    return {body:removed ? JSON.stringify(root) : text, removed:removed, opaque:opaque};
+    walk(root, 0, requestHome());
+    return {body:removed || shorts ? JSON.stringify(root) : text, removed:removed, shorts:shorts, opaque:opaque};
   }
   function run() {
     var match = API.exec(typeof $request !== "undefined" ? $request.url || "" : "");
@@ -493,17 +636,17 @@
         text = new TextDecoder("utf-8", {fatal:true}).decode(bytes);
       }
       result = cleanJSON(text);
-      if (result.removed && bytes) {
+      if ((result.removed || result.shorts) && bytes) {
         if (typeof TextEncoder !== "function") {log("pass: no UTF-8 encoder"); return {};}
         result.body = new TextEncoder().encode(result.body);
       }
     } else {
       if (!bytes || !/^(?:application\/(?:x-protobuf|protobuf|vnd\.google\.protobuf|octet-stream))$/.test(type)) {log("pass: unsupported content type"); return {};}
       if (endpoint === "search") {log("pass: search protobuf schema unsupported"); return {};}
-      result = cleanProto(bytes, endpoint, {fields:0}, 0);
+      result = cleanProto(bytes, endpoint, {fields:0}, 0, requestHome());
     }
-    log((result.removed ? "changed" : "pass") + ": removed=" + result.removed + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque + " removed_eml=" + (result.eml || 0) + " removed_dividers=" + (result.dividers || 0));
-    return result.removed ? {body:result.body} : {};
+    log((result.removed || result.shorts ? "changed" : "pass") + ": removed=" + result.removed + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque + " removed_eml=" + (result.eml || 0) + " removed_dividers=" + (result.dividers || 0) + " hidden_shorts=" + (result.shorts || 0));
+    return result.removed || result.shorts ? {body:result.body} : {};
   }
   var output = {};
   try { output = run(); }

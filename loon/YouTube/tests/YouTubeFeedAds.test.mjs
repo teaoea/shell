@@ -164,3 +164,119 @@ test('following normal card and unrelated shelf are never treated as ad separato
  const body=home(cat(adItem,keep,shelf));
  assert.deepEqual(Buffer.from(run(body,{type:'application/x-protobuf'}).output.body),Buffer.from(home(cat(keep,shelf))));
 });
+
+const shortsArgs={$argument:{script_debug:true,hide_home_shorts:true}};
+const shortsOptions={type:'application/x-protobuf',extra:shortsArgs};
+const identifiedTab=(list,id='FEwhat_to_watch')=>nested([9,58173949,1,58174010],cat(msg(11,text(id)),nested([4,49399797],list)));
+const shortsCell=(options={})=>element('shorts_video_cell',{model:519005951,command:false,...options});
+const shortsShelf=(...cells)=>msg(51845067,cat(msg(5,msg(51431404,cat(...cells.map(c=>msg(1,c)),tracking))),msg(36,text('opaque header')),msg(52,text('opaque metadata'))));
+const shortToken=(id='FEwhat_to_watch')=>Buffer.from(nested([80226972,2],text(id))).toString('base64url');
+const continuation=(list,token=shortToken())=>msg(10,msg(49399797,cat(list,msg(2,msg(52047593,msg(1,text(token)))),tracking)));
+test('Shorts switch is off by default and passed only to the feed script',()=>{
+ assert.match(plugin,/hide_home_shorts = switch,false,tag=隐藏首页 Shorts/);
+ const entries=plugin.split('\n').filter(line=>line.includes('argument=')&&line.includes('{hide_home_shorts}'));
+ assert.equal(entries.length,1);assert.ok(entries[0].includes('YouTubeFeedAds.js'));
+ const body=identifiedTab(msg(1,shortsShelf(shortsCell())));
+ for(const value of [undefined,false,'false','1'])assert.equal(Object.keys(run(body,{type:'application/x-protobuf',extra:{$argument:{hide_home_shorts:value}}}).output).length,0);
+});
+test('identified homepage removes the entire Shorts shelf without altering regular cards, divider, pagination or shared templates',()=>{
+ const keep=msg(1,normalEml()),shelf=msg(1,shortsShelf(shortsCell(),shortsCell()));
+ const tail=cat(msg(1,divider()),msg(2,text('UNKNOWN-CONTINUATION'))),shared=msg(777,shelf);
+ const body=cat(identifiedTab(cat(keep,shelf,tail)),shared);
+ const expected=cat(identifiedTab(cat(keep,tail)),shared);
+ for(const value of [true,'true']){
+  const r=run(body,{...shortsOptions,extra:{$argument:{script_debug:true,hide_home_shorts:value}}});
+  assert.deepEqual(Buffer.from(r.output.body),Buffer.from(expected));assert.ok(r.logs.join('').includes('changed: removed=0'));assert.ok(r.logs.join('').includes('hidden_shorts=1'));
+ }
+});
+test('home continuation is identified from a structured token and preserves that token exactly',()=>{
+ const list=cat(msg(1,normalEml()),msg(1,shortsShelf(shortsCell())));
+ for(const token of [shortToken(),encodeURIComponent(Buffer.from(nested([80226972,2],text('FEwhat_to_watch'))).toString('base64'))]){
+  assert.deepEqual(Buffer.from(run(continuation(list,token),shortsOptions).output.body),Buffer.from(continuation(msg(1,normalEml()),token)));
+ }
+});
+test('Shorts hide and existing sponsored card cleaning work together with separate counts',()=>{
+ const keep=msg(1,normalEml());
+ const body=identifiedTab(cat(msg(1,section(element('video_display_button_group_layout'))),msg(1,divider()),msg(1,shortsShelf(shortsCell())),keep));
+ const r=run(body,shortsOptions);assert.deepEqual(Buffer.from(r.output.body),Buffer.from(identifiedTab(keep)));
+ assert.ok(r.logs.join('').includes('removed_eml=1 removed_dividers=1 hidden_shorts=1'));
+});
+for(const id of ['FEsubscriptions','FEshorts','UC_CHANNEL','VL_PLAYLIST'])test(`other browse Tab ${id} keeps its Shorts shelf`,()=>{
+ assert.equal(Object.keys(run(identifiedTab(msg(1,shortsShelf(shortsCell())),id),shortsOptions).output).length,0);
+ assert.equal(Object.keys(run(continuation(msg(1,shortsShelf(shortsCell())),shortToken(id)),shortsOptions).output).length,0);
+});
+test('unknown homepage identity and invalid/mixed continuation tokens do not enable Shorts hiding',()=>{
+ const list=msg(1,shortsShelf(shortsCell()));
+ for(const body of [home(list),initial(list),continuation(list,'FEwhat_to_watch'),continuation(list,'%INVALID'),continuation(list,shortToken('UC_OTHER')),
+  msg(10,msg(49399797,cat(list,msg(2,msg(52047593,msg(1,text(shortToken())))),msg(2,msg(60487319,msg(1,text(shortToken('FEsubscriptions'))))))))]){
+  assert.equal(Object.keys(run(body,shortsOptions).output).length,0);
+ }
+});
+test('home identity is isolated between sibling Tabs',()=>{
+ const tab=id=>msg(1,msg(58174010,cat(msg(11,text(id)),nested([4,49399797],msg(1,shortsShelf(shortsCell()))))));
+ const expectedHome=msg(1,msg(58174010,cat(msg(11,text('FEwhat_to_watch')),nested([4,49399797],[]))));
+ const body=msg(9,msg(58173949,cat(tab('FEwhat_to_watch'),tab('FEsubscriptions'))));
+ assert.deepEqual(Buffer.from(run(body,shortsOptions).output.body),Buffer.from(msg(9,msg(58173949,cat(expectedHome,tab('FEsubscriptions'))))));
+});
+for(const [label,shelf] of [
+ ['ordinary shelf containing a Shorts title',msg(51845067,msg(1,text('Shorts')))],
+ ['empty shelf',shortsShelf()],
+ ['mixed regular and Shorts cells',shortsShelf(shortsCell(),element('video_lockup_with_attachment'))],
+ ['wrong model',shortsShelf(shortsCell({model:232954548}))],
+ ['wrong template boundary',shortsShelf(shortsCell({id:'shorts_video_cell.eml-fe|0123456789abcdefEXTRA'}))],
+ ['unknown content renderer',msg(51845067,msg(5,msg(99999999,[])))],
+ ['mixed outer renderers',cat(shortsShelf(shortsCell()),msg(99999999,[]))],
+ ['unknown cell union',shortsShelf(cat(shortsCell(),msg(99999999,[])))],
+ ['nested Element children',shortsShelf(msg(153515154,msg(172660663,cat(msg(1,msg(168777401,component('shorts_video_cell',{model:519005951}))),msg(3,[])))))],
+])test(`home Shorts preservation: ${label}`,()=>{
+ assert.equal(Object.keys(run(identifiedTab(msg(1,shelf)),shortsOptions).output).length,0);
+});
+test('truncated Shorts response discards earlier ad and Shorts changes',()=>{
+ const body=cat(identifiedTab(cat(msg(1,ad),msg(1,shortsShelf(shortsCell())))),[0x12,0x04,0x01]);
+ assert.equal(Object.keys(run(body,shortsOptions).output).length,0);
+});
+const jsonShorts={reelShelfRenderer:{title:{simpleText:'Shorts'},items:[{reelItemRenderer:{videoId:'SHORT'}},{shortsLockupViewModel:{entityId:'SHORT2'}}]}};
+const jsonVideo={videoRenderer:{title:{simpleText:'Shorts'},videoId:'REGULAR'}};
+const jsonHomeTab=contents=>({contents:{singleColumnBrowseResultsRenderer:{tabs:[{tabRenderer:{tabIdentifier:'FEwhat_to_watch',content:{sectionListRenderer:{contents}}}}]}}});
+test('JSON home removes whole Shorts sections; default behavior and regular videos retain original data',()=>{
+ const data=jsonHomeTab([jsonVideo,jsonShorts,{continuationItemRenderer:{token:'KEEP'}}]);
+ const body=JSON.stringify(data);
+ assert.equal(Object.keys(run(body).output).length,0);
+ assert.deepEqual(JSON.parse(run(body,{extra:shortsArgs}).output.body),jsonHomeTab([jsonVideo,{continuationItemRenderer:{token:'KEEP'}}]));
+});
+test('JSON binary UTF-8 Shorts-only changes are returned as correctly encoded bytes',()=>{
+ const body=new TextEncoder().encode(JSON.stringify(jsonHomeTab([jsonShorts,{videoRenderer:{title:'中文😀'}}])));
+ const out=run(body,{extra:shortsArgs}).output.body;
+ assert.ok(out instanceof Uint8Array);assert.deepEqual(JSON.parse(new TextDecoder().decode(out)),jsonHomeTab([{videoRenderer:{title:'中文😀'}}]));
+});
+test('JSON structured continuation and known home target remove Shorts; other endpoints do not',()=>{
+ const body=JSON.stringify({continuationContents:{sectionListContinuation:{continuations:[{nextContinuationData:{continuation:shortToken()}}],contents:[jsonShorts,jsonVideo]}}});
+ assert.deepEqual(JSON.parse(run(body,{extra:shortsArgs}).output.body).continuationContents.sectionListContinuation.contents,[jsonVideo]);
+ const action=JSON.stringify({onResponseReceivedActions:[{appendContinuationItemsAction:{targetId:'browse-feedFEwhat_to_watch',continuationItems:[jsonShorts,jsonVideo]}}]});
+ assert.deepEqual(JSON.parse(run(action,{extra:shortsArgs}).output.body).onResponseReceivedActions[0].appendContinuationItemsAction.continuationItems,[jsonVideo]);
+ for(const endpoint of ['next','search'])assert.equal(Object.keys(run(body,{endpoint,extra:shortsArgs}).output).length,0);
+});
+test('JSON rich grid, horizontal shelf and whole ItemSection wrappers hide only structurally identified Shorts',()=>{
+ const items=[{richItemRenderer:{content:{reelItemRenderer:{videoId:'SHORT'}}}}];
+ const cards=[{richSectionRenderer:{content:{richShelfRenderer:{icon:{iconType:'YOUTUBE_SHORTS_BRAND_24'},contents:items}}}},
+  {shelfRenderer:{content:{horizontalListRenderer:{items}}}},
+  {itemSectionRenderer:{contents:[jsonShorts],trackingParams:'SAFE'}}];
+ assert.deepEqual(JSON.parse(run(JSON.stringify(jsonHomeTab([...cards,jsonVideo])),{extra:shortsArgs}).output.body),jsonHomeTab([jsonVideo]));
+});
+test('JSON other tabs, unknown home, mixed shelves and Shorts titles remain unchanged',()=>{
+ const cards=[{reelShelfRenderer:{items:[{reelItemRenderer:{}},jsonVideo]}},
+  {richSectionRenderer:{content:{richShelfRenderer:{title:{simpleText:'Shorts'},contents:[{richItemRenderer:{content:{reelItemRenderer:{}}}}]}}}},
+  {reelShelfRenderer:{items:[]}}, {reelShelfRenderer:{items:[{reelItemRenderer:{},videoRenderer:{}}]}},
+  {reelShelfRenderer:jsonShorts.reelShelfRenderer,videoRenderer:{}},jsonVideo];
+ assert.equal(Object.keys(run(JSON.stringify(jsonHomeTab(cards)),{extra:shortsArgs}).output).length,0);
+ assert.equal(Object.keys(run(JSON.stringify({contents:[jsonShorts]}),{extra:shortsArgs}).output).length,0);
+ const data=jsonHomeTab([jsonShorts]);data.contents.singleColumnBrowseResultsRenderer.tabs[0].tabRenderer.tabIdentifier='FEsubscriptions';
+ assert.equal(Object.keys(run(JSON.stringify(data),{extra:shortsArgs}).output).length,0);
+});
+test('available request body can identify final home continuation without an outgoing token',()=>{
+ const protoBody=msg(10,msg(49399797,msg(1,shortsShelf(shortsCell()))));
+ const req={url:'https://youtubei.googleapis.com/youtubei/v1/browse',body:msg(7,text(shortToken()))};
+ assert.deepEqual(Buffer.from(run(protoBody,{...shortsOptions,extra:{...shortsArgs,$request:req}}).output.body),Buffer.from(msg(10,msg(49399797,[]))));
+ const jsonBody=JSON.stringify({contents:[jsonShorts,jsonVideo]});
+ assert.deepEqual(JSON.parse(run(jsonBody,{extra:{...shortsArgs,$request:{...req,body:JSON.stringify({browseId:'FEwhat_to_watch'})}}}).output.body),{contents:[jsonVideo]});
+});

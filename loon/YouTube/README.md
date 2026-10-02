@@ -4,7 +4,7 @@
 
 | 文件 | 功能 | 匹配位置 |
 | --- | --- | --- |
-| `YouTubeFeedAds.js` | 清理已识别的首页、推荐及搜索赞助卡片 | `/youtubei/v1/browse`、`next`、`search` 的 JSON 及部分 Protobuf 列表 |
+| `YouTubeFeedAds.js` | 清理已识别的首页、推荐及搜索赞助卡片，可手动隐藏首页 Shorts 推荐区 | `/youtubei/v1/browse`、`next`、`search` 的 JSON 及部分 Protobuf 列表 |
 | `YouTubePlaybackAds.js` | 清理播放接口返回的广告位 | `/youtubei/v1/player`、`get_watch` 的 JSON / Protobuf 响应 |
 | `YouTubeStreamAds.js` | 清理视频流中的广告预取提示（试验） | `googlevideo.com/videoplayback` 的 UMP 响应 |
 | `YouTubeLogger.js` | 本地日志控制、开发请求抓包、.log / .json 导出 | 专用页面和手动开启的请求入口 |
@@ -67,7 +67,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAd
 
 首页推荐列表里标注“赞助商广告”的 Robinhood 卡片属于信息流广告。它由推荐接口提供卡片数据，即使卡片自动播放视频，也应从推荐列表中移除卡片。`application/vnd.yt-ump` 是媒体封装，单独处理媒体下载不能移除该列表项。
 
-`YouTubeFeedAds.js` 自行实现清理逻辑，不加载其他人的 JS。主插件默认启用信息流响应入口，匹配 `browse`、`next` 和 `search`。JSON 只在列表字段中删除具有明确广告 renderer 的整项，包括 `adSlotRenderer`、`inFeedAdLayoutRenderer`、`promotedVideoRenderer` 等，以及包在 `richItemRenderer.content` 中的广告卡片。正常视频、Shorts、频道、购物内容、包含“广告”文字的普通标题和翻页 token 保留。广告与正常 renderer 同时出现在同一对象中时，整条响应保留，避免误删。
+`YouTubeFeedAds.js` 自行实现清理逻辑，不加载其他人的 JS。主插件默认启用信息流响应入口，匹配 `browse`、`next` 和 `search`。JSON 只在列表字段中删除具有明确广告 renderer 的整项，包括 `adSlotRenderer`、`inFeedAdLayoutRenderer`、`promotedVideoRenderer` 等，以及包在 `richItemRenderer.content` 中的广告卡片。正常视频、频道、购物内容、包含“广告”文字的普通标题和翻页 token 保留；Shorts 默认保留，可用下面的独立开关隐藏首页推荐区。广告与正常 renderer 同时出现在同一对象中时，整条响应保留，避免误删。
 
 Protobuf 仅沿已核对的路径处理：BrowseResponse 字段 9 / 10 中的 SectionListRenderer（49399797）及其列表字段 1，删除含 AdSlotRenderer（424701016）或 CompanionAdRenderer（55514441）的整个列表项；`next` 支持 SingleColumnWatchNextResults（51779735）中的 SectionList，以及字段 8 的 WatchNextSecondaryResults continuation（51779776），其列表支持广告位和 CompactPromotedVideoRenderer（73920376）。未知字段保持原字节，只在已修改的外层消息重算长度。`removed` 是被识别的广告字段/JSON 列表项计数，不等同于屏幕上广告的准确条数。
 
@@ -90,6 +90,27 @@ Protobuf 仅沿已核对的路径处理：BrowseResponse 字段 9 / 10 中的 Se
 卡片内只删除已识别的广告内容。如果 ItemSection 的全部内容均为广告且剩下的只是已知追踪/标志字段 4、8，移除整个外层列表项。混合列表保留其他内容；不能确认的 type/model 保留该卡片。检测到混合 renderer、重复单数消息、字段类型异常或不完整数据时，整条响应原样通过。删除广告后，最多删除紧随其后的一个已识别 `cell_divider.eml`（Model 347043917）列表项，避免留下该广告对应的分隔占位。正常视频布局 `video_lockup_with_attachment.eml`、其他卡片、独立分隔项、Shelf、共享模板库和翻页数据保持原字节。
 
 本次完整文件含 12 个事件，其中 6 份 `browse` 响应：离线回放时，4 份各识别并移除 1 个广告卡片和后续分隔项；其余 2 份无已识别广告，逐字节保持原样。独立比对验证，4 份修改结果与“只移除指定列表项、重算外层长度”的预期完全一致。此验证是实际响应样本的离线回放，仍需手机更新后确认界面结果。原日志、请求凭据和媒体正文均不上传仓库；提交的回归样本为自行构造的最小协议数据。
+
+### 隐藏首页 Shorts（1.2.0）
+
+主插件新增 **“隐藏首页 Shorts”** 开关，默认关闭。开启后移除首页推荐流中的整块 Shorts 推荐区，包含区块标题与短视频卡片。底部 Shorts 导航入口、Shorts 播放、搜索结果、订阅页和频道页保留。普通视频即使标题含有“Shorts”也保留。
+
+使用步骤：
+
+1. 在 Loon 更新 `YouTube去广告` 主插件，并重新下载其引用的 `YouTubeFeedAds.js`，确保使用 1.2.0 或更高版本。
+2. 进入主插件设置，打开“隐藏首页 Shorts”。保持插件、脚本与 MitM 启用、证书完全信任；此功能不需要开启日志、开发抓包或 UMP 试验处理。
+3. 完全退出 YouTube 后重新打开，进入首页并下拉刷新。已缓存的旧首页需要刷新才能取得修改后的推荐列表。
+4. 如需恢复，关闭该开关，再退出 YouTube、重新打开并刷新首页。
+
+首页识别只用于 `browse`：首次加载按 Tab 的 `FEwhat_to_watch` 标识确认；继续下滑的列表按已知 continuation 结构确认。Protobuf 首页 Tab 使用字段 11；continuation token 解码后读取样本中的 `80226972 → 2` browse ID。Next/Reload continuation 的字段编号与 token 字段参考 [SectionListSupportedContinuations](https://github.com/davidzeng0/innertube/blob/main/protos/youtube/api/innertube/section_list_supported_continuations.proto) 和 [NextContinuationData](https://github.com/davidzeng0/innertube/blob/main/protos/youtube/api/innertube/next_continuation_data.proto)。请求正文可用时，也读取明确的 browse ID 或 continuation；请求字段参考 [BrowseRequest](https://github.com/davidzeng0/innertube/blob/main/protos/youtube/api/innertube/browse_request.proto)。无法确认首页的响应保留 Shorts，不把全部 `browse` 当作首页。
+
+已提供的 iOS 21.39.4 样本中，区块为 `ShelfRenderer（51845067）→ content（5）→ HorizontalListRenderer（51431404）→ items（1）`。仅当所有条目都具有明确的 `shorts_video_cell.eml-fe|` 布局（16 位十六进制版本后缀）和唯一 Model 519005951 时，删除整个 Shelf 列表项。不会按标题或任意字节中的 Shorts 文本删除。HorizontalList 路径参考 [HorizontalListRenderer](https://github.com/davidzeng0/innertube/blob/main/protos/youtube/api/innertube/horizontal_list_renderer.proto)；布局与 Model 对应关系来自本地实际响应。
+
+JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及其 `richSectionRenderer` 包装、只含 Shorts 的 ItemSection 和水平 Shelf；要求内部条目均为明确的 `reelItemRenderer` 或 `shortsLockupViewModel`。保留混合普通视频的列表、未知布局和共享模板库。JSON renderer 字段核对参考 [ReelShelf](https://github.com/LuanRT/YouTube.js/blob/main/src/parser/classes/ReelShelf.ts) 和 [RichShelf](https://github.com/LuanRT/YouTube.js/blob/main/src/parser/classes/RichShelf.ts)，未调用或复制这些解析器的实现。
+
+日志新增 `hidden_shorts`，表示移除的 Shorts 区块数量，与广告计数 `removed` 分开。例如 `removed=0 ... hidden_shorts=1` 表示只隐藏一个 Shorts 区块。开发抓包的响应处理参数也记录 `hide_home_shorts`。
+
+已对此前完整导出的 6 份响应分别在开关关闭/开启状态离线回放：关闭时与此前去广告结果逐字节一致；开启时额外移除其中 2 份响应各自的 1 个 Shorts 区块，其他响应保持此前结果。12 次结果均与独立按指定列表项删除、重算长度的预期逐字节一致。尚需手机更新后确认显示效果；未知的新布局仍会保留。
 
 ### 取得首页广告的样本
 
@@ -206,7 +227,7 @@ Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据�
 
 ## 本地验证
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 148 项测试通过，覆盖：两种 API 域名、两种响应结构、重复广告字段、未知 wire 数据保留、嵌套长度跨界、二进制视图偏移、JSON、异常结构、资源限制、日志内容及单次完成；另外验证 UMP 前缀整数的十个固定向量、预取提示清理、媒体和其他广告事件保留、跨边界长度重组、异常数据整体原样通过及试验开关；确认各去广告脚本只处理所负责的接口。信息流测试另验证整项赞助卡片删除、推荐翻页保留、正常标题/Shorts 保留、未知 EML/Tab 原样通过、三种 EML 布局及广告操作联合识别、关联分隔项清理、混合 ItemSection 保留、共享模板库保留、已知 Protobuf 列表和长度重组、错误响应整体通过；日志测试验证共用信息流缓存与筛选导出、大样本分块单文件合成、校验失败不给出文件及跨会话隔离。日志测试覆盖开始/暂停、两份脚本合并导出、关闭控制台仍记录、主插件手动开关、四级过滤、旧缓存合并、数量与容量限制、存储失败仍完成清理、会话清空与隔离、下载文件名与敏感信息不进入普通摘要。开发测试另验证请求原样通过、原始/修改正文的二进制还原、空/缺失正文区分、中文/emoji 与分块边界、文件附件、容量满后保留旧证据、写失败回滚、损坏样本提示、异常细节及人工广告/正片标记。
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 174 项测试通过，覆盖：两种 API 域名、两种响应结构、重复广告字段、未知 wire 数据保留、嵌套长度跨界、二进制视图偏移、JSON、异常结构、资源限制、日志内容及单次完成；另外验证 UMP 前缀整数的十个固定向量、预取提示清理、媒体和其他广告事件保留、跨边界长度重组、异常数据整体原样通过及试验开关；确认各去广告脚本只处理所负责的接口。信息流测试另验证首页 Shorts 开关默认关闭、首次加载和延续列表识别、JSON/Protobuf 整块移除、其他页面及混合列表保留、首页 Tab 之间的范围隔离、广告/Shorts 计数分开、整项赞助卡片删除、推荐翻页保留、正常标题/Shorts 保留、未知 EML/Tab 原样通过、三种 EML 布局及广告操作联合识别、关联分隔项清理、混合 ItemSection 保留、共享模板库保留、已知 Protobuf 列表和长度重组、错误响应整体通过；日志测试验证共用信息流缓存与筛选导出、大样本分块单文件合成、校验失败不给出文件及跨会话隔离。日志测试覆盖开始/暂停、两份脚本合并导出、关闭控制台仍记录、主插件手动开关、四级过滤、旧缓存合并、数量与容量限制、存储失败仍完成清理、会话清空与隔离、下载文件名与敏感信息不进入普通摘要。开发测试另验证请求原样通过、原始/修改正文的二进制还原、空/缺失正文区分、中文/emoji 与分块边界、文件附件、容量满后保留旧证据、写失败回滚、损坏样本提示、异常细节及人工广告/正片标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeedAds.js
