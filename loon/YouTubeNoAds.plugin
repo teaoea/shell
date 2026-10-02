@@ -3,6 +3,8 @@
 
 [Argument]
 script_debug = switch,true,tag=排查日志,desc=验证完成后可关闭
+ump_enabled = switch,false,tag=UMP 试验处理,desc=先用 inspect 取日志；完整读取播放响应可能增加等待
+ump_mode = select,"inspect","clean_prefetch",tag=UMP 模式,desc=inspect 仅检查；clean_prefetch 清理广告预取提示，未验证实播
 
 [Rule]
 # 只促使 API 接口的 QUIC 回退到 TCP；不处理 googlevideo 播放媒体。
@@ -11,6 +13,9 @@ AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTubeNoAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug}],tag=YouTube 自有广告响应处理
+http-response ^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTubeNoAds.js,requires-body=true,binary-body-mode=true,timeout=10,enable={ump_enabled},debug={script_debug},argument=[{script_debug},{ump_enabled},{ump_mode}],tag=YouTube UMP 试验处理
 
 [Mitm]
 hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com
+# UMP 试验时，在上方 hostname 列表末尾添加 , *.googlevideo.com。
+# 先确认播放请求走 TCP；默认不对媒体添加 UDP 拒绝规则。

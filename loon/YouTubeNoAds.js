@@ -1,5 +1,5 @@
 /*
- * YouTubeNoAds 1.0.0 — standalone Loon response script.
+ * YouTubeNoAds 1.1.0 — standalone Loon response script.
  * No imports, remote calls, storage, redirects, or media request blocking.
  * Wire-format reader written here from the Protocol Buffers encoding spec.
  * Reverse-engineered schema: Player fields 7/68; get_watch path 1 -> 2.
@@ -8,12 +8,15 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.0.0";
+  var VERSION = "1.1.0";
   var MAX_BYTES = 2 * 1024 * 1024;
+  var MAX_UMP_BYTES = 8 * 1024 * 1024;
+  var MAX_UMP_PARTS = 10000;
   var MAX_FIELDS = 30000;
   var MAX_JSON_NODES = 20000;
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(?:\?[^#]*)?$/i;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  var MEDIA_API = /^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$/i;
   var debug = args.script_debug !== false && args.script_debug !== "false";
   var endpoint = "unknown";
 
@@ -222,7 +225,146 @@
     return { body: removed ? JSON.stringify(root) : text, removed: removed };
   }
 
+  // UMP framing uses leading-prefix integers, NOT Protobuf varints. Payload
+  // lengths delimit entire parts; media bytes are never scanned as protobuf.
+  function readUMPInt(bytes, cursor) {
+    if (cursor.pos >= bytes.length) fail("ump-truncated-integer");
+    var first = bytes[cursor.pos++];
+    var size = first < 128 ? 1 : first < 192 ? 2 : first < 224 ? 3 : first < 240 ? 4 : 5;
+    var bits = 8 - size;
+    var value = size === 5 ? 0 : first % Math.pow(2, bits);
+    var scale = size === 5 ? 1 : Math.pow(2, bits);
+    for (var i = 1; i < size; i++) {
+      if (cursor.pos >= bytes.length) fail("ump-truncated-integer");
+      value += bytes[cursor.pos++] * scale;
+      scale *= 256;
+    }
+    return value;
+  }
+
+  function encodeUMPInt(value) {
+    var size = value < 128 ? 1 : value < 16384 ? 2 : value < 2097152 ? 3 : value < 268435456 ? 4 : 5;
+    var out = new Uint8Array(size);
+    if (size === 5) out[0] = 240;
+    else {
+      var base = Math.pow(2, 8 - size);
+      out[0] = (size === 1 ? 0 : 256 - Math.pow(2, 9 - size)) + value % base;
+      value = Math.floor(value / base);
+    }
+    for (var i = 1; i < size; i++) {
+      out[i] = value % 256;
+      value = Math.floor(value / 256);
+    }
+    return out;
+  }
+
+  function scalar32(bytes, record) {
+    if (record.wire !== 0) fail("cue-schema-mismatch");
+    var cursor = { pos: record.payloadStart };
+    var value = read32(bytes, cursor);
+    if (cursor.pos !== record.end) fail("cue-scalar-mismatch");
+    return value;
+  }
+
+  function inspectCueInfo(bytes, budget, summary) {
+    var records = parse(bytes, budget);
+    var cue = null;
+    for (var i = 0; i < records.length; i++) {
+      if (records[i].no !== 1) continue;
+      if (records[i].wire !== 2) fail("cue-info-schema-mismatch");
+      // Multiple singular messages have protobuf merge semantics. Do not
+      // delete an ambiguous merged Cuepoint without a verified schema sample.
+      if (cue) fail("duplicate-cuepoint");
+      cue = records[i];
+    }
+    if (!cue) return false;
+    var payload = bytes.subarray(cue.payloadStart, cue.end);
+    var fields = parse(payload, budget);
+    var type = 0;
+    var event = 0;
+    for (var j = 0; j < fields.length; j++) {
+      if (fields[j].no === 1) type = scalar32(payload, fields[j]);
+      if (fields[j].no === 2) event = scalar32(payload, fields[j]);
+    }
+    var prefetch = type === 1 && event === 6;
+    if (type === 1) {
+      summary.adCues++;
+      if (prefetch) summary.adPrefetch++;
+      else summary.otherAdCues++;
+    }
+    return prefetch;
+  }
+
+  function cleanCueList(bytes, budget, summary, modify) {
+    var records = parse(bytes, budget);
+    var parts = [];
+    var removed = 0;
+    for (var i = 0; i < records.length; i++) {
+      var r = records[i];
+      var prefetch = false;
+      if (r.no === 1) {
+        if (r.wire !== 2) fail("cue-list-schema-mismatch");
+        prefetch = inspectCueInfo(bytes.subarray(r.payloadStart, r.end), budget, summary);
+      }
+      if (modify && prefetch) removed++;
+      else parts.push(bytes.subarray(r.start, r.end));
+    }
+    return { body: removed ? join(parts) : bytes, removed: removed };
+  }
+
+  function processUMP(bytes, mode) {
+    if (!(bytes instanceof Uint8Array)) fail("ump-needs-binary");
+    if (bytes.length > MAX_UMP_BYTES) fail("ump-size-limit");
+    if (mode !== "inspect" && mode !== "clean_prefetch") fail("ump-unknown-mode");
+    var cursor = { pos: 0 };
+    var parts = [];
+    var removed = 0;
+    var count = 0;
+    var budget = { fields: 0 };
+    var summary = { partCounts: {}, adCues: 0, adPrefetch: 0, otherAdCues: 0 };
+    while (cursor.pos < bytes.length) {
+      if (++count > MAX_UMP_PARTS) fail("ump-part-limit");
+      var start = cursor.pos;
+      var type = readUMPInt(bytes, cursor);
+      var typeEnd = cursor.pos;
+      var length = readUMPInt(bytes, cursor);
+      var payloadStart = cursor.pos;
+      if (length > bytes.length - cursor.pos) fail("ump-truncated-part");
+      cursor.pos += length;
+      summary.partCounts[type] = (summary.partCounts[type] || 0) + 1;
+      if (Object.keys(summary.partCounts).length > 128) fail("ump-type-limit");
+      // Only CuepointList (69) is a cleanup target. Preserve all media,
+      // headers/end markers, seek commands, contexts, and encrypted parts.
+      if (type === 69) {
+        var result = cleanCueList(bytes.subarray(payloadStart, cursor.pos), budget, summary, mode === "clean_prefetch");
+        removed += result.removed;
+        parts.push(result.removed ? join([bytes.subarray(start, typeEnd), encodeUMPInt(result.body.length), result.body]) : bytes.subarray(start, cursor.pos));
+      } else parts.push(bytes.subarray(start, cursor.pos));
+    }
+    return { body: removed ? join(parts) : bytes, removed: removed, summary: summary };
+  }
+
+  function runUMP() {
+    endpoint = "ump";
+    if (args.ump_enabled !== true && args.ump_enabled !== "true") return {};
+    var type = header($response.headers, "content-type").split(";")[0].trim();
+    if (type !== "application/vnd.yt-ump") { log("pass: non-UMP"); return {}; }
+    if (Number($response.status) !== 200) { log("pass: non-200"); return {}; }
+    var bytes = bytesOf($response.body);
+    if (!bytes) { log("pass: ump-needs-binary"); return {}; }
+    var result = processUMP(bytes, args.ump_mode || "inspect");
+    var summary = result.summary;
+    var ids = Object.keys(summary.partCounts).sort(function (a, b) { return Number(a) - Number(b); });
+    var partCounts = ids.slice(0, 24).map(function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
+    log((result.removed ? "changed" : "pass") + ": mode=" + (args.ump_mode || "inspect") +
+      " removed_prefetch=" + result.removed + " ad_cues=" + summary.adCues +
+      " ad_prefetch=" + summary.adPrefetch + " other_ad_cues=" + summary.otherAdCues +
+      " bytes=" + bytes.length + " parts=" + partCounts + (ids.length > 24 ? ",..." : ""));
+    return result.removed ? { body: result.body } : {};
+  }
+
   function run() {
+    if (typeof $request !== "undefined" && MEDIA_API.test($request.url || "") && typeof $response !== "undefined") return runUMP();
     var match = API.exec(typeof $request !== "undefined" ? $request.url || "" : "");
     if (!match || typeof $response === "undefined") return {};
     endpoint = match[1].toLowerCase();
@@ -259,6 +401,12 @@
     log((result.removed ? "changed" : "pass") + ": removed=" + result.removed +
       " format=" + (typeof body === "string" || json ? "json" : "protobuf"));
     return result.removed ? { body: result.body } : {};
+  }
+
+  // Offline tests use exactly the same code, without Node or third-party imports.
+  if (typeof module !== "undefined" && module.exports && typeof $done === "undefined") {
+    module.exports = { processUMP: processUMP, readUMPInt: readUMPInt, encodeUMPInt: encodeUMPInt };
+    return;
   }
 
   var output = {};
