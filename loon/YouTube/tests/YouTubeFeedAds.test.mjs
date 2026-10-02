@@ -103,6 +103,7 @@ const text=s=>new TextEncoder().encode(s);
 const emlRoutes={
  video_display_button_group_layout:{model:491441836,route:[19,8,10,4,169495254,138681778,2,138681066,3,449330433]},
  full_width_portrait_image_layout:{model:478840678,route:[27,7,10,4,169495254,138681778,2,138681066,3,449330433]},
+ full_width_square_image_layout:{model:461080918,route:[55,7,10,4,169495254,138681778,2,138681066,3,449330433]},
  video_display_carousel_button_group_layout:{model:33561652,route:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]}
 };
 const nested=(path,payload)=>path.reduceRight((b,f)=>msg(f,b),payload);
@@ -279,4 +280,12 @@ test('available request body can identify final home continuation without an out
  assert.deepEqual(Buffer.from(run(protoBody,{...shortsOptions,extra:{...shortsArgs,$request:req}}).output.body),Buffer.from(msg(10,msg(49399797,[]))));
  const jsonBody=JSON.stringify({contents:[jsonShorts,jsonVideo]});
  assert.deepEqual(JSON.parse(run(jsonBody,{extra:{...shortsArgs,$request:{...req,body:JSON.stringify({browseId:'FEwhat_to_watch'})}}}).output.body),{contents:[jsonVideo]});
+});
+for(const [label,options] of [
+ ['no structural ad command',{command:false}],
+ ['wrong model despite square image layout',{model:232954548}],
+ ['marker without a map value',{modelData:nested(emlRoutes.full_width_square_image_layout.route,msg(8,msg(1,text('skip_ad_on_block'))))}],
+])test(`square image sponsored card retained when ${label}`,()=>{
+ const body=home(msg(1,section(element('full_width_square_image_layout',options))));
+ assert.equal(Object.keys(run(body,{type:'application/x-protobuf'}).output).length,0);
 });

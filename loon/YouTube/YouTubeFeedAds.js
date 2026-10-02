@@ -1,5 +1,5 @@
 /*
- * YouTubeFeedAds 1.2.0 — sponsored feed cards and optional home Shorts hiding.
+ * YouTubeFeedAds 1.2.1 — sponsored feed cards and optional home Shorts hiding.
  * browse/next/search JSON; narrowly mapped browse/next Protobuf list envelopes.
  * Protocol mapping reference: davidzeng0/innertube (2025-02-18 schema).
  * Known EML ads require a template/model pair and a structural ad command.
@@ -7,7 +7,7 @@
  */
 (function () {
   "use strict";
-  var VERSION = "1.2.0";
+  var VERSION = "1.2.1";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -310,6 +310,7 @@
   var EML_ADS = {
     "video_display_button_group_layout": {model:491441836, command:[19,8,10,4,169495254,138681778,2,138681066,3,449330433]},
     "full_width_portrait_image_layout": {model:478840678, command:[27,7,10,4,169495254,138681778,2,138681066,3,449330433]},
+    "full_width_square_image_layout": {model:461080918, command:[55,7,10,4,169495254,138681778,2,138681066,3,449330433]},
     "video_display_carousel_button_group_layout": {model:33561652, command:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]}
   };
   function child(bytes, no, budget) {

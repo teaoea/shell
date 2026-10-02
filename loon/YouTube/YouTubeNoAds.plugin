@@ -1,5 +1,5 @@
 #!name = YouTube去广告
-#!desc = 用于 YouTube App 广告处理：清理已识别的首页、推荐及搜索赞助卡片（含已适配的 iOS EML 视频、轮播及竖图广告）和播放接口广告位，可手动隐藏首页 Shorts 推荐区，提供 UMP 视频流广告预取提示清理试验，并支持分级日志、开发抓包和文件导出。需开启 MitM 并信任证书；隐藏 Shorts、UMP、日志和抓包默认关闭。UMP 去广告效果仍需验证，不能保证全部贴片广告消失或无黑屏；抓包可能增加播放等待。
+#!desc = 用于 YouTube App 广告处理：清理已识别的首页、推荐及搜索赞助卡片（含已适配的 iOS EML 视频、轮播、竖图及方图广告）和播放接口广告位，可手动隐藏首页 Shorts 推荐区，提供 UMP 视频流广告预取提示清理试验，并支持分级日志、开发抓包和文件导出。需开启 MitM 并信任证书；隐藏 Shorts、UMP、日志和抓包默认关闭。UMP 去广告效果仍需验证，不能保证全部贴片广告消失或无黑屏；抓包可能增加播放等待。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/loon/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
