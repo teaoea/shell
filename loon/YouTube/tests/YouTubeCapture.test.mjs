@@ -37,7 +37,10 @@ test('capture is opt-in, main plugin reads request bodies only for its opt-in re
   const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 开发请求抓包'));
   assert.ok(line.includes('enable={capture_raw}')&&line.includes('requires-body=true,binary-body-mode=true'));
   const regex=new RegExp(line.split(' ')[1]);
-  assert.ok(regex.test(api)&&regex.test(media));
+  assert.ok(!regex.test(api)&&regex.test(media));
+  const playerLine=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放器请求广告协商清理'));
+  assert.ok(playerLine.includes('{capture_raw}')&&playerLine.includes('{capture_budget}'));
+  assert.ok(new RegExp(playerLine.split(' ')[1]).test(api));
   assert.ok(!regex.test('https://youtubei.googleapis.com.evil/youtubei/v1/player'));
   const store=started();
   player(store,undefined,{$argument:{script_debug:false,log_enabled:true,log_level:'debug',capture_raw:false}});

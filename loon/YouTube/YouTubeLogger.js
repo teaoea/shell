@@ -1,4 +1,4 @@
-/* YouTubeLogger 1.5.0 — shared diagnostic cache, levels and .log export.
+/* YouTubeLogger 1.6.0 — shared diagnostic cache, levels and .log export.
  * No network calls, filesystem assumptions, third-party code, or automatic uploads.
  * Enabled manually in the main plugin; no separate Logger plugin.
  */
@@ -6,7 +6,7 @@
   "use strict";
   var CONFIG = "ytads.logger.config.v1";
   var CACHE = "ytads.logger.entries.v2";
-  var SOURCES = ["YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeLogger"];
+  var SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeLogger"];
   var BASE = "http://youtube-logs.invalid/";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$/i;
@@ -363,7 +363,7 @@
       if (api || media) {
         var apiName = api ? api[1].toLowerCase() : "ump";
         var source = apiName === "reel/reel_watch_sequence" ? "YouTubeShortsAds" : /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeedAds" : api ? "YouTubePlaybackAds" : "YouTubeStreamAds";
-        devCapture(source, "request", apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName, "1.5.0", {});
+        devCapture(source, "request", apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName, "1.6.0", {});
         return {};
       }
     }
@@ -383,7 +383,7 @@
       if (method !== "POST") return response(405, "Use the buttons on the log page.", "text/plain; charset=utf-8", {Allow:"POST"});
       if (path === "/mark-ad" || path === "/mark-content") {
         if (!c || c.enabled !== true) return response(409, "请先开始记录，再标记播放状态。", "text/plain; charset=utf-8");
-        if (!devAppend({source:"YouTubeLogger", version:"1.5.0", endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : "content-playing")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
+        if (!devAppend({source:"YouTubeLogger", version:"1.6.0", endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : "content-playing")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
         return response(303, "", "text/plain; charset=utf-8", {Location:BASE});
       }
       if (path === "/clear") {
