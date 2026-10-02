@@ -1,5 +1,5 @@
 /*
- * YouTubeStreamAds 1.2.1 — UMP stream ad PREFETCH cue cleanup experiment.
+ * YouTubeStreamAds 1.3.0 — UMP stream ad PREFETCH cue cleanup experiment.
  * Handles googlevideo /videoplayback only; disabled by default in the plugin.
  * Does not remove ad media already transmitted or implement instant ad skip.
  * No imports, remote calls, redirects, or playback API processing.
@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.2.1";
+  var VERSION = "1.3.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug !== false && args.script_debug !== "false";
@@ -17,22 +17,29 @@
   var MAX_UMP_PARTS = 10000;
   var MEDIA_API = /^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$/i;
 
-  // Optional local log collection controlled by the separate Logger plugin.
-  // Keep per-source buffers bounded; storage failures never alter playback.
+  // Optional shared local log collection controlled by the main plugin.
+  // One bounded cache retains source/level tags; failures never alter playback.
   function saveLog(message) {
     try {
+      if (args.log_enabled !== true && args.log_enabled !== "true") return;
       if (typeof $persistentStore === "undefined") return;
+      var ranks = {debug:0, info:1, warn:2, error:3};
+      var level = message.indexOf("changed:") === 0 ? "info" :
+        message === "pass: parse/schema check failed" ? "error" :
+        /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
+      var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
+      if (ranks[level] < ranks[minimum]) return;
       var rawConfig = $persistentStore.read("ytads.logger.config.v1");
       if (!rawConfig || rawConfig.length > 2048) return;
       var config = JSON.parse(rawConfig);
       if (!config || config.enabled !== true || typeof config.session !== "string" || !/^[a-z0-9-]{1,80}$/.test(config.session)) return;
-      var key = "ytads.logger.YouTubeStreamAds.v1";
+      var key = "ytads.logger.entries.v2";
       var raw = $persistentStore.read(key);
-      var state = raw && raw.length <= 65536 ? JSON.parse(raw) : null;
-      var entries = state && state.session === config.session && Array.isArray(state.entries) ? state.entries.slice(-299) : [];
-      entries.push({time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message.slice(0, 600)});
+      var state = raw && raw.length <= 131072 ? JSON.parse(raw) : null;
+      var entries = state && state.session === config.session && Array.isArray(state.entries) ? state.entries.slice(-599) : [];
+      entries.push({source:"YouTubeStreamAds", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message.slice(0, 600)});
       var serialized = JSON.stringify({session:config.session, entries:entries});
-      while (serialized.length > 65536 && entries.length > 1) {
+      while (serialized.length > 131072 && entries.length > 1) {
         entries.shift();
         serialized = JSON.stringify({session:config.session, entries:entries});
       }

@@ -122,7 +122,7 @@ function runtime(body, mode = 'clean_prefetch', enabled = true, type = 'applicat
   }, { timeout: 1000 });
   assert.equal(calls, 1);
   assert.ok(!logs.join('\n').includes('PRIVATE_SIG'));
-  assert.ok(logs.every(line => line.startsWith('[YouTubeStreamAds 1.2.1]')));
+  assert.ok(logs.every(line => line.startsWith('[YouTubeStreamAds 1.3.0]')));
   return { output, logs };
 }
 

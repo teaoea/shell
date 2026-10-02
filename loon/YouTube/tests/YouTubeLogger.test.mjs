@@ -7,9 +7,9 @@ const root = new URL('../', import.meta.url);
 const logger = fs.readFileSync(new URL('YouTubeLogger.js', root), 'utf8');
 const playback = fs.readFileSync(new URL('YouTubePlaybackAds.js', root), 'utf8');
 const stream = fs.readFileSync(new URL('YouTubeStreamAds.js', root), 'utf8');
-const plugin = fs.readFileSync(new URL('YouTubeLogger.plugin', root), 'utf8');
+const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root), 'utf8');
 const configKey = 'ytads.logger.config.v1';
-const sourceKey = name => `ytads.logger.${name}.v1`;
+const cacheKey = 'ytads.logger.entries.v2';
 const base = 'http://youtube-logs.invalid';
 function execute(source, store = new Map(), extra = {}, failure = '') {
   let output;
@@ -19,12 +19,13 @@ function execute(source, store = new Map(), extra = {}, failure = '') {
   const context = {
     $persistentStore: {
       read(key) { if (failure === 'read') throw new Error('secret read detail'); return store.get(key); },
-      write(value, key) { if (failure === 'write') return false; store.set(key, value); return true; }
+      write(value, key) { if (failure === 'write') return false; if (value === undefined) store.delete(key); else store.set(key, value); return true; }
     },
     $notification: { post(...args) { notices.push(args); } },
     $done(value) { output = value; calls++; },
     console: { log(value) { logs.push(value); } },
     Uint8Array, ArrayBuffer, TextDecoder, TextEncoder,
+    $argument: {log_enabled:true, log_level:"debug"},
     ...extra
   };
   vm.runInNewContext(source, context, { timeout: 1000 });
@@ -38,12 +39,19 @@ function play(store, debug = false, failure = '') {
   return execute(playback, store, {
     $request: { url:'https://youtubei.googleapis.com/youtubei/v1/player?token=PRIVATE' },
     $response: {status:200, headers:{'Content-Type':'application/json'}, body:'{"playabilityStatus":{},"adPlacements":[{}],"videoDetails":{"videoId":"SECRET"}}'},
-    $argument: {script_debug:debug}
+    $argument: {script_debug:debug,log_enabled:true,log_level:"debug"}
   }, failure);
 }
 
-test('logger plugin only supplies manual entry and local HTTP request; no overlapping ad response rules', () => {
-  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 0);
+test('main plugin contains both ad rules and one disabled logger entry; no separate plugin', () => {
+  assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
+  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 2);
+  assert.ok(plugin.includes('log_enabled = switch,false'));
+  assert.ok(plugin.includes('script_debug = switch,false'));
+  assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
+  const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
+  assert.equal(loggerLines.length, 2);
+  assert.ok(loggerLines.every(x => x.includes('enable={log_enabled},argument=[{log_enabled},{log_level}]')));
   const line = plugin.split('\n').find(x => x.startsWith('http-request'));
   const regex = new RegExp(line.split(' ')[1]);
   assert.ok(regex.test(base + '/download.log'));
@@ -73,15 +81,15 @@ test('start, collect with console off, pause and export playback results without
   const r = play(store);
   assert.equal(r.logs.length, 0);
   assert.equal(JSON.parse(r.output.body).adPlacements, undefined);
-  assert.equal(JSON.parse(store.get(sourceKey('YouTubePlaybackAds'))).entries.length, 1);
+  assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 1);
   request(store, '/pause', 'POST');
   play(store);
   const exportLog = request(store, '/download.log');
   assert.ok(exportLog.body.includes('Entries: 1'));
-  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 1.2.1] player changed'));
+  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 1.3.0] player changed'));
   assert.ok(!exportLog.body.includes('PRIVATE') && !exportLog.body.includes('SECRET'));
 });
-test('stream summaries collect in a separate buffer and appear in one file', () => {
+test('playback and stream summaries append to the same buffer and one file', () => {
   const store = new Map();
   request(store, '/start', 'POST');
   play(store);
@@ -89,58 +97,119 @@ test('stream summaries collect in a separate buffer and appear in one file', () 
   const r = execute(stream, store, {
     $request:{url:'https://rr5.googlevideo.com/videoplayback?sig=PRIVATE'},
     $response:{status:200, headers:{'Content-Type':'application/vnd.yt-ump'}, body:media},
-    $argument:{script_debug:false, ump_enabled:true, ump_mode:'inspect'}
+    $argument:{script_debug:false, log_enabled:true, log_level:"debug", ump_enabled:true, ump_mode:'inspect'}
   });
   assert.equal(Object.keys(r.output).length, 0);
   const exported = request(store, '/download.log').body;
   assert.ok(exported.includes('Entries: 2'));
-  assert.ok(exported.includes('[YouTubeStreamAds 1.2.1] ump pass: mode=inspect'));
+  assert.ok(exported.includes('[YouTubeStreamAds 1.3.0] ump pass: mode=inspect'));
   assert.ok(exported.includes('parts=21:1'));
   assert.ok(!exported.includes('PRIVATE'));
+  const entries = JSON.parse(store.get(cacheKey)).entries;
+  assert.deepEqual(entries.map(r => r.source), ['YouTubePlaybackAds', 'YouTubeStreamAds']);
+  assert.ok(!store.has('ytads.logger.YouTubePlaybackAds.v1') && !store.has('ytads.logger.YouTubeStreamAds.v1'));
+});
+
+test('main logging switch blocks all cache writes and manual entry when disabled', () => {
+  const store = new Map();
+  request(store, '/start', 'POST');
+  const before = Array.from(store);
+  const r = execute(playback, store, {
+    $request:{url:'https://youtubei.googleapis.com/youtubei/v1/player'},
+    $response:{status:200,headers:{'Content-Type':'application/json'},body:'{"playabilityStatus":{},"adSlots":[]}'},
+    $argument:{script_debug:false,log_enabled:false}
+  });
+  assert.equal(JSON.parse(r.output.body).adSlots, undefined);
+  assert.deepEqual(Array.from(store), before);
+  const manual = execute(logger, store, {$argument:{log_enabled:false}});
+  assert.ok(manual.output.content.includes('手动开启'));
+  assert.equal(manual.notices.length, 0);
+});
+
+test('each save level includes its own severity and higher levels only', () => {
+  for (const minimum of ['debug','info','warn','error']) {
+    const store = new Map();
+    request(store, '/start', 'POST');
+    const scenarios = [
+      {status:200,headers:{'Content-Type':'application/json'},body:'{"playabilityStatus":{}}'},
+      {status:200,headers:{'Content-Type':'application/json'},body:'{"playabilityStatus":{},"adSlots":[]}'},
+      {status:503,headers:{},body:''},
+      {status:200,headers:{'Content-Type':{toString(){throw new Error('SECRET');}}},body:''}
+    ];
+    for (const response of scenarios) execute(playback, store, {
+      $request:{url:'https://youtubei.googleapis.com/youtubei/v1/player'}, $response:response,
+      $argument:{script_debug:false,log_enabled:true,log_level:minimum}
+    });
+    const levels = JSON.parse(store.get(cacheKey)).entries.map(r => r.level);
+    const all = ['debug','info','warn','error'];
+    assert.deepEqual(levels, all.slice(all.indexOf(minimum)));
+    const exported = request(store, '/download.log').body;
+    assert.ok(!exported.includes('SECRET'));
+    assert.ok(exported.includes('[ERROR]'));
+  }
+});
+
+test('old per-source caches migrate once to one cache without duplicating export', () => {
+  const store = new Map([[configKey, JSON.stringify({enabled:true,session:'legacy-session'})]]);
+  for (const source of ['YouTubePlaybackAds','YouTubeStreamAds']) store.set(`ytads.logger.${source}.v1`, JSON.stringify({session:'legacy-session',entries:[{
+    time:'2026-10-02T01:00:00.000Z',version:'1.2.1',endpoint:source === 'YouTubePlaybackAds' ? 'player' : 'ump',message:'changed: removed=1'
+  }]}));
+  assert.ok(request(store, '/download.log').body.includes('Entries: 2'));
+  assert.ok(request(store, '/download.log').body.includes('Entries: 2'));
+  assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 2);
+  assert.ok(!store.has('ytads.logger.YouTubePlaybackAds.v1') && !store.has('ytads.logger.YouTubeStreamAds.v1'));
+});
+
+test('failed migration preserves old caches for retry', () => {
+  const legacy = 'ytads.logger.YouTubePlaybackAds.v1';
+  const store = new Map([[configKey, JSON.stringify({enabled:true,session:'legacy-session'})], [legacy,JSON.stringify({session:'legacy-session',entries:[]})]]);
+  assert.equal(request(store, '/download.log', 'GET', 'write').status, 503);
+  assert.ok(store.has(legacy));
+  assert.equal(store.has(cacheKey), false);
 });
 test('disabled UMP produces no stream entries', () => {
   const store = new Map();
   request(store, '/start', 'POST');
   execute(stream, store, {$request:{url:'https://rr5.googlevideo.com/videoplayback?x=1'}, $response:{}, $argument:{ump_enabled:false}});
-  assert.equal(store.has(sourceKey('YouTubeStreamAds')), false);
+  assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 0);
 });
-test('log buffers retain the newest 300 entries and stay within 64 KiB', () => {
+test('one shared buffer retains the newest 600 entries and stays within 128 KiB', () => {
   const store = new Map();
   request(store, '/start', 'POST');
   const session = JSON.parse(store.get(configKey)).session;
-  store.set(sourceKey('YouTubePlaybackAds'), JSON.stringify({session, entries:Array.from({length:300}, (_, n) => ({time:'2026-10-02T00:00:00.000Z',version:'1.2.1',endpoint:'player',message:'old-' + n}))}));
+  store.set(cacheKey, JSON.stringify({session, entries:Array.from({length:600}, (_, n) => ({time:'2026-10-02T00:00:00.000Z',source:'YouTubePlaybackAds',level:'debug',version:'1.3.0',endpoint:'player',message:'old-' + n}))}));
   play(store);
-  const state = JSON.parse(store.get(sourceKey('YouTubePlaybackAds')));
-  assert.equal(state.entries.length, 300);
+  const state = JSON.parse(store.get(cacheKey));
+  assert.equal(state.entries.length, 600);
   assert.equal(state.entries[0].message, 'old-1');
   assert.ok(state.entries.at(-1).message.startsWith('changed'));
-  assert.ok(store.get(sourceKey('YouTubePlaybackAds')).length <= 65536);
+  assert.ok(store.get(cacheKey).length <= 131072);
 });
 test('byte budget also trims entries when count is below the maximum', () => {
   const store = new Map();
   request(store, '/start', 'POST');
   const session = JSON.parse(store.get(configKey)).session;
-  const row = {time:'2026-10-02T00:00:00.000Z',version:'1.2.1',endpoint:'player',message:'a'.repeat(600)};
-  const entries = Array(90).fill(row);
+  const row = {time:'2026-10-02T00:00:00.000Z',source:'YouTubePlaybackAds',level:'debug',version:'1.3.0',endpoint:'player',message:'a'.repeat(600)};
+  const entries = Array(170).fill(row);
   let seed = JSON.stringify({session, entries});
-  entries.push({...row, message:'b'.repeat(65530 - seed.length - JSON.stringify({...row,message:''}).length - 1)});
+  entries.push({...row, message:'b'.repeat(131066 - seed.length - JSON.stringify({...row,message:''}).length - 1)});
   seed = JSON.stringify({session, entries});
-  assert.equal(seed.length, 65530);
-  store.set(sourceKey('YouTubePlaybackAds'), seed);
+  assert.equal(seed.length, 131066);
+  store.set(cacheKey, seed);
   play(store);
-  assert.ok(store.get(sourceKey('YouTubePlaybackAds')).length <= 65536);
-  assert.ok(JSON.parse(store.get(sourceKey('YouTubePlaybackAds'))).entries.length <= entries.length, 'a new entry forces old entries to be evicted');
+  assert.ok(store.get(cacheKey).length <= 131072);
+  assert.ok(JSON.parse(store.get(cacheKey)).entries.length <= entries.length, 'a new entry forces old entries to be evicted');
 });
 test('clear rotates session and preserves other scripts storage', () => {
   const store = new Map([['unrelated', 'keep']]);
   request(store, '/start', 'POST');
   play(store);
-  const old = store.get(sourceKey('YouTubePlaybackAds'));
+  const old = store.get(cacheKey);
   assert.equal(request(store, '/clear', 'POST').status, 303);
   assert.equal(JSON.parse(store.get(configKey)).enabled, false);
   assert.equal(store.get('unrelated'), 'keep');
   // An in-flight writer from the previous session cannot resurrect old logs.
-  store.set(sourceKey('YouTubePlaybackAds'), old);
+  store.set(cacheKey, old);
   assert.ok(request(store, '/download.log').body.includes('Entries: 0'));
 });
 test('clearing can recover corrupt owned storage', () => {
@@ -159,7 +228,7 @@ test('all write/read failures leave ad cleanup operational, errors contain no ra
     const ump = execute(stream, store, {
       $request:{url:'https://rr5.googlevideo.com/videoplayback?sig=PRIVATE'},
       $response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:new Uint8Array([69,8,10,6,10,4,8,1,16,6])},
-      $argument:{script_debug:true,ump_enabled:true,ump_mode:'clean_prefetch'}
+      $argument:{script_debug:true,log_enabled:true,log_level:"debug",ump_enabled:true,ump_mode:'clean_prefetch'}
     }, failure);
     assert.deepEqual(Array.from(ump.output.body), [69,0]);
     assert.ok(!ump.logs.join('\n').includes('secret'));
@@ -180,9 +249,12 @@ test('export ignores stale sessions and malformed records and sorts timestamps',
   const store = new Map();
   request(store, '/start', 'POST');
   const session = JSON.parse(store.get(configKey)).session;
-  const row = time => ({time,version:'1.2.1',endpoint:'player',message:'pass: removed=0'});
-  store.set(sourceKey('YouTubePlaybackAds'), JSON.stringify({session,entries:[row('2026-10-02T02:00:00.000Z'),row('2026-10-02T01:00:00.000Z'), {...row('2026-10-02T01:00:00.000Z'),message:'bad\nline'}]}));
-  store.set(sourceKey('YouTubeStreamAds'), JSON.stringify({session:'stale',entries:[row('2026-10-02T00:00:00.000Z')]}));
+  const row = time => ({time,source:'YouTubePlaybackAds',level:'debug',version:'1.3.0',endpoint:'player',message:'pass: removed=0'});
+  store.set(cacheKey, JSON.stringify({session,entries:[row('2026-10-02T02:00:00.000Z'),row('2026-10-02T01:00:00.000Z'), {...row('2026-10-02T01:00:00.000Z'),message:'bad\nline'}]}));
+  const valid = store.get(cacheKey);
+  store.set(cacheKey, JSON.stringify({session:'stale',entries:[row('2026-10-02T00:00:00.000Z')]}));
+  assert.ok(request(store, '/download.log').body.includes('Entries: 0'));
+  store.set(cacheKey, valid);
   const body = request(store, '/download.log').body;
   assert.ok(body.includes('Entries: 2'));
   assert.ok(body.indexOf('01:00:00') < body.indexOf('02:00:00'));

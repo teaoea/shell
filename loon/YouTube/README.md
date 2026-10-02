@@ -1,14 +1,13 @@
 # YouTube 视频贴片去广告（自有 JS）
 
-只维护一个 Loon 插件入口 `YouTubeNoAds.plugin`，按功能调用同目录的两份自有 JS。两份脚本均可直接在 Loon 独立运行，没有运行时模块导入、第三方实现、第三方服务、外部库、重定向或额外网络请求。
+只维护一个 Loon 插件入口 `YouTubeNoAds.plugin`，按功能调用同目录的去广告 JS 与日志 JS。去广告脚本均可直接在 Loon 独立运行，没有运行时模块导入、第三方实现、第三方服务、外部库、重定向或额外网络请求。
 
 | 文件 | 功能 | 匹配位置 |
 | --- | --- | --- |
 | `YouTubePlaybackAds.js` | 清理播放接口返回的广告位 | `/youtubei/v1/player`、`get_watch` 的 JSON / Protobuf 响应 |
 | `YouTubeStreamAds.js` | 清理视频流中的广告预取提示（试验） | `googlevideo.com/videoplayback` 的 UMP 响应 |
 | `YouTubeLogger.js` | 本地日志控制、下载页面与 .log 导出 | 专用本地页面 |
-| `YouTubeLogger.plugin` | 可选的独立日志插件 | 手动入口与浏览器请求 |
-| `YouTubeNoAds.plugin` | 统一配置两份脚本、参数与 MitM | 只需启用这一个插件 |
+| `YouTubeNoAds.plugin` | 统一配置去广告、日志入口、参数与 MitM | 只需启用这一个插件 |
 
 原合并文件 `YouTubeNoAds.js` 已移除。两份脚本的二进制解析辅助函数各自保留，以便 Loon 直接执行，不需要再加载公共模块。后续播放接口功能改 `YouTubePlaybackAds.js`，视频流功能改 `YouTubeStreamAds.js`。
 
@@ -46,33 +45,64 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAd
 
 ## 查看结果
 
-默认开启“排查日志”。日志前缀含脚本版本：
+默认关闭控制台日志和日志工具，需要时在主插件手动开启“控制台日志”。日志前缀含脚本版本：
 
 ```text
-[YouTubePlaybackAds 1.2.1] player changed: removed=3 format=protobuf
-[YouTubePlaybackAds 1.2.1] get_watch pass: removed=0 format=protobuf
-[YouTubePlaybackAds 1.2.1] player pass: truncated-field
+[YouTubePlaybackAds 1.3.0] player changed: removed=3 format=protobuf
+[YouTubePlaybackAds 1.3.0] get_watch pass: removed=0 format=protobuf
+[YouTubePlaybackAds 1.3.0] player pass: truncated-field
 ```
 
 - `changed` 表示删除了已识别广告字段，不能单独证明某次视频不会出现广告。`removed` 是字段出现次数，不是广告条数。
 - `pass: removed=0` 表示没有可清理的已识别广告字段，也可能没有识别到已知 Player 结构。
 - `pass: ...` 错误或格式原因表示整个响应未修改。
-- 没有日志时，先确认新 JS 已下载及排查日志已开启，再查看是否出现匹配路径的请求。不要求每次播放必然访问 `youtubei.googleapis.com`。
+- 没有日志时，先确认新 JS 已下载及控制台日志已开启，再查看是否出现匹配路径的请求。不要求每次播放必然访问 `youtubei.googleapis.com`。
 - 脚本只记录接口名、格式、计数及固定错误原因，不输出完整 URL、token、签名或响应内容。Loon 自带的 debug 请求记录仍可能包含敏感内容，分享前请遮盖。
 
-## 独立日志插件与文件导出
+## 主插件日志工具与分级保存
 
-新增 `YouTubeLogger.plugin` 和 `YouTubeLogger.js`。日志插件独立启用，主去广告插件仍只有一个；日志插件不匹配 YouTube 响应，避免与两份去广告脚本重复处理同一请求。两份去广告 JS 已加入可选本地日志写入，更新到 1.2.1 后才会写入导出缓存。
+日志功能已并入 `YouTubeNoAds.plugin`，保留 `YouTubeLogger.js` 处理页面与导出；已删除独立的 `YouTubeLogger.plugin`，不再需要另装日志插件。两个去广告脚本把日志直接写入同一份缓存 `ytads.logger.entries.v2`，统一导出一个 `.log` 文件，记录中保留来源和严重程度，不再维护两份日志缓存。
 
-1. 更新主插件及两份去广告 JS；导入并启用 `YouTubeLogger.plugin`，下载 `YouTubeLogger.js`。文件需要先发布到本仓库才能从插件中的远程地址取得；本地试用时将日志插件的两个 `script-path` 都改为 `YouTubeLogger.js`。
-2. 在 Safari 输入完整地址 **`http://youtube-logs.invalid/`**，或在 Loon 手动运行“ YouTube 日志入口 ”后点击通知。必须使用 `http://`，该专用地址由 Loon 请求脚本直接返回页面，没有上游服务器。不需要为它添加 MitM 域名。
-3. 页面点击“开始记录”，然后打开 YouTube 重现广告。普通控制台的“排查日志”开关可以关闭，本地记录仍会进行。要取得 UMP 结构信息，仍需在主插件开启“UMP 试验处理”，先用 `inspect` 模式。
-4. 回到页面，点击“暂停记录”，再点“下载日志文件 .log”。生成的文件名类似 `YouTube-2026-10-02T02-30-00-000Z.log`，时间采用 UTC。Safari 若直接显示文本，可通过分享菜单保存到“文件”。
-5. 页面“清空日志并暂停”只清理本项目日志，不会调用清空所有脚本存储的接口。停用日志插件前先暂停记录：插件停用不能自动删除持久化的记录开关。
+主插件提供以下参数：
 
-日志含记录时间、脚本名与版本、接口名、处理结果、删除数量、UMP 部分计数与固定错误原因。只收集本项目处理摘要，不读完整 URL、签名、token、请求头或媒体正文，也无法读取 Loon 全局连接、证书失败和脚本超时日志。
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| 日志工具 | 关闭 | 手动开启后显示日志入口、允许本地保存；关闭后两份去广告脚本立即停止新增日志 |
+| 日志保存级别 | info | 只保存所选级别及更高严重程度的新日志 |
+| 控制台日志 | 关闭 | 单独控制 Loon 脚本控制台输出，不影响本地缓存保存 |
 
-默认未开始记录。每份去广告脚本分别保留最近 **300 条且最多 64 KiB 的序列化缓存**，到达上限覆盖旧记录；两份缓冲区共最多 128 KiB。相同脚本并发读写可能丢失个别条目，导出是排查摘要，不是完整抓包。存储失败不会改变去广告结果。此版本已通过本地模拟导出测试，手机上的 Safari 下载及 Loon 入口仍需实机验证。地址无法打开时检查日志插件、脚本下载和 Loon 连接是否启用，并确认没有被浏览器自动改为 HTTPS。
+保存级别从低到高为 `debug → info → warn → error`：
+
+| 级别 | 新保存的内容 |
+| --- | --- |
+| debug | 全部处理摘要，包括未修改结果、UMP 结构和计数 |
+| info | 实际清理修改结果、警告和错误 |
+| warn | 非成功状态、格式或结构不匹配、超限等警告，以及错误 |
+| error | 未预期的解析或运行错误；不会收集 Loon 全局超时、证书或网络错误 |
+
+存储写入失败只能记录到已开启的控制台，无法同时保证保存到失败的存储中。级别调整不删除已记录的历史条目。
+
+使用步骤：
+
+1. 更新主插件和三份 JS（`YouTubePlaybackAds.js`、`YouTubeStreamAds.js`、`YouTubeLogger.js`）。删除手机上的旧 `YouTubeLogger.plugin`，避免重复日志入口。文件需要先发布到本仓库才能从远程地址取得；本地试用时主插件两个日志条目的 `script-path` 都填写本地资源名 `YouTubeLogger.js`。
+2. 在主插件手动开启“日志工具”，选择保存级别。排查广告或 UMP 结构时选择 `debug`；日常只关心修改结果可保持 `info`。
+3. 在 Safari 输入完整地址 **`http://youtube-logs.invalid/`**，或手动运行主插件中的“ YouTube 日志入口 ”后点击通知。地址由 Loon 请求脚本直接返回页面，没有上游服务器，不需要额外 MitM 域名。第一次开启后在页面点“开始记录”。页面可暂停或继续同一批记录；主插件日志工具关闭时停止新增，重新开启后沿用页面记录状态。
+4. 打开 YouTube 重现广告。要保存 UMP 部分计数，仍需开启主插件的“UMP 试验处理”，先用 `inspect`；未修改的检查摘要属于 `debug`。
+5. 回到页面，点击“暂停记录”，再点“下载日志文件 .log”。文件名类似 `YouTube-2026-10-02T02-30-00-000Z.log`，时间为 UTC。Safari 直接显示文本时可通过分享菜单保存到“文件”。
+6. 页面“清空日志并暂停”只清理本项目缓存与旧版日志缓存，保留其他脚本存储。日志工具关闭后页面入口也停用，已有缓存不会自动删除。
+
+缓存统一保留最近 **600 条且最多 128 KiB 的序列化内容**，超出覆盖最旧记录。两份脚本并发写同一缓存可能丢失个别条目，导出是排查摘要，不是完整抓包。存储失败不会改变去广告结果。手机上的 Loon 页面入口和 Safari 下载仍需实机验证。
+
+升级时先打开日志页面：若统一缓存尚不存在，会将当前会话的旧两份缓存按时间合并一次，成功写入后删除旧缓存；后续只读写统一缓存。若已先产生新版缓存，旧缓存不再并入；可用清空按钮一并移除旧缓存。升级时应同时更新两份去广告 JS，避免旧版继续写旧缓存。
+
+日志含时间、级别、脚本名与版本、接口名、处理结果和计数。不会记录完整 URL、签名、token、请求头或媒体正文。示例：
+
+```text
+2026-10-02T02:30:00.000Z [INFO] [YouTubePlaybackAds 1.3.0] player changed: removed=3 format=protobuf
+2026-10-02T02:30:01.000Z [DEBUG] [YouTubeStreamAds 1.3.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
+```
+
+以上是格式示例，不是设备实测。地址无法打开时检查主插件的日志工具开关、脚本下载和 Loon 连接，并确认 Safari 没有自动改为 HTTPS。
 
 实现使用 Loon 公开的本地存储及请求脚本直接生成响应接口：[Script API](https://nsloon.app/docs/Script/script_api/)。公开 API 清单没有直接写入 iOS “文件”App 的接口，因此文件通过浏览器下载保存。
 
@@ -88,16 +118,16 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 ### 在设备上验证
 
-1. 确认主插件和 JS 都更新为此版本。打开“排查日志”和“UMP 试验处理”，将“UMP 模式”保持为 `inspect`。该模式只检查，不修改响应。
+1. 确认主插件和 JS 都更新为此版本。打开“控制台日志”和“UMP 试验处理”，将“UMP 模式”保持为 `inspect`。该模式只检查，不修改响应。
 2. 主插件已包含 `*.googlevideo.com` MitM。若播放请求走 UDP/QUIC，可能无法命中脚本；只有观察到该现象时，才考虑在主配置中增加仅针对 `googlevideo.com` UDP/443 的回退规则。不要拒绝 TCP 播放连接。
-3. 完全退出 YouTube，重开并播放可能出现广告的视频。找 `YouTube 视频流广告提示清理（试验）` 日志，前缀为 `[YouTubeStreamAds 1.2.1] ump`。
+3. 完全退出 YouTube，重开并播放可能出现广告的视频。找 `YouTube 视频流广告提示清理（试验）` 日志，前缀为 `[YouTubeStreamAds 1.3.0] ump`。
 4. 先看是否记录到 `parts=...69:...` 和 `ad_prefetch` 大于零。如果没有，当前清理策略没有命中该广告，打开清理模式也不会移除其媒体。
 5. 只有命中明确预取提示时，再把模式改为 `clean_prefetch`，退出重开后测试。`removed_prefetch` 大于零只代表删除了提示，必须另外观察广告、正片和拖动进度是否正常。关闭 UMP 开关可以撤销响应脚本处理；完整撤销媒体解密还需从主插件 MitM 列表移除 `*.googlevideo.com`。
 
 示例日志是说明用的合成结果，不是用户设备上的实测：
 
 ```text
-[YouTubeStreamAds 1.2.1] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
+[YouTubeStreamAds 1.3.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
 ```
 
 这里的 `20:1` 表示类型 20 出现 1 次；`ad_prefetch` 是符合两个条件的元数据条目数。日志不输出媒体内容、视频 ID、签名、token 或上下文原文。
@@ -112,7 +142,7 @@ Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据�
 
 ## 本地验证
 
-`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs` 和 `tests/YouTubeLogger.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 77 个测试，覆盖：两种 API 域名、两种响应结构、重复广告字段、未知 wire 数据保留、嵌套长度跨界、二进制视图偏移、JSON、异常结构、资源限制、日志内容及单次完成；另外验证 UMP 前缀整数的十个固定向量、预取提示清理、媒体和其他广告事件保留、跨边界长度重组、异常数据整体原样通过及试验开关；确认两个脚本各自只处理所负责的接口。日志测试覆盖开始/暂停、两份脚本合并导出、关闭控制台仍记录、数量与容量限制、存储失败仍完成清理、会话清空与隔离、下载文件名与敏感信息不进入摘要。
+`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs` 和 `tests/YouTubeLogger.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 81 个测试，覆盖：两种 API 域名、两种响应结构、重复广告字段、未知 wire 数据保留、嵌套长度跨界、二进制视图偏移、JSON、异常结构、资源限制、日志内容及单次完成；另外验证 UMP 前缀整数的十个固定向量、预取提示清理、媒体和其他广告事件保留、跨边界长度重组、异常数据整体原样通过及试验开关；确认两个脚本各自只处理所负责的接口。日志测试覆盖开始/暂停、两份脚本合并导出、关闭控制台仍记录、主插件手动开关、四级过滤、旧缓存合并、数量与容量限制、存储失败仍完成清理、会话清空与隔离、下载文件名与敏感信息不进入摘要。
 
 ```sh
 node --check loon/YouTube/YouTubePlaybackAds.js
