@@ -15,7 +15,7 @@ const v=n=>{const a=[];while(n>=128){a.push(n%128+128);n=Math.floor(n/128);}retu
 const cat=(...p)=>Uint8Array.from(p.flatMap(x=>Array.from(x)));
 const msg=(f,p)=>cat(v(f*8+2),v(p.length),p);
 const ad=msg(424701016,[255,1]); // opaque ad body must never be guessed as protobuf
-const normal=msg(50195462,[255,254,0]);
+const normal=msg(50195462,msg(1,msg(99,[255,254,0])));
 const tracking=msg(4,[1,2,3]);
 const initial=list=>msg(9,msg(49399797,list));
 test('main plugin routes all feed endpoints exclusively to its own standalone script',()=>{
@@ -97,4 +97,70 @@ test('unknown browse Tab contents are not guessed as list messages',()=>{
 test('rich ad wrapper mixed with normal renderer preserves the whole response',()=>{
  const body=JSON.stringify({contents:[{richItemRenderer:{content:{adSlotRenderer:{}}},videoRenderer:{title:'KEEP'}}]});
  assert.equal(Object.keys(run(body).output).length,0);
+});
+
+const text=s=>new TextEncoder().encode(s);
+const emlRoutes={
+ video_display_button_group_layout:{model:491441836,route:[19,8,10,4,169495254,138681778,2,138681066,3,449330433]},
+ full_width_portrait_image_layout:{model:478840678,route:[27,7,10,4,169495254,138681778,2,138681066,3,449330433]},
+ video_display_carousel_button_group_layout:{model:33561652,route:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]}
+};
+const nested=(path,payload)=>path.reduceRight((b,f)=>msg(f,b),payload);
+function component(name,{model=emlRoutes[name]?.model??232954548,command=true,route=emlRoutes[name]?.route,modelData,typeSuffix='',id=`${name}.eml-fe|0123456789abcdef`}={}){
+ const entry=msg(8,cat(msg(1,text('skip_ad_on_block')),msg(2,msg(2,text('SAFE-SYNTHETIC')))));
+ const data=modelData??(command&&route?nested(route,entry):msg(99,text('skip_ad_on_block')));
+ return cat(msg(3,msg(172035250,msg(1,text(id)))),msg(5,msg(model,data)),typeSuffix);
+}
+const element=(name,options={})=>msg(153515154,msg(172660663,msg(1,msg(168777401,component(name,options)))));
+const section=(...contents)=>msg(50195462,cat(...contents.map(x=>msg(1,x)),tracking,[64,1]));
+const home=list=>nested([9,58173949,1,58174010,4,49399797],list);
+const divider=()=>section(element('cell_divider',{model:347043917,command:false}));
+const normalEml=()=>section(element('video_lockup_with_attachment',{command:false}));
+for(const name of Object.keys(emlRoutes))test(`sample-derived EML ${name}: removes ad card and its following divider; all other bytes remain exact`,()=>{
+ const adItem=msg(1,section(element(name))),separator=msg(1,divider()),normalItem=msg(1,normalEml());
+ const registry=msg(777,msg(99,element(name))); // shared definition outside cards
+ const input=cat(home(cat(normalItem,separator,adItem,separator,normalItem,msg(2,text('CONTINUATION')))),registry);
+ const expected=cat(home(cat(normalItem,separator,normalItem,msg(2,text('CONTINUATION')))),registry);
+ const r=run(input,{type:'application/x-protobuf'});
+ assert.deepEqual(Buffer.from(r.output.body),Buffer.from(expected));assert.ok(r.logs.join('').includes('removed_eml=1 removed_dividers=1'));
+});
+test('EML continuation and mixed ItemSection remove only identified ad contents',()=>{
+ const content=element('video_display_button_group_layout'),keep=element('video_lockup_with_attachment',{command:false});
+ const original=msg(10,msg(49399797,msg(1,section(keep,content,keep))));
+ const expected=msg(10,msg(49399797,msg(1,section(keep,keep))));
+ assert.deepEqual(Buffer.from(run(original,{type:'application/x-protobuf'}).output.body),Buffer.from(expected));
+});
+for(const [label,name,options] of [
+ ['normal template containing ad model','video_lockup_with_attachment',{model:491441836,route:emlRoutes.video_display_button_group_layout.route}],
+ ['unknown template','unknown_ad_layout',{model:491441836,route:emlRoutes.video_display_button_group_layout.route}],
+ ['ad template but mismatched model','video_display_button_group_layout',{model:232954548}],
+ ['known pair with marker in opaque unrelated bytes','video_display_button_group_layout',{command:false}],
+ ['wrong identifier boundary','video_display_button_group_layout',{id:'video_display_button_group_layout.eml-fe|0123456789abcdefEXTRA'}],
+ ['mixed models','video_display_button_group_layout',{typeSuffix:msg(5,msg(232954548,[]))}],
+ ['ad command absent','full_width_portrait_image_layout',{modelData:[]}]
+])test(`EML pass-through: ${label}`,()=>{
+ const r=run(home(msg(1,section(element(name,options)))),{type:'application/x-protobuf'});assert.equal(Object.keys(r.output).length,0);
+});
+test('known EML ad plus later malformed command path passes entire response',()=>{
+ const name='video_display_button_group_layout',route=emlRoutes[name].route;
+ const good=nested(route,msg(8,cat(msg(1,text('skip_ad_on_block')),msg(2,[]))));
+ const data=cat(good,msg(route[0],[0x0a,0x03,0x01]));
+ assert.equal(Object.keys(run(home(msg(1,section(element(name,{modelData:data})))),{type:'application/x-protobuf'}).output).length,0);
+});
+test('unknown EML type variant and mixed renderer union cannot delete normal content',()=>{
+ const known=element('video_display_button_group_layout');
+ const mixed=cat(known,msg(99999999,[255]));
+ assert.equal(Object.keys(run(home(msg(1,section(mixed))),{type:'application/x-protobuf'}).output).length,0);
+ const type=cat(msg(168777401,component('video_display_button_group_layout')),msg(99999999,[]));
+ const unknown=msg(153515154,msg(172660663,msg(1,type)));
+ assert.equal(Object.keys(run(home(msg(1,section(unknown))),{type:'application/x-protobuf'}).output).length,0);
+});
+test('known Tab path with no ad preserves the original bytes and divider',()=>{
+ const body=home(cat(msg(1,normalEml()),msg(1,divider()),msg(2,text('CONTINUATION'))));
+ assert.equal(Object.keys(run(body,{type:'application/x-protobuf'}).output).length,0);
+});
+test('following normal card and unrelated shelf are never treated as ad separators',()=>{
+ const adItem=msg(1,section(element('video_display_button_group_layout'))),keep=msg(1,normalEml()),shelf=msg(1,msg(51845067,[255,0]));
+ const body=home(cat(adItem,keep,shelf));
+ assert.deepEqual(Buffer.from(run(body,{type:'application/x-protobuf'}).output.body),Buffer.from(home(cat(keep,shelf))));
 });

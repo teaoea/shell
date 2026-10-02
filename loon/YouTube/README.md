@@ -71,9 +71,25 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAd
 
 Protobuf 仅沿已核对的路径处理：BrowseResponse 字段 9 / 10 中的 SectionListRenderer（49399797）及其列表字段 1，删除含 AdSlotRenderer（424701016）或 CompanionAdRenderer（55514441）的整个列表项；`next` 支持 SingleColumnWatchNextResults（51779735）中的 SectionList，以及字段 8 的 WatchNextSecondaryResults continuation（51779776），其列表支持广告位和 CompactPromotedVideoRenderer（73920376）。未知字段保持原字节，只在已修改的外层消息重算长度。`removed` 是被识别的广告字段/JSON 列表项计数，不等同于屏幕上广告的准确条数。
 
-**尚未适配：未知 Tab 内容布局、二进制 search 响应及不透明 Elements/EML 卡片。** 当前不会在任意字节中搜索“ad”或“Robinhood”并删除，也不根据展示文字猜测 EML 卡片性质。这些结构原样通过并保存开发样本。限制为 4 MiB 响应、30,000 个 Protobuf 字段、32 层已知消息路径、20,000 个 JSON 节点和 64 层 JSON 深度；截断、混合 renderer、解析错误或超限时整条原响应通过。
+**尚未适配：其他 Tab/列表路径、二进制 search 响应及未识别的 Elements/EML 卡片。** 当前不会在任意字节中搜索“ad”或“Robinhood”并删除，也不根据展示文字猜测 EML 卡片性质。这些结构原样通过并保存开发样本。限制为 4 MiB 响应、30,000 个 Protobuf 字段、32 层已知消息路径、20,000 个 JSON 节点和 64 层 JSON 深度；截断、混合 renderer、解析错误或超限时整条原响应通过。
 
-用户提供的 `YouTube-2026-10-02T04-18-57-639Z.json` 末尾缺少 JSON 结束内容，可完整读取的 13 个事件均为 `googlevideo/videoplayback` 请求或响应，不含首页推荐响应。原文件不纳入仓库。此前入口没有抓 `browse/next/search`，因此这份文件不能证明截图卡片使用哪种结构，也不能验证新脚本已移除这张卡片。
+### iOS 首页 EML 卡片适配（1.1.0）
+
+根据用户新提供的完整信息流导出，已补上初始首页路径 `9 → 58173949 → 1 → 58174010 → 4 → 49399797`，以及初始/延续列表内的 `ItemSectionRenderer（50195462）→ contents（1）→ ElementRenderer（153515154）`。只读取卡片本身的 `172660663 → 1 → 168777401`，不在共享模板库或其他任意二进制中搜索广告词。
+
+以下三组布局和数据类型在 YouTube iOS 21.39.4 的样本中出现：
+
+| 卡片布局 | Model 字段 | 广告操作路径（从 Model 正文起） |
+| --- | --- | --- |
+| `video_display_button_group_layout.eml` | 491441836 | 19 → 8 → 10 → 4 → 169495254 → 138681778 → 2 → 138681066 → 3 → 449330433 |
+| `full_width_portrait_image_layout.eml` | 478840678 | 27 → 7 → 10 → 4 → 169495254 → 138681778 → 2 → 138681066 → 3 → 449330433 |
+| `video_display_carousel_button_group_layout.eml` | 33561652 | 14 → 8 → 10 → 4 → 169495254 → 138681778 → 2 → 138681066 → 3 → 449330433 |
+
+清理要求三项同时成立：布局标识为对应名称加样本中的 `.eml-fe|` 和 16 位十六进制版本后缀；Component 的 Model 是对应的唯一字段；广告操作路径末尾的字段 8 映射项包含明确的 `skip_ad_on_block` 键和长度型值。布局标识沿 `Component 字段 3 → 172035250 → 1` 读取，Model 沿字段 5 读取。仅有布局名称、模型编号或正文中出现广告词均不足以删除。
+
+卡片内只删除已识别的广告内容。如果 ItemSection 的全部内容均为广告且剩下的只是已知追踪/标志字段 4、8，移除整个外层列表项。混合列表保留其他内容；不能确认的 type/model 保留该卡片。检测到混合 renderer、重复单数消息、字段类型异常或不完整数据时，整条响应原样通过。删除广告后，最多删除紧随其后的一个已识别 `cell_divider.eml`（Model 347043917）列表项，避免留下该广告对应的分隔占位。正常视频布局 `video_lockup_with_attachment.eml`、其他卡片、独立分隔项、Shelf、共享模板库和翻页数据保持原字节。
+
+本次完整文件含 12 个事件，其中 6 份 `browse` 响应：离线回放时，4 份各识别并移除 1 个广告卡片和后续分隔项；其余 2 份无已识别广告，逐字节保持原样。独立比对验证，4 份修改结果与“只移除指定列表项、重算外层长度”的预期完全一致。此验证是实际响应样本的离线回放，仍需手机更新后确认界面结果。原日志、请求凭据和媒体正文均不上传仓库；提交的回归样本为自行构造的最小协议数据。
 
 ### 取得首页广告的样本
 
@@ -83,14 +99,14 @@ Protobuf 仅沿已核对的路径处理：BrowseResponse 字段 9 / 10 中的 Se
 4. 回到日志页面暂停，选择“导出信息流开发记录 .json（排查首页赞助卡片）”。等待合成完成后保存一个 JSON 文件。它从同一缓存筛选 `YouTubeFeedAds` 请求、响应及人工标记，不建立第二套日志缓存。
 5. 先确认文件能作为 JSON 完整打开，事件中有 `endpoint: "browse"`（或 `next/search`）、`phase: "response"`，且 `responseBefore.body.available` 为 `true`。如果这些记录仍缺失，应先检查脚本更新、MitM 和实际请求路径。未知 EML 卡片需要该响应样本才能继续适配。
 
-示例是合成测试结果，不是设备实测：
+本次实际响应的离线回放日志（不是手机界面实测）：
 
 ```text
-[YouTubeFeedAds 1.0.0] browse changed: removed=1 format=protobuf opaque_elements=0
-[YouTubeFeedAds 1.0.0] browse pass: removed=0 format=protobuf opaque_elements=1
+[YouTubeFeedAds 1.1.0] browse changed: removed=1 format=protobuf opaque_elements=12 removed_eml=1 removed_dividers=1
+[YouTubeFeedAds 1.1.0] browse pass: removed=0 format=protobuf opaque_elements=0 removed_eml=0 removed_dividers=0
 ```
 
-`opaque_elements` 只统计已知路径上遇到的不透明 ElementRenderer，不代表统计了所有 EML 卡片。
+`removed_eml` 是确认移除的 EML 广告内容数，`removed_dividers` 是移除的关联分隔项数。`opaque_elements` 统计已知路径上保留的 ElementRenderer（含普通视频和分隔项），不代表广告数量，也不代表统计了所有 EML 卡片。
 
 ## 主插件日志工具与开发记录
 
@@ -121,7 +137,7 @@ Protobuf 仅沿已核对的路径处理：BrowseResponse 字段 9 / 10 中的 Se
 
 ### 开发抓包操作
 
-1. 更新主插件和四份 JS。开发记录要求 `YouTubeFeedAds.js` 为 1.0.0、`YouTubePlaybackAds.js` / `YouTubeStreamAds.js` 为 1.4.0、`YouTubeLogger.js` 为 1.3.0。文件需要发布后才能从远程地址下载；本地导入时所有引用日志 JS 的条目都填写本地资源名 `YouTubeLogger.js`。
+1. 更新主插件和四份 JS。开发记录要求 `YouTubeFeedAds.js` 为 1.1.0、`YouTubePlaybackAds.js` / `YouTubeStreamAds.js` 为 1.4.0、`YouTubeLogger.js` 为 1.3.0。文件需要发布后才能从远程地址下载；本地导入时所有引用日志 JS 的条目都填写本地资源名 `YouTubeLogger.js`。
 2. 主插件开启“日志工具”和“开发抓包”，选择容量。要取得媒体响应，**还必须开启“UMP 试验处理”并先选择 `inspect`**；关闭 UMP 响应入口时仍能取得开发请求，但不会取得媒体响应。普通摘要级别不会过滤开发样本。
 3. Safari 输入 **`http://youtube-logs.invalid/`**，或手动运行主插件的“ YouTube 日志入口 ”后点通知。地址由 Loon 在本地直接响应，不需要额外 MitM。先导出需要保留的旧记录；需要干净样本时清空，再点“开始记录”。
 4. 重现一次广告和一次正常播放。在相近时间添加广告/正片标记，减少其他播放、预览或自动播放，以便比较样本。切换 App 添加标记会有时间误差，不把它当作精确的广告边界。
@@ -190,7 +206,7 @@ Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据�
 
 ## 本地验证
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 133 项测试通过，覆盖：两种 API 域名、两种响应结构、重复广告字段、未知 wire 数据保留、嵌套长度跨界、二进制视图偏移、JSON、异常结构、资源限制、日志内容及单次完成；另外验证 UMP 前缀整数的十个固定向量、预取提示清理、媒体和其他广告事件保留、跨边界长度重组、异常数据整体原样通过及试验开关；确认各去广告脚本只处理所负责的接口。信息流测试另验证整项赞助卡片删除、推荐翻页保留、正常标题/Shorts 保留、未知 EML/Tab 原样通过、已知 Protobuf 列表和长度重组、错误响应整体通过；日志测试验证共用信息流缓存与筛选导出、大样本分块单文件合成、校验失败不给出文件及跨会话隔离。日志测试覆盖开始/暂停、两份脚本合并导出、关闭控制台仍记录、主插件手动开关、四级过滤、旧缓存合并、数量与容量限制、存储失败仍完成清理、会话清空与隔离、下载文件名与敏感信息不进入普通摘要。开发测试另验证请求原样通过、原始/修改正文的二进制还原、空/缺失正文区分、中文/emoji 与分块边界、文件附件、容量满后保留旧证据、写失败回滚、损坏样本提示、异常细节及人工广告/正片标记。
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 148 项测试通过，覆盖：两种 API 域名、两种响应结构、重复广告字段、未知 wire 数据保留、嵌套长度跨界、二进制视图偏移、JSON、异常结构、资源限制、日志内容及单次完成；另外验证 UMP 前缀整数的十个固定向量、预取提示清理、媒体和其他广告事件保留、跨边界长度重组、异常数据整体原样通过及试验开关；确认各去广告脚本只处理所负责的接口。信息流测试另验证整项赞助卡片删除、推荐翻页保留、正常标题/Shorts 保留、未知 EML/Tab 原样通过、三种 EML 布局及广告操作联合识别、关联分隔项清理、混合 ItemSection 保留、共享模板库保留、已知 Protobuf 列表和长度重组、错误响应整体通过；日志测试验证共用信息流缓存与筛选导出、大样本分块单文件合成、校验失败不给出文件及跨会话隔离。日志测试覆盖开始/暂停、两份脚本合并导出、关闭控制台仍记录、主插件手动开关、四级过滤、旧缓存合并、数量与容量限制、存储失败仍完成清理、会话清空与隔离、下载文件名与敏感信息不进入普通摘要。开发测试另验证请求原样通过、原始/修改正文的二进制还原、空/缺失正文区分、中文/emoji 与分块边界、文件附件、容量满后保留旧证据、写失败回滚、损坏样本提示、异常细节及人工广告/正片标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeedAds.js

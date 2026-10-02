@@ -1,12 +1,13 @@
 /*
- * YouTubeFeedAds 1.0.0 — sponsored feed cards, independently implemented for Loon.
+ * YouTubeFeedAds 1.1.0 — sponsored feed cards, independently implemented for Loon.
  * browse/next/search JSON; narrowly mapped browse/next Protobuf list envelopes.
  * Protocol mapping reference: davidzeng0/innertube (2025-02-18 schema).
- * Opaque Elements/EML, videos, tracking bytes and unknown messages stay intact.
+ * Known EML ads require a template/model pair and a structural ad command.
+ * Sample-derived mapping: YouTube iOS 21.39.4, 2026-10-02. Unknown EML stays raw.
  */
 (function () {
   "use strict";
-  var VERSION = "1.0.0";
+  var VERSION = "1.1.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -293,40 +294,138 @@
     next: {7:"nextUnion", 8:"continuationUnion"},
     browseUnion: {49399797:"sectionList", 58173949:"browseColumns", 153515154:"opaqueElement"},
     browseColumns: {1:"tabUnion"},
-    tabUnion: {}, // Tab/Elements layout needs an actual device sample; not guessed.
+    tabUnion: {58174010:"tab"}, tab: {4:"sectionUnion"},
     nextUnion: {51779735:"nextColumn"},
     nextColumn: {1:"sectionUnion", 8:"sectionUnion"},
     sectionUnion: {49399797:"sectionList"},
     continuationUnion: {49399797:"sectionList", 51779776:"secondaryList"},
-    sectionList: {1:"sectionItem"},
-    secondaryList: {1:"secondaryItem"},
-    sectionItem: {}, secondaryItem: {}
+    sectionList: {1:"sectionItem"}, secondaryList: {1:"secondaryItem"},
+    sectionItem: {50195462:"itemSection"}, secondaryItem: {50195462:"itemSection"},
+    itemSection: {1:"contentItem"}, contentItem: {153515154:"cardElement"}
   };
-  var ADS = {sectionItem:{424701016:true,55514441:true}, secondaryItem:{424701016:true,73920376:true}};
+  var ADS = {sectionItem:{424701016:true,55514441:true}, secondaryItem:{424701016:true,73920376:true}, contentItem:{424701016:true,73920376:true}};
+  // Observed layout/model pairs are not a general "ad" substring heuristic.
+  // Command path ends in an explicit skip_ad_on_block map key in each sample.
+  var EML_ADS = {
+    "video_display_button_group_layout": {model:491441836, command:[19,8,10,4,169495254,138681778,2,138681066,3,449330433]},
+    "full_width_portrait_image_layout": {model:478840678, command:[27,7,10,4,169495254,138681778,2,138681066,3,449330433]},
+    "video_display_carousel_button_group_layout": {model:33561652, command:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]}
+  };
+  function child(bytes, no, budget) {
+    var records = parse(bytes, budget), targets = records.filter(function (r) {return r.no === no;});
+    if (!targets.length) return null;
+    if (targets.length !== 1 || targets[0].wire !== 2) fail("eml-single-message-mismatch");
+    return bytes.subarray(targets[0].payloadStart, targets[0].end);
+  }
+  function ascii(bytes) {
+    if (!bytes || bytes.length > 160) return "";
+    var text = "";
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] < 32 || bytes[i] > 126) return "";
+      text += String.fromCharCode(bytes[i]);
+    }
+    return text;
+  }
+  function hasAdCommand(bytes, route, depth, budget) {
+    var records = parse(bytes, budget);
+    if (depth === route.length) {
+      var marked = false;
+      records.forEach(function (r) {
+        if (r.no !== 8) return;
+        if (r.wire !== 2) fail("eml-command-schema-mismatch");
+        var entry = bytes.subarray(r.payloadStart, r.end);
+        var key = child(entry, 1, budget), value = child(entry, 2, budget);
+        if (key && ascii(key) === "skip_ad_on_block" && value !== null) marked = true;
+      });
+      return marked;
+    }
+    var found = false;
+    records.forEach(function (r) {
+      if (r.no !== route[depth]) return;
+      if (r.wire !== 2) fail("eml-command-schema-mismatch");
+      // Check every matched child, including later malformed siblings.
+      if (hasAdCommand(bytes.subarray(r.payloadStart, r.end), route, depth + 1, budget)) found = true;
+    });
+    return found;
+  }
+  function classifyElement(bytes, budget) {
+    var element = child(bytes, 172660663, budget);
+    if (!element || parse(bytes, budget).some(function (r) {return r.no >= 1000000 && r.no !== 172660663;})) return {ad:false, divider:false};
+    if (parse(element, budget).some(function (r) {return r.no === 3;})) return {ad:false, divider:false};
+    var type = child(element, 1, budget);
+    if (!type) return {ad:false, divider:false};
+    var component = child(type, 168777401, budget);
+    if (!component) return {ad:false, divider:false};
+    var templateType = child(component, 3, budget);
+    if (!templateType) return {ad:false, divider:false};
+    var template = child(templateType, 172035250, budget);
+    if (!template) return {ad:false, divider:false};
+    var id = ascii(child(template, 1, budget));
+    var match = /^([a-z_]+)\.eml-fe\|[0-9a-f]{16}$/.exec(id);
+    if (!match) return {ad:false, divider:false};
+    var name = match[1], mapping = EML_ADS[name];
+    if (!mapping && name !== "cell_divider") return {ad:false, divider:false};
+    var model = child(component, 5, budget);
+    if (!model) return {ad:false, divider:false};
+    var modelFields = parse(model, budget);
+    // Unknown/mixed type or model variants cannot establish an ad identity.
+    if (parse(type, budget).length !== 1 || parse(templateType, budget).length !== 1 || modelFields.length !== 1) return {ad:false, divider:false};
+    var expected = mapping ? mapping.model : 347043917, field = modelFields[0];
+    if (field.no !== expected) return {ad:false, divider:false};
+    if (field.wire !== 2) fail("eml-model-schema-mismatch");
+    if (!mapping) return {ad:false, divider:true};
+    return {ad:hasAdCommand(model.subarray(field.payloadStart, field.end), mapping.command, 0, budget), divider:false};
+  }
   function cleanProto(bytes, kind, budget, depth) {
     if (depth > 32) fail("protobuf-depth-limit");
     var records = parse(bytes, budget), edges = EDGES[kind] || {}, adFields = ADS[kind] || {};
-    var parts = [], removed = 0, opaque = 0, adSeen = false;
+    var parts = [], removed = 0, opaque = 0, eml = 0, dividers = 0, adSeen = false, drop = false;
+    var listCount = 0, keptListCount = 0, pendingAd = false, divider = false;
     records.forEach(function (r) {
       if (adFields[r.no]) { if (r.wire !== 2) fail("feed-ad-schema-mismatch"); adSeen = true; }
     });
-    // An item with multiple distinct renderer variants is ambiguous. Preserve
-    // the whole response rather than remove potential normal content.
     if (adSeen && records.some(function (r) {return r.no >= 1000000 && !adFields[r.no];})) fail("feed-mixed-renderer");
     records.forEach(function (r) {
-      if (adFields[r.no]) { removed++; return; }
+      if (adFields[r.no]) { removed++; drop = true; return; }
       var next = edges[r.no];
       if (!next) { parts.push(bytes.subarray(r.start, r.end)); return; }
       if (r.wire !== 2) fail("feed-envelope-schema-mismatch");
       if (next === "opaqueElement") { opaque++; parts.push(bytes.subarray(r.start, r.end)); return; }
-      var result = cleanProto(bytes.subarray(r.payloadStart, r.end), next, budget, depth + 1);
-      removed += result.removed; opaque += result.opaque;
-      // Remove the entire sponsored list item, including its tracking metadata,
-      // so a stripped renderer does not leave a blank card in the list.
-      if (result.drop && ((kind === "sectionList" || kind === "secondaryList") && r.no === 1)) return;
-      parts.push(result.removed ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
+      var result;
+      if (next === "cardElement") {
+        var identity = classifyElement(bytes.subarray(r.payloadStart, r.end), budget);
+        if (identity.ad && records.some(function (other) {return other.no >= 1000000 && other.no !== 153515154;})) fail("feed-mixed-renderer");
+        if (identity.ad) {removed++; eml++; drop = true; return;}
+        opaque++;
+        divider = identity.divider && records.length === 1;
+        parts.push(bytes.subarray(r.start, r.end));
+        return;
+      }
+      result = cleanProto(bytes.subarray(r.payloadStart, r.end), next, budget, depth + 1);
+      removed += result.removed; opaque += result.opaque; eml += result.eml; dividers += result.dividers;
+      if ((kind === "sectionList" || kind === "secondaryList" || kind === "itemSection") && r.no === 1) {
+        listCount++;
+        if (result.drop) {pendingAd = true; return;}
+        // Remove one verified divider immediately following a deleted ad card.
+        if (kind !== "itemSection" && pendingAd && result.divider) {dividers++; pendingAd = false; return;}
+        pendingAd = false; keptListCount++;
+        if (kind === "itemSection") divider = listCount === 1 && result.divider;
+      }
+      if (kind === "sectionItem" || kind === "secondaryItem") {
+        if (result.drop) {
+          if (records.some(function (other) {return other.no >= 1000000 && other.no !== 50195462;})) fail("feed-mixed-renderer");
+          drop = true;
+        }
+        divider = result.divider && records.length === 1;
+      }
+      parts.push(result.removed || result.dividers ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
     });
-    return {body:removed ? join(parts) : bytes, removed:removed, opaque:opaque, drop:adSeen};
+    if (kind === "itemSection") {
+      var safeMetadata = records.every(function (r) {return r.no === 1 || r.no === 4 || r.no === 8;});
+      drop = removed > 0 && listCount > 0 && keptListCount === 0 && safeMetadata;
+      divider = divider && listCount === 1 && safeMetadata;
+    }
+    return {body:removed || dividers ? join(parts) : bytes, removed:removed, opaque:opaque, eml:eml, dividers:dividers, drop:drop, divider:divider};
   }
 
   var AD_KEYS = ["adSlotRenderer", "adPlacementRenderer", "inFeedAdLayoutRenderer",
@@ -403,7 +502,7 @@
       if (endpoint === "search") {log("pass: search protobuf schema unsupported"); return {};}
       result = cleanProto(bytes, endpoint, {fields:0}, 0);
     }
-    log((result.removed ? "changed" : "pass") + ": removed=" + result.removed + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque);
+    log((result.removed ? "changed" : "pass") + ": removed=" + result.removed + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque + " removed_eml=" + (result.eml || 0) + " removed_dividers=" + (result.dividers || 0));
     return result.removed ? {body:result.body} : {};
   }
   var output = {};
