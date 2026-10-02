@@ -1,9 +1,5 @@
 #!name = YouTube去广告
 
-# 使用 Loon 新版 Script 语法。上游 Loon 分支读取对象参数。
-# 保留上传、选段和 Shorts 按钮；关闭字幕翻译。
-# player / get_watch 等响应及 initplayback 请求用于处理播放广告；
-# 保留上游配套接口，以免影响客户端配置与播放请求处理。
 [Argument]
 captionLang = select,"off",tag=字幕翻译,desc=保持关闭
 blockUpload = switch,false,tag=隐藏上传按钮
@@ -18,9 +14,9 @@ AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
-response if ${url} ~= /^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?[^#]*)?$/ then script("https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js", {${captionLang}, ${blockUpload}, ${blockImmersive}, ${blockShorts}}) with requires_body=true, binary_body_mode=true, timeout=20, debug=${script_debug}, tag="YouTube 广告响应处理"
-request if ${url} ~= /^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback\?(?:[^#]*&)?ack(?:=[^&#]*)?(?:&[^#]*)?$/ then script("https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js", {${captionLang}, ${blockUpload}, ${blockImmersive}, ${blockShorts}}) with requires_body=true, binary_body_mode=true, timeout=20, debug=${script_debug}, tag="YouTube 播放请求处理"
-request if ${url} ~= /^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/log_event(\?[^#]*)?$/ then script("https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js", {${captionLang}, ${blockUpload}, ${blockImmersive}, ${blockShorts}}) with requires_body=true, binary_body_mode=true, timeout=20, debug=${script_debug}, tag="YouTube 日志请求处理"
+http-response ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js,requires-body=true,binary-body-mode=true,timeout=20,debug={script_debug},argument=[{captionLang},{blockUpload},{blockImmersive},{blockShorts}],tag=YouTube 广告响应处理
+http-request ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback\?(?:[^#]*&)?ack(?:=[^&#]*)?(?:&[^#]*)?$ script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js,requires-body=true,binary-body-mode=true,timeout=20,debug={script_debug},argument=[{captionLang},{blockUpload},{blockImmersive},{blockShorts}],tag=YouTube 播放请求处理
+http-request ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/log_event(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js,requires-body=true,binary-body-mode=true,timeout=20,debug={script_debug},argument=[{captionLang},{blockUpload},{blockImmersive},{blockShorts}],tag=YouTube 日志请求处理
 
 [Mitm]
 hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, *.googlevideo.com
