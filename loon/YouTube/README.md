@@ -9,6 +9,8 @@
 | `YouTubeLogger.js` | 本地日志控制、开发请求抓包、.log / .json 导出 | 专用页面和手动开启的请求入口 |
 | `YouTubeNoAds.plugin` | 统一配置去广告、日志入口、参数与 MitM | 只需启用这一个插件 |
 
+主插件通过 Loon 的 `#!icon` 展示 YouTube 图标，`#!desc` 展示功能范围、默认关闭的试验/日志选项及使用条件，`#!homepage` 指向本说明。图标保存为 `assets/youtube.png`，来自 [YouTube 官方页面引用的 144×144 PNG](https://www.youtube.com/s/desktop/2b888666/img/favicon_144x144.png)（2026-10-02），随本仓库发布，不依赖其他人的图标仓库。插件信息字段见 [Loon 插件文档](https://nsloon.app/docs/Plugin/)。
+
 原合并文件 `YouTubeNoAds.js` 已移除。两份脚本的二进制解析辅助函数各自保留，以便 Loon 直接执行，不需要再加载公共模块。后续播放接口功能改 `YouTubePlaybackAds.js`，视频流功能改 `YouTubeStreamAds.js`。
 
 目标为 YouTube 插入的片头及中插广告。**当前实现能清理已识别 API 响应中的广告位，并提供 UMP 广告预取提示清理试验。它尚不能移除已经传输或播放的广告媒体，也未在真实 Loon 设备上验证。不能保证最新 YouTube App 的所有贴片广告都消失或没有黑屏。**
