@@ -107,7 +107,8 @@ const emlRoutes={
  full_width_square_image_carousel_layout:{model:33562350,route:[5,5,10,4,169495254,138681778,2,138681066,3,449330433]},
  carousel_footered_layout:{model:505359416,route:[31,8,10,4,169495254,138681778,2,138681066,3,449330433]},
  video_display_full_buttoned_layout:{model:454362329,route:[32,8,10,4,169495254,138681778,2,138681066,3,449330433]},
- video_display_carousel_button_group_layout:{model:33561652,route:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]}
+ video_display_carousel_button_group_layout:{model:33561652,route:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]},
+ banner_text_icon_buttoned_layout:{model:378585263,route:[5,3,4,169495254,138681778,2,138681066,3,449330433]}
 };
 const nested=(path,payload)=>path.reduceRight((b,f)=>msg(f,b),payload);
 function component(name,{model=emlRoutes[name]?.model??232954548,command=true,route=emlRoutes[name]?.route,modelData,typeSuffix='',id=`${name}.eml-fe|0123456789abcdef`}={}){
@@ -144,6 +145,20 @@ test('adaptive browser-derived pagead marker removes only a confirmed card entry
  assert.ok(result.logs.join('').includes('adaptive_removed=1'));
  const disabled=run(input,{type:'application/x-protobuf',extra:{$argument:{script_debug:true,adaptive_feed_ads:false}}});
  assert.equal(Object.keys(disabled.output).length,0);
+});
+test('sample-derived watch-next standalone sponsored action is removed without touching player metadata',()=>{
+ const adAction=nested([15,361588638,2],element('banner_text_icon_buttoned_layout'));
+ const metadata=cat(msg(14,msg(62960614,text('normal player overlay'))),msg(47,[1]),msg(777,text('shared templates')));
+ const input=cat(metadata,adAction),result=run(input,{endpoint:'next',type:'application/x-protobuf'});
+ assert.deepEqual(Buffer.from(result.output.body),Buffer.from(metadata));
+ assert.ok(result.logs.join('').includes('removed=1'));
+ assert.ok(result.logs.join('').includes('removed_eml=1'));
+});
+test('watch-next standalone action stays intact unless wrapper and structural EML ad identity both match',()=>{
+ const normal=nested([15,361588638,2],element('video_lockup_with_attachment',{command:false}));
+ const wrongWrapper=nested([15,361588639,2],element('banner_text_icon_buttoned_layout'));
+ const weakMarker=nested([15,361588638,2],element('banner_text_icon_buttoned_layout',{command:false}));
+ for(const body of [normal,wrongWrapper,weakMarker]) assert.equal(Object.keys(run(body,{endpoint:'next',type:'application/x-protobuf'}).output).length,0);
 });
 for(const [label,name,options] of [
  ['normal template containing ad model','video_lockup_with_attachment',{model:491441836,route:emlRoutes.video_display_button_group_layout.route}],

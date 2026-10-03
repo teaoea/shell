@@ -1,15 +1,15 @@
 /*
- * YouTubeFeedAds 2.0.0 — sponsored feed cards and optional home Shorts hiding.
+ * YouTubeFeedAds 2.1.0 — sponsored feed/watch cards and optional home Shorts hiding.
  * browse/next/search JSON; narrowly mapped browse/next Protobuf list envelopes.
  * Protocol mapping reference: davidzeng0/innertube (2025-02-18 schema).
  * Browser-derived strategy: remove complete promoted list entries before render.
  * Known EML ads require a template/model pair and a structural ad command;
  * optional adaptive mode recognizes pagead only inside a confirmed card entry.
- * Sample-derived mapping: YouTube iOS 21.39.4, 2026-10-02. Unknown EML stays raw.
+ * Sample-derived mapping: YouTube iOS 21.39.4, 2026-10-04. Unknown EML stays raw.
  */
 (function () {
   "use strict";
-  var VERSION = "2.0.0";
+  var VERSION = "2.1.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -317,7 +317,8 @@
     "full_width_square_image_carousel_layout": {model:33562350, command:[5,5,10,4,169495254,138681778,2,138681066,3,449330433]},
     "carousel_footered_layout": {model:505359416, command:[31,8,10,4,169495254,138681778,2,138681066,3,449330433]},
     "video_display_full_buttoned_layout": {model:454362329, command:[32,8,10,4,169495254,138681778,2,138681066,3,449330433]},
-    "video_display_carousel_button_group_layout": {model:33561652, command:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]}
+    "video_display_carousel_button_group_layout": {model:33561652, command:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]},
+    "banner_text_icon_buttoned_layout": {model:378585263, command:[5,3,4,169495254,138681778,2,138681066,3,449330433]}
   };
   function child(bytes, no, budget) {
     var records = parse(bytes, budget), targets = records.filter(function (r) {return r.no === no;});
@@ -396,6 +397,19 @@
     if (field.wire !== 2) fail("eml-model-schema-mismatch");
     if (!mapping) return {ad:false, divider:true};
     return {ad:hasAdCommand(model.subarray(field.payloadStart, field.end), mapping.command, 0, budget), divider:false};
+  }
+  // iOS watch-next can return a sponsored companion card as a standalone
+  // action rather than inside contents/secondaryResults. Remove only the
+  // sample-derived wrapper when its nested EML card has the verified
+  // template/model/skip_ad_on_block identity above.
+  function watchNextAdAction(bytes, budget) {
+    var action = child(bytes, 361588638, budget);
+    if (!action) return false;
+    var container = child(action, 2, budget);
+    if (!container) return false;
+    var renderer = child(container, 153515154, budget);
+    if (!renderer) return false;
+    return classifyElement(renderer, budget).ad;
   }
   // Homepage identity is local to each Tab/list. Other browse pages are not home.
   // Continuation tokens: sample-derived wrapper 80226972 -> browse_id (2).
@@ -488,6 +502,9 @@
     if (adSeen && records.some(function (r) {return r.no >= 1000000 && !adFields[r.no];})) fail("feed-mixed-renderer");
     records.forEach(function (r) {
       if (adFields[r.no]) { removed++; drop = true; return; }
+      if (kind === "next" && r.no === 15 && r.wire === 2 && watchNextAdAction(bytes.subarray(r.payloadStart, r.end), budget)) {
+        removed++; eml++; return;
+      }
       if (hideHomeShorts && endpoint === "browse" && homeContext && kind === "sectionItem" && r.no === 51845067) {
         if (r.wire !== 2) fail("shorts-shelf-schema-mismatch");
         if (shortsShelf(bytes.subarray(r.payloadStart, r.end), budget) && !records.some(function (other) {return other.no >= 1000000 && other.no !== 51845067;})) {
