@@ -42,6 +42,12 @@ test('capture is opt-in, main plugin reads request bodies only for its opt-in re
   assert.ok(playerLine.includes('{capture_raw}')&&playerLine.includes('{capture_budget}'));
   assert.ok(new RegExp(playerLine.split(' ')[1]).test(api));
   assert.ok(!regex.test('https://youtubei.googleapis.com.evil/youtubei/v1/player'));
+  const modern=plugin.split('\n').find(x=>x.includes('tag=YouTube 新版播放链路请求抓包'));
+  const modernRegex=new RegExp(modern.split(' ')[1]);
+  assert.ok(modern.includes('enable={capture_raw}')&&modern.includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(modernRegex.test('https://rr5.googlevideo.com/initplayback?ack=1&oad=5500'));
+  assert.ok(modernRegex.test('https://youtubei.googleapis.com/youtubei/v1/log_event'));
+  assert.ok(!modernRegex.test('https://rr5.googlevideo.com/videoplayback?ack=1'));
   const store=started();
   player(store,undefined,{$argument:{script_debug:false,log_enabled:true,log_level:'debug',capture_raw:false}});
   assert.equal(exportData(store).events[0].capture,null);

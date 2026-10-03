@@ -43,22 +43,45 @@ function play(store, debug = false, failure = '') {
   }, failure);
 }
 
-test('main plugin contains both ad rules and one disabled logger entry; no separate plugin', () => {
+test('main plugin contains ad rules, modern playback capture and one disabled logger entry; no separate plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
-  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 4);
+  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 5);
   assert.ok(plugin.includes('log_enabled = switch,false'));
   assert.ok(plugin.includes('script_debug = switch,false'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
   const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
-  assert.equal(loggerLines.length, 3);
-  assert.ok(loggerLines.filter(x => !x.includes('开发请求抓包')).every(x => x.includes('enable={log_enabled},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget}]')));
+  assert.equal(loggerLines.length, 5);
+  assert.ok(loggerLines.filter(x => x.includes('新版播放')).every(x => x.includes('enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget}]')));
   assert.ok(loggerLines.find(x => x.includes('开发请求抓包')).includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(plugin.includes('DOMAIN-SUFFIX,googlevideo.com'));
   const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('youtube-logs'));
   const regex = new RegExp(line.split(' ')[1]);
   assert.ok(regex.test(base + '/download.log'));
   assert.ok(!regex.test('http://youtube-logs.invalid.evil/'));
   assert.ok(plugin.includes('generic script-path='));
   assert.ok(!logger.includes('$httpClient') && !logger.includes('$persistentStore.remove'));
+});
+
+test('modern playback logger captures initplayback requests and config responses in the shared cache', () => {
+  const store = new Map();
+  request(store, '/start', 'POST');
+  const init = 'https://rr5.googlevideo.com/initplayback?ack=1&oad=5500&sig=PRIVATE';
+  execute(logger, store, {
+    $request:{url:init,method:'POST',headers:{'X-Playback-Key':'SECRET'},body:new Uint8Array([1,2,3])},
+    $argument:{log_enabled:true,log_level:'debug',capture_raw:true,capture_budget:'32'}
+  });
+  execute(logger, store, {
+    $request:{url:'https://youtubei.googleapis.com/youtubei/v1/config',method:'POST',headers:{}},
+    $response:{status:200,headers:{'Content-Type':'application/x-protobuf'},body:new Uint8Array([8,1])},
+    $argument:{log_enabled:true,log_level:'debug',capture_raw:true,capture_budget:'32'}
+  });
+  const rows = JSON.parse(store.get(cacheKey)).entries;
+  assert.deepEqual(rows.map(row => [row.source,row.endpoint,row.phase]), [
+    ['YouTubeLogger','initplayback','request'],['YouTubeLogger','config','response']
+  ]);
+  const data = JSON.parse(request(store, '/download.json').body);
+  assert.equal(data.events[0].capture.request.url, init);
+  assert.equal(data.events[1].capture.responseBefore.body.bytes, 2);
 });
 test('manual entry points to the local page without silently enabling recording', () => {
   const store = new Map();

@@ -205,7 +205,7 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 
 ### 开发抓包操作
 
-1. 更新主插件和七份 JS。开发记录要求 `YouTubeFeedAds.js` 为 2.0.0、`YouTubePlayerRequest.js` 为 1.0.0、`YouTubePlaybackAds.js` 为 2.1.0、`YouTubeAdBreak.js` 为 1.0.0、`YouTubeShortsAds.js` 为 1.0.0、`YouTubeStreamAds.js` 为 1.4.0、`YouTubeLogger.js` 为 1.6.0。文件需要发布后才能从远程地址下载；本地导入时所有引用日志 JS 的条目都填写本地资源名 `YouTubeLogger.js`。
+1. 更新主插件和七份 JS。开发记录要求 `YouTubeFeedAds.js` 为 2.0.0、`YouTubePlayerRequest.js` 为 1.0.0、`YouTubePlaybackAds.js` 为 2.1.0、`YouTubeAdBreak.js` 为 1.0.0、`YouTubeShortsAds.js` 为 1.0.0、`YouTubeStreamAds.js` 为 1.4.0、`YouTubeLogger.js` 为 1.7.0。文件需要发布后才能从远程地址下载；本地导入时所有引用日志 JS 的条目都填写本地资源名 `YouTubeLogger.js`。
 2. 主插件开启“日志工具”和“开发抓包”，选择容量。要取得媒体响应，**还必须开启“UMP 试验处理”并先选择 `inspect`**；关闭 UMP 响应入口时仍能取得开发请求，但不会取得媒体响应。普通摘要级别不会过滤开发样本。
 3. Safari 输入 **`http://youtube-logs.invalid/`**，或手动运行主插件的“ YouTube 日志入口 ”后点通知。地址由 Loon 在本地直接响应，不需要额外 MitM。先导出需要保留的旧记录；需要干净样本时清空，再点“开始记录”。
 4. 重现一次广告和一次正常播放。在相近时间添加广告/正片标记，减少其他播放、预览或自动播放，以便比较样本。切换 App 添加标记会有时间误差，不把它当作精确的广告边界。
@@ -229,7 +229,7 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 - 单个运行时正文最多 8 MiB；单事件最多 32 MiB 字符内容、256 个存储块。超限停止抓包并给出原因，不保存一份看似完整的截断正文。请求和响应各算一个事件。
 - 存储失败、序列化失败或正文超限时不改变去广告输出。存储本身不能写入时，停止标记也可能无法落盘，只能在控制台看到固定错误提示。
 - Loon 公开存储 API 在这里没有原子追加；并发脚本可能丢失索引条目。脚本被系统终止时也可能留下未索引块，无法通过当前公开接口枚举并恢复。因此这是**尽可能保留运行时可见数据的开发记录**，不能保证整个网络会话无遗漏。
-- 只匹配已配置的 `player/get_watch/player/ad_break/browse/next/search/reel_watch_sequence` 与 `googlevideo/videoplayback`。没有命中 MitM、TLS 失败、脚本超时及其他接口不在本记录范围。响应脚本可见的请求正文可能缺失，独立请求阶段用于补充，但并发重复 URL 的精确配对无法保证；`correlation.urlMethodHash` 仅作分组提示。
+- 只匹配已配置的 `player/get_watch/player/ad_break/browse/next/search/reel_watch_sequence/log_event/config` 与 `googlevideo/videoplayback/initplayback`。没有命中 MitM、TLS 失败、脚本超时及其他接口不在本记录范围。响应脚本可见的请求正文可能缺失，独立请求阶段用于补充，但并发重复 URL 的精确配对无法保证；`correlation.urlMethodHash` 仅作分组提示。
 - Loon 提供的正文可能已经解压，并非原始 TLS/HTTP 线上字节。完整记录的是运行时交给脚本的字节及字符串，需结合保存的头和 `available` 标记解释。
 - 完整读取响应、Base64 编码及写本地样本可能增加播放等待。建议只录制一次问题，随后关闭；不能保证抓包过程不影响播放时序。
 - 手机上的脚本引擎、存储容量、页面入口和 Safari 大文件下载仍需实机验证。
@@ -270,13 +270,15 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 同一份原始 `player` 请求中确认存在 `PlayerRequest.context.ad_signals_info（1 → 9）`，以及 `playback_context.content_playback_context（4 → 1）` 内包含 `output=xml_vast2` 的字段 12。新加入的 `YouTubePlayerRequest.js` 在服务端返回播放方案之前清理这些精确广告协商字段，并设置已公开 schema 中的 `is_inline_playback_no_ad（字段 50）`。这是根据真实请求和公开协议进行的定点处理，不阻断 `googlevideo` 媒体；是否覆盖账号、地区和未来客户端产生的全部片头/中插广告仍需实机结果确认。
 
+2026 年 7 月之后仍在维护的公开实现还覆盖 `youtubei/v1/log_event`、`youtubei/v1/config` 和 `googlevideo/initplayback`。其中 `initplayback` 属于新版加密 UMP/Onesie 播放链路；公开实现会把目标播放 URL 和客户端密钥转交外部 Worker 处理。当前插件没有接入这一第三方服务，也不会自动上传播放地址或密钥。主插件会让 `googlevideo.com` 的 QUIC 回退到 TCP，并在手动开启开发抓包时把上述三个接口写入同一份本地 JSON，用于确认广告是否走这条链路。该规则只拒绝 UDP/443 以触发 TCP 回退，不拒绝 `videoplayback` 或 `initplayback` 的 HTTP 请求和正文。
+
 之前空 502 拦截导致几秒黑屏，当前实现不重新采用这一方法。**广告预取提示清理不等于删除正在播放的广告。单靠 Content-Type 不能定位广告，也无法从纯广告响应生成缺失的正片。**
 
 Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据，等待整个播放响应完成也可能增加延迟或影响播放；这里尚未验证真实设备行为。如果出现新的等待或黑屏，关闭 UMP 试验入口。不能仅凭“不删除媒体”保证没有黑屏。
 
 ## 本地验证
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 223 项测试通过，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的 `adPlacements`、`adSlots`、`playerAds`、`adBreakHeartbeatParams`、`adParams`、`playerConfig` 广告配置和 pagead 追踪清理；精确 `player/ad_break` 匹配、空 Protobuf 响应、独立开关、共享摘要与原始请求抓包；后台播放能力修改及未知字段保留；Shorts 精确 `isAd` 路径；信息流固定 EML 映射、自适应 `pagead` 和首页 Shorts 开关。另验证 UMP 预取提示清理、媒体和其他广告事件保留、异常数据原样通过，以及日志分级、分块单文件导出、容量和写入失败、跨会话隔离及人工标记。
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 224 项测试通过，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的 `adPlacements`、`adSlots`、`playerAds`、`adBreakHeartbeatParams`、`adParams`、`playerConfig` 广告配置和 pagead 追踪清理；精确 `player/ad_break` 匹配、空 Protobuf 响应、独立开关、共享摘要与原始请求抓包；后台播放能力修改及未知字段保留；Shorts 精确 `isAd` 路径；信息流固定 EML 映射、自适应 `pagead` 和首页 Shorts 开关。另验证 `initplayback/log_event/config` 请求响应抓包、UMP 预取提示清理、媒体和其他广告事件保留、异常数据原样通过，以及日志分级、分块单文件导出、容量和写入失败、跨会话隔离及人工标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeedAds.js

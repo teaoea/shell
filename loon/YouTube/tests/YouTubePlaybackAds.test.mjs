@@ -57,8 +57,8 @@ function passed(result) {
 
 test('plugin routes playback and stream responses to distinct standalone scripts', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
-  assert.equal(allEntries.length, 4);
-  const entries = allEntries.filter(line => !line.includes('YouTubeFeedAds.js') && !line.includes('YouTubeShortsAds.js'));
+  assert.equal(allEntries.length, 5);
+  const entries = allEntries.filter(line => !line.includes('YouTubeFeedAds.js') && !line.includes('YouTubeShortsAds.js') && !line.includes('YouTubeLogger.js'));
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
@@ -79,7 +79,7 @@ test('plugin routes playback and stream responses to distinct standalone scripts
   assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js'));
   assert.ok(!source.includes('function processUMP('));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
-  assert.ok(!active.includes('DOMAIN-SUFFIX,googlevideo.com'));
+  assert.ok(active.includes('DOMAIN-SUFFIX,googlevideo.com'));
   assert.ok(!active.includes('reject(502)'));
   assert.ok(!active.includes('Maasea'));
   assert.ok(!source.includes('$httpClient'));

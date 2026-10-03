@@ -1,5 +1,5 @@
 #!name = YouTube去广告
-#!desc = 按功能拆分的 YouTube App 广告处理：在播放器请求阶段关闭广告协商，清理首页/推荐/搜索赞助卡片、播放器响应广告位和追踪、拦截 player/ad_break，并清理 Shorts 播放广告；可开启后台播放、隐藏首页 Shorts，提供 UMP 试验、分级日志和开发抓包。需开启 MitM 并信任证书；不阻断 googlevideo 媒体请求，避免播放器等待导致黑屏。
+#!desc = 按功能拆分的 YouTube App 广告处理：关闭播放器广告协商，清理首页/推荐/搜索赞助卡片、播放器广告位和 Shorts 广告，并记录新版 initplayback 播放链路；可开启后台播放、隐藏首页 Shorts，提供分级日志和开发抓包。需开启 MitM 并信任证书；不阻断 googlevideo 媒体请求，避免播放器等待导致黑屏。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/loon/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
@@ -20,12 +20,15 @@ ump_enabled = switch,false,tag=UMP 试验处理,desc=先用 inspect 取日志；
 ump_mode = select,"inspect","clean_prefetch",tag=UMP 模式,desc=inspect 仅检查；clean_prefetch 清理广告预取提示，未验证实播
 
 [Rule]
-# 只促使 API 接口的 QUIC 回退到 TCP；不处理 googlevideo 播放媒体。
+# 促使 API 与播放协商从 QUIC 回退到可被 MitM/脚本检查的 TCP；不拒绝媒体正文。
 AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
+AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget},{ump_enabled},{ump_mode},{background_playback},{remove_shorts_ads},{adaptive_feed_ads}],tag=YouTube 开发请求抓包
+http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:log_event|config)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 新版播放链路请求抓包
+http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:log_event|config)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 新版播放配置响应抓包
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayerRequest.js,requires-body=true,binary-body-mode=true,timeout=10,enable={suppress_player_ads},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{suppress_player_ads}],tag=YouTube 播放器请求广告协商清理
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeAdBreak.js,requires-body=true,binary-body-mode=true,timeout=10,enable={block_ad_break},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{block_ad_break}],tag=YouTube 片头与中插广告配置拦截
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeFeedAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{hide_home_shorts},{adaptive_feed_ads}],tag=YouTube 信息流广告与首页 Shorts 处理
@@ -40,4 +43,4 @@ http-request ^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$ script-path=ht
 [Mitm]
 hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, *.googlevideo.com
 # UMP 试验入口默认关闭；媒体域名的 MitM 仍生效，完整撤销需移除该 hostname。
-# 先确认播放请求走 TCP；默认不对媒体添加 UDP 拒绝规则。
+# googlevideo 的 UDP 仅回退到 TCP，媒体请求仍正常放行。
