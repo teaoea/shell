@@ -10,6 +10,8 @@ readonly XRAY_BIN="/usr/local/bin/xray"
 readonly XRAY_CONFIG_DIR="/usr/local/etc/xray"
 readonly XRAY_CONFIG_FILE="$XRAY_CONFIG_DIR/config.json"
 
+XRAY_PORT_SET=false
+[[ -z "${XRAY_PORT:-}" ]] || XRAY_PORT_SET=true
 XRAY_PORT="${XRAY_PORT:-443}"
 REALITY_SERVER_NAME_SET=false
 [[ -z "${REALITY_SERVER_NAME:-}" ]] || REALITY_SERVER_NAME_SET=true
@@ -33,6 +35,9 @@ REPLACEMENT_PENDING=false
 PREVIOUSLY_ACTIVE=false
 NETWORK_OPTIMIZATION_APPLIED=false
 XRAY_LISTENER_STATUS="未检查"
+UFW_RULE_ADDED=false
+UFW_RULE_RESULT="未配置"
+UFW_FIREWALL_STATE="未知"
 
 die() {
   printf '错误: %s\n' "$*" >&2
@@ -63,6 +68,14 @@ cleanup() {
       systemctl restart xray || printf '警告: 原 Xray 服务未能重新启动。\n' >&2
     else
       systemctl stop xray >/dev/null 2>&1
+    fi
+  fi
+
+  if ((status != 0)) && [[ "$UFW_RULE_ADDED" == true ]]; then
+    if ufw delete allow "${XRAY_PORT}/tcp" >/dev/null 2>&1; then
+      printf '已删除本次新增的 UFW TCP %s 放行规则。\n' "$XRAY_PORT" >&2
+    else
+      printf '警告: 未能删除本次新增的 UFW TCP %s 放行规则，请手动检查。\n' "$XRAY_PORT" >&2
     fi
   fi
 
@@ -97,7 +110,7 @@ usage() {
   --reality-domain 域名
                       REALITY 伪装域名，默认 www.apple.com
   --yes               跳过安装确认；须明确指定以上两项选择
-  --port 端口         Xray 监听端口，默认 443
+  --port 端口         Xray 监听端口及 UFW 放行端口，默认 443
   --loon-address IP   Loon 节点地址，默认自动检测公网 IPv4/IPv6
   -h, --help          显示帮助
 
@@ -140,6 +153,7 @@ parse_arguments() {
         (($# >= 2)) || die "$1 缺少参数"
         if [[ "$1" == --port ]]; then
           XRAY_PORT=$2
+          XRAY_PORT_SET=true
         else
           LOON_SERVER_IP=$2
         fi
@@ -147,6 +161,8 @@ parse_arguments() {
         ;;
       --port=*)
         XRAY_PORT=${1#*=}
+        [[ -n "$XRAY_PORT" ]] || die "--port 缺少参数"
+        XRAY_PORT_SET=true
         ;;
       --loon-address=*)
         LOON_SERVER_IP=${1#*=}
@@ -175,21 +191,36 @@ check_environment() {
 
   [[ "$(id -u)" -eq 0 ]] || die "请以 root 身份运行"
   command -v systemctl >/dev/null 2>&1 || die "需要使用 systemd 的 Linux 系统"
-  for command_name in curl openssl awk install mktemp cp date; do
+  for command_name in curl openssl awk grep install mktemp cp date; do
     command -v "$command_name" >/dev/null 2>&1 ||
       die "缺少必需命令: $command_name"
   done
 
-  [[ "$XRAY_PORT" =~ ^[0-9]{1,5}$ ]] ||
-    die "端口必须是 1-65535 的整数"
-  ((10#$XRAY_PORT >= 1 && 10#$XRAY_PORT <= 65535)) ||
-    die "端口必须是 1-65535 的整数"
-  XRAY_PORT=$((10#$XRAY_PORT))
+  validate_xray_port
 
   if [[ -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]] &&
     [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" == 0 ]]; then
     LISTEN_ADDRESS="::"
   fi
+}
+
+validate_xray_port() {
+  [[ "$XRAY_PORT" =~ ^[0-9]{1,5}$ ]] ||
+    die "端口必须是 1-65535 的整数"
+  ((10#$XRAY_PORT >= 1 && 10#$XRAY_PORT <= 65535)) ||
+    die "端口必须是 1-65535 的整数"
+  XRAY_PORT=$((10#$XRAY_PORT))
+}
+
+select_xray_port() {
+  local answer
+
+  if [[ "$XRAY_PORT_SET" != true && "$ASSUME_YES" != true ]]; then
+    [[ -t 0 ]] || die "非交互运行请添加 --yes 或使用 --port 指定端口"
+    read -r -p "输入 Xray 监听端口（默认 443，UFW 将放行该 TCP 端口）: " answer
+    [[ -z "$answer" ]] || XRAY_PORT=$answer
+  fi
+  validate_xray_port
 }
 
 select_reality_server_name() {
@@ -293,7 +324,7 @@ confirm_installation_plan() {
   [[ "$OPTIMIZE_NETWORK" != true ]] || optimization_text="应用 Xray-REALITY 系统网络优化"
   mode_label=$(network_mode_label)
   printf '已选择: %s 优先；%s。\n' "$mode_label" "$optimization_text"
-  read -r -p "将先处理网络设置，再询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
+  read -r -p "将先处理网络设置，再选择监听端口并配置 UFW，最后询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
   [[ "$answer" =~ ^[Yy]$ ]] || {
     printf '操作已取消。\n'
     exit 0
@@ -313,6 +344,56 @@ apply_network_optimization() {
   fi
   bash "$TEMP_NETWORK_OPTIMIZER" "${optimizer_arguments[@]}"
   NETWORK_OPTIMIZATION_APPLIED=true
+}
+
+install_ufw() {
+  printf '未检测到 UFW，正在安装...\n'
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ufw
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y ufw
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y ufw
+  else
+    die "系统未安装 UFW，且没有找到 apt-get、dnf 或 yum，无法自动安装"
+  fi
+  command -v ufw >/dev/null 2>&1 || die "UFW 安装完成后仍无法执行"
+}
+
+ensure_ufw() {
+  command -v ufw >/dev/null 2>&1 || install_ufw
+}
+
+ufw_rule_exists() {
+  local added_rules
+  added_rules=$(
+    trap - ERR
+    LC_ALL=C ufw show added 2>/dev/null || true
+  )
+  grep -Eq "^ufw allow ${XRAY_PORT}(/tcp)?([[:space:]]|$)" <<<"$added_rules"
+}
+
+apply_ufw_rule() {
+  local status_output
+
+  if ufw_rule_exists; then
+    UFW_RULE_RESULT="TCP ${XRAY_PORT} 放行规则已存在"
+  else
+    ufw allow "${XRAY_PORT}/tcp"
+    UFW_RULE_ADDED=true
+    UFW_RULE_RESULT="TCP ${XRAY_PORT} 放行规则已添加"
+  fi
+
+  status_output=$(
+    trap - ERR
+    LC_ALL=C ufw status 2>&1
+  ) || die "无法读取 UFW 状态: $status_output"
+  if [[ "$status_output" == *"Status: active"* ]]; then
+    UFW_FIREWALL_STATE="已启用，规则立即生效"
+  else
+    UFW_FIREWALL_STATE="未启用，规则已保存；脚本未自动启用 UFW"
+  fi
 }
 
 backup_existing_config() {
@@ -447,6 +528,8 @@ print_loon_config() {
   printf '  开机启动: 已启用\n'
   printf '  运行状态: 正在运行\n'
   printf '  监听状态: %s\n' "$XRAY_LISTENER_STATUS"
+  printf '  UFW 端口规则: %s\n' "$UFW_RULE_RESULT"
+  printf '  UFW 防火墙状态: %s\n' "$UFW_FIREWALL_STATE"
   printf '\nLoon 节点配置（粘贴到 [Proxy] 段）：\n'
   printf 'Xray-REALITY = VLESS,%s,%s,"%s",transport=tcp,flow=xtls-rprx-vision,public-key="%s",short-id=%s,over-tls=true,sni=%s,tls-profile=chrome,udp=true,block-quic=false\n' \
     "$LOON_SERVER_IP" "$XRAY_PORT" "$UUID" "$PUBLIC_KEY" "$SHORT_ID" "$REALITY_SERVER_NAME"
@@ -466,14 +549,18 @@ main() {
   confirm_installation_plan
   apply_network_optimization
   find_loon_address
+  select_xray_port
+  ensure_ufw
   select_reality_server_name
   backup_existing_config
   install_xray
   generate_credentials
+  apply_ufw_rule
   write_xray_config
   verify_xray_installation
-  # Xray 安装状态已核验，此后即使终端输出失败也不回滚已完成的网络优化。
+  # Xray 安装状态已核验，此后即使终端输出失败也不回滚已完成的系统配置。
   NETWORK_OPTIMIZATION_APPLIED=false
+  UFW_RULE_ADDED=false
   print_loon_config
 }
 

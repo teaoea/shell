@@ -16,25 +16,25 @@
 xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh) && sudo bash -c "$xray_script"
 ```
 
-脚本要求 root 权限，默认使用 TCP 443 和 `www.apple.com` 作为 REALITY 伪装域名。交互安装会先询问 Xray 出站使用 IPv4 优先还是 IPv6 优先，并询问是否应用 Xray-REALITY 针对性系统网络优化；选择优化时先完成网络优化。脚本在真正安装 Xray 前最后询问 REALITY 伪装域名，直接回车使用默认值；用户输入其他域名时，脚本会校验格式，并把同一域名写入 REALITY `target`、`serverNames` 和 Loon `sni`。Xray 使用 Happy Eyeballs 优先连接所选地址族，连接不通时回退到另一地址族；自动检测 Loon 节点公网地址时也按相同顺序尝试。
+脚本要求 root 权限，默认使用 TCP 443 和 `www.apple.com` 作为 REALITY 伪装域名。交互安装会先询问 Xray 出站使用 IPv4 优先还是 IPv6 优先，并询问是否应用 Xray-REALITY 针对性系统网络优化；选择优化时先完成网络优化。随后脚本明确询问 Xray 监听端口，直接回车使用 443，并通过 UFW 放行相同的 TCP 端口。脚本在真正安装 Xray 前最后询问 REALITY 伪装域名，直接回车使用默认值；用户输入其他域名时，脚本会校验格式，并把同一域名写入 REALITY `target`、`serverNames` 和 Loon `sni`。Xray 使用 Happy Eyeballs 优先连接所选地址族，连接不通时回退到另一地址族；自动检测 Loon 节点公网地址时也按相同顺序尝试。
 
 选择网络优化后，脚本从本仓库 GitHub `main` 分支下载 `networt_optimization.sh`，按所选地址族运行 `--xray-reality` 配置，并在 Xray 配置中启用 TCP Fast Open。该操作会修改系统 TCP、Cloudflare DNS 和地址优先级，仅支持网络优化脚本声明的系统范围：IPv4 模式支持 Debian，IPv6 模式支持 Debian 13。若后续 Xray 安装失败，安装脚本会尝试回滚本次网络优化。选择不优化时，不修改系统网络配置，Xray 配置仍会保留所选地址族的优先级与回退。
 
-它随后调用 Xray 官方安装器，生成 VLESS + REALITY + XTLS Vision 服务端配置并启动服务。只有程序文件、当前配置校验、服务开机启动、服务运行状态全部通过检查，且在系统提供 `ss` 时确认目标 TCP 端口已监听，才会报告 Xray 已安装并输出可粘贴到 Loon `[Proxy]` 段的节点；任何一项失败都会报告具体状态并尝试恢复安装前的配置。已有的 Xray 服务端配置会在安装前备份。
+若系统没有 UFW，脚本会使用 `apt-get`、`dnf` 或 `yum` 尝试安装；它会添加所选端口的 TCP 放行规则，但不会自动启用一个原本未启用的 UFW，避免改变现有防火墙策略并导致 SSH 中断。安装失败时只删除本次新增的规则，不删除原来已有的规则。它随后调用 Xray 官方安装器，生成 VLESS + REALITY + XTLS Vision 服务端配置并启动服务。只有程序文件、当前配置校验、服务开机启动、服务运行状态全部通过检查，且在系统提供 `ss` 时确认目标 TCP 端口已监听，才会报告 Xray 已安装并输出可粘贴到 Loon `[Proxy]` 段的节点；任何一项失败都会报告具体状态并尝试恢复安装前的配置。已有的 Xray 服务端配置会在安装前备份。
 
 `--yes` 跳过安装确认，但必须同时用 `--ipv4` / `--ipv6` 明确网络优先级，并用 `--optimize-network` / `--no-optimize-network` 明确是否优化。例如：
 
 ```bash
-sudo bash install_xray.sh --ipv4 --optimize-network --yes
+sudo bash install_xray.sh --ipv4 --optimize-network --port 443 --yes
 sudo bash install_xray.sh --ipv6 --no-optimize-network \
   --reality-domain www.example.com --yes
 ```
 
-`--reality-domain` 主动指定伪装域名；省略时默认使用 `www.apple.com`。`--port` 修改监听端口；`--loon-address` 指定要写入 Loon 节点的 IPv4 或 IPv6 地址。也可用 `XRAY_PORT`、`LOON_SERVER_IP` 和 `REALITY_SERVER_NAME` 环境变量设置对应参数。使用本地脚本时，可运行 `sudo bash install_xray.sh --help` 查看完整用法。
+`--reality-domain` 主动指定伪装域名；省略时默认使用 `www.apple.com`。`--port` 同时设置 Xray 监听端口、Loon 节点端口和 UFW TCP 放行端口；`--loon-address` 指定要写入 Loon 节点的 IPv4 或 IPv6 地址。也可用 `XRAY_PORT`、`LOON_SERVER_IP` 和 `REALITY_SERVER_NAME` 环境变量设置对应参数。使用本地脚本时，可运行 `sudo bash install_xray.sh --help` 查看完整用法。
 
-脚本仅校验 Xray 服务端配置及服务状态，不测试客户端到 VPS 的公网连通性。Loon 节点配置只打印在终端，不再写入 `/root/xray-reality-client.txt`；请自行保存输出并妥善保管连接凭据。脚本不修改防火墙或云安全组。
+脚本仅校验 Xray 服务端配置及服务状态，不测试客户端到 VPS 的公网连通性。Loon 节点配置只打印在终端，不再写入 `/root/xray-reality-client.txt`；请自行保存输出并妥善保管连接凭据。脚本只管理所选 TCP 端口对应的 UFW 放行规则，不修改云安全组，也不会自动开放服务商控制台中的端口。
 
-安装结果会逐项显示程序文件、配置校验、开机启动、运行状态和监听端口；安装后也可用 `systemctl status xray` 再次查看服务状态。
+安装结果会逐项显示程序文件、配置校验、开机启动、运行状态、监听端口、UFW 端口规则和 UFW 启用状态；安装后也可用 `systemctl status xray` 再次查看服务状态。
 
 如需重跑脚本，新的 UUID、密钥和 Short ID 会替换旧配置，Loon 中也要更新为最新输出。
 
