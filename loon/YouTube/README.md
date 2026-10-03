@@ -39,7 +39,7 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 - Shorts：独立脚本只删除响应字段 2 的条目中符合 `command（1）→ reelWatchEndpoint（139608561）→ adClientParams（16）→ isAd（1）= true` 的完整条目。普通 Shorts、未知命令及结构不完整的条目保持原样。
 - 字段编号和 `get_watch` 路径来自已有逆向协议描述的核对，属于协议映射信息；未复制原脚本或其库实现。YouTube 未公开保证这些编号适用于所有客户端。脚本使用字段 2 的 playabilityStatus 及 wire type 作有限检查，不能证明所有未来协议变化都能识别。
 - 空响应、非 200、损坏数据、已检测到的结构不匹配、未知内容类型、API 上的非预期 UMP、未解压的 gzip 及超限响应原样通过。限制为 2 MiB 响应、30,000 个解析字段、20,000 个 JSON 对象节点和 64 层 JSON 深度。
-- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与可选 UMP 检查回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节。关闭 UMP 或 Onesie 开关不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
+- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与开发抓包中的 UMP 检查回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节。关闭开发抓包或 Onesie 开关不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
 - 无字幕翻译、按钮隐藏、画中画或会员相关修改。后台播放仅在独立开关开启时修改明确的播放能力字段，不伪造会员状态。
 
 ### 后台播放开关
@@ -141,7 +141,7 @@ Protobuf 仅沿已核对的路径处理：BrowseResponse 字段 9 / 10 中的 Se
 使用步骤：
 
 1. 在 Loon 更新 `YouTube去广告` 主插件，并重新下载其引用的 `YouTubeFeedAds.js`，确保使用 1.2.0 或更高版本。
-2. 进入主插件设置，打开“隐藏首页 Shorts”。保持插件、脚本与 MitM 启用、证书完全信任；此功能不需要开启日志、开发抓包或 UMP 试验处理。
+2. 进入主插件设置，打开“隐藏首页 Shorts”。保持插件、脚本与 MitM 启用、证书完全信任；此功能不需要开启日志或开发抓包。
 3. 完全退出 YouTube 后重新打开，进入首页并下拉刷新。已缓存的旧首页需要刷新才能取得修改后的推荐列表。
 4. 如需恢复，关闭该开关，再退出 YouTube、重新打开并刷新首页。
 
@@ -164,10 +164,10 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 ### 取得首页广告的样本
 
 1. 发布后更新主插件和 JS；完全退出 YouTube，再打开。先观察首页赞助卡片是否消失。
-2. 仍有卡片时，在主插件打开“日志工具”“开发抓包”，关闭“UMP 试验处理”。抓首页接口不需要 UMP；关闭它能减少无关媒体样本和播放等待。
+2. 仍有卡片时，在主插件打开“日志工具”和“开发抓包”。开发抓包现在也会记录 UMP 响应；只浏览首页、不打开视频，可以减少无关媒体样本和播放等待。
 3. Safari 打开 `http://youtube-logs.invalid/`，先保留需要的旧记录，然后清空并开始记录。回到 YouTube 首页，下拉刷新一次，让赞助卡片出现；不必点开视频。
 4. 回到日志页面暂停，选择“导出完整日志文件 .log”。该文件同时包含 `browse/next/search` 信息流、刷新配置和播放链路，不再单独生成信息流文件。
-5. 先确认文件能作为 JSON 完整打开，事件中有 `endpoint: "browse"`（或 `next/search`）、`phase: "response"`，且 `responseBefore.body.available` 为 `true`。如果这些记录仍缺失，应先检查脚本更新、MitM 和实际请求路径。未知 EML 卡片需要该响应样本才能继续适配。
+5. 在 `.log` 中确认存在 `Endpoint: browse`（或 `next/search`）、`Phase: response`，并且 `Response-Before` 正文显示 `Available: true`。如果这些记录仍缺失，应先检查脚本更新、MitM 和实际请求路径。未知 EML 卡片需要该响应样本才能继续适配。
 
 本次实际响应的离线回放日志（不是手机界面实测）：
 
@@ -196,8 +196,9 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 | 日志工具 | 关闭 | 手动开启后可开始记录、标记和下载；关闭后停止新增记录 |
 | 日志保存级别 | info | 只控制普通摘要的最低严重程度 |
 | 控制台日志 | 关闭 | 单独控制 Loon 脚本控制台输出 |
-| 开发抓包 | 关闭 | 手动开启后保存匹配接口的原始请求和响应数据，不受摘要级别过滤 |
+| 开发抓包 | 关闭 | 手动开启后保存匹配接口的原始请求和响应数据，并同时启用 UMP 响应读取；不受摘要级别过滤 |
 | 开发抓包容量 MB | 32 | 可选 16 / 32 / 64 MiB，限制原始样本序列化总容量 |
+| UMP 模式 | inspect | 开发抓包开启时，`inspect` 只读取和记录；`clean_prefetch` 还会清理明确的广告预取提示 |
 
 普通摘要级别从低到高为 `debug → info → warn → error`：`debug` 保存全部处理摘要和 UMP 计数；`info` 保存实际清理结果、警告和错误；`warn` 保存状态/结构/大小异常和错误；`error` 保存未预期解析或运行错误。级别只影响新摘要，不删除历史记录。开发抓包保存每次匹配脚本收到的数据及其处理结果，避免过滤掉未修改样本；没有另外重复写入该响应的普通摘要。
 
@@ -214,8 +215,8 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 
 ### 开发抓包操作
 
-1. 更新主插件和九份 JS。开发记录要求 `YouTubeFeedAds.js` 为 2.0.0、`YouTubePlayerRequest.js` 为 1.0.0、`YouTubePlaybackAds.js` 为 2.1.0、`YouTubeAdBreak.js` 为 1.0.0、`YouTubeShortsAds.js` 为 1.0.0、`YouTubeStreamAds.js` 为 1.4.0、`YouTubeOnesieConfig.js` 为 1.0.0、`YouTubeInitPlayback.js` 为 1.1.2、`YouTubeLogger.js` 为 1.9.0。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
-2. 主插件开启“日志工具”和“开发抓包”，选择容量。要取得媒体响应，**还必须开启“UMP 试验处理”并先选择 `inspect`**；关闭 UMP 响应入口时仍能取得开发请求，但不会取得媒体响应。普通摘要级别不会过滤开发样本。
+1. 更新主插件和九份 JS。开发记录要求 `YouTubeFeedAds.js` 为 2.0.0、`YouTubePlayerRequest.js` 为 1.0.0、`YouTubePlaybackAds.js` 为 2.1.0、`YouTubeAdBreak.js` 为 1.0.0、`YouTubeShortsAds.js` 为 1.0.0、`YouTubeStreamAds.js` 为 1.5.0、`YouTubeOnesieConfig.js` 为 1.0.0、`YouTubeInitPlayback.js` 为 1.1.2、`YouTubeLogger.js` 为 1.9.0。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
+2. 主插件开启“日志工具”和“开发抓包”，选择容量，并把“UMP 模式”保持为 `inspect`。开发抓包会自动启用 UMP 响应读取，不再需要第二个开关。普通摘要级别不会过滤开发样本。
 3. Safari 输入 **`http://youtube-logs.invalid/`**，或手动运行主插件的“ YouTube 日志入口 ”后点通知。地址由 Loon 在本地直接响应，不需要额外 MitM。先导出需要保留的旧记录；需要干净样本时清空，再点“开始记录”。
 4. 重现一次广告和一次正常播放。在相近时间添加广告/正片标记，减少其他播放、预览或自动播放，以便比较样本。切换 App 添加标记会有时间误差，不把它当作精确的广告边界。
 5. 回到页面暂停记录，只点击 **“导出完整日志文件 .log（浏览、刷新、播放全链路）”**。等待显示文件已生成，再点击“保存日志文件”，通过 Safari 保存到“文件”。这是唯一的用户日志出口。
@@ -259,16 +260,16 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 ### 在设备上验证
 
-1. 确认主插件和 JS 都更新为此版本。打开“控制台日志”和“UMP 试验处理”，将“UMP 模式”保持为 `inspect`。该模式只检查，不修改响应。
+1. 确认主插件和 JS 都更新为此版本。打开“控制台日志”和“开发抓包”，将“UMP 模式”保持为 `inspect`。开发抓包会自动启用 UMP 响应脚本，该模式只检查和记录，不修改响应。
 2. 主插件已包含 `*.googlevideo.com` MitM。若播放请求走 UDP/QUIC，可能无法命中脚本；只有观察到该现象时，才考虑在主配置中增加仅针对 `googlevideo.com` UDP/443 的回退规则。不要拒绝 TCP 播放连接。
-3. 完全退出 YouTube，重开并播放可能出现广告的视频。找 `YouTube 视频流广告提示清理（试验）` 日志，前缀为 `[YouTubeStreamAds 1.4.0] ump`。
+3. 完全退出 YouTube，重开并播放可能出现广告的视频。找 `YouTube 开发抓包 UMP 响应处理` 日志，前缀为 `[YouTubeStreamAds 1.5.0] ump`。
 4. 先看是否记录到 `parts=...69:...` 和 `ad_prefetch` 大于零。如果没有，当前清理策略没有命中该广告，打开清理模式也不会移除其媒体。
-5. 只有命中明确预取提示时，再把模式改为 `clean_prefetch`，退出重开后测试。`removed_prefetch` 大于零只代表删除了提示，必须另外观察广告、正片和拖动进度是否正常。关闭 UMP 开关可以撤销响应脚本处理；完整撤销媒体解密还需从主插件 MitM 列表移除 `*.googlevideo.com`。
+5. 只有命中明确预取提示时，再把模式改为 `clean_prefetch`，退出重开后测试。`removed_prefetch` 大于零只代表删除了提示，必须另外观察广告、正片和拖动进度是否正常。关闭“开发抓包”即可停止 UMP 响应脚本；完整撤销媒体 MitM 还需从主插件 MitM 列表移除 `*.googlevideo.com`。
 
 示例日志是说明用的合成结果，不是用户设备上的实测：
 
 ```text
-[YouTubeStreamAds 1.4.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
+[YouTubeStreamAds 1.5.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
 ```
 
 这里的 `20:1` 表示类型 20 出现 1 次；`ad_prefetch` 是符合两个条件的元数据条目数。控制台和普通摘要不输出媒体内容、视频 ID、签名、token 或上下文原文；开启开发抓包后，完整 `.log` 会保留运行时可见的原始数据。
@@ -289,7 +290,7 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 之前空 502 拦截导致几秒黑屏，当前实现不重新采用这一方法。**广告预取提示清理不等于删除正在播放的广告。单靠 Content-Type 不能定位广告，也无法从纯广告响应生成缺失的正片。**
 
-Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据，等待整个播放响应完成也可能增加延迟或影响播放；这里尚未验证真实设备行为。如果出现新的等待或黑屏，关闭 UMP 试验入口。不能仅凭“不删除媒体”保证没有黑屏。
+Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据，等待整个播放响应完成也可能增加延迟或影响播放；这里尚未验证真实设备行为。如果出现新的等待或黑屏，关闭“开发抓包”即可同时停止 UMP 响应处理。不能仅凭“不删除媒体”保证没有黑屏。
 
 ## 本地验证
 

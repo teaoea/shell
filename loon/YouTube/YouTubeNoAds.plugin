@@ -15,9 +15,8 @@ hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首�
 script_debug = switch,false,tag=控制台日志,desc=需要查看 Loon 脚本日志时手动开启
 log_enabled = switch,false,tag=日志工具,desc=手动开启后记录浏览、刷新和播放链路；日志页面统一导出一个完整 .log 文件
 log_level = select,"info","debug","warn","error",tag=日志保存级别,desc=仅保存此级别及更高严重程度；排查 UMP 请选择 debug
-capture_raw = switch,false,tag=开发抓包,desc=手动开启后保存完整 URL、请求头及二进制正文；含账号或签名信息，仅用于本地开发
+capture_raw = switch,false,tag=开发抓包,desc=手动开启后同时记录浏览、刷新、播放及 UMP 响应的完整 URL、请求头和二进制正文；可能增加播放等待
 capture_budget = select,"32","16","64",tag=开发抓包容量 MB,desc=达到上限停止记录，保留已有样本；导出后再清空
-ump_enabled = switch,false,tag=UMP 试验处理,desc=先用 inspect 取日志；完整读取播放响应可能增加等待
 ump_mode = select,"inspect","clean_prefetch",tag=UMP 模式,desc=inspect 仅检查；clean_prefetch 清理广告预取提示，未验证实播
 
 [Rule]
@@ -27,7 +26,7 @@ AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
-http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget},{ump_enabled},{ump_mode},{background_playback},{remove_shorts_ads},{adaptive_feed_ads}],tag=YouTube 开发请求抓包
+http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget},{ump_mode},{background_playback},{remove_shorts_ads},{adaptive_feed_ads}],tag=YouTube 开发请求抓包
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeOnesieConfig.js,requires-body=true,binary-body-mode=true,timeout=10,enable={onesie_enabled},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube Onesie 配置刷新
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(?:config|log_event)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeOnesieConfig.js,requires-body=true,binary-body-mode=true,timeout=10,enable={onesie_enabled},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube Onesie 配置缓存
 http-request ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeInitPlayback.js,requires-body=true,binary-body-mode=true,timeout=10,enable={onesie_enabled},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{onesie_enabled}],tag=YouTube initplayback 广告协商清理
@@ -36,7 +35,7 @@ http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeFeedAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{hide_home_shorts},{adaptive_feed_ads}],tag=YouTube 信息流广告与首页 Shorts 处理
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js,requires-body=true,binary-body-mode=true,timeout=10,debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{background_playback}],tag=YouTube 播放广告位清理与后台播放
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/reel\/reel_watch_sequence(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeShortsAds.js,requires-body=true,binary-body-mode=true,timeout=10,enable={remove_shorts_ads},debug={script_debug},argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{remove_shorts_ads}],tag=YouTube Shorts 播放广告清理
-http-response ^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js,requires-body=true,binary-body-mode=true,timeout=10,enable={ump_enabled},debug={script_debug},argument=[{script_debug},{ump_enabled},{ump_mode},{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 视频流广告提示清理（试验）
+http-response ^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js,requires-body=true,binary-body-mode=true,timeout=10,enable={capture_raw},debug={script_debug},argument=[{script_debug},{ump_mode},{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 开发抓包 UMP 响应处理
 
 generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget}],tag=YouTube 日志入口
 
@@ -44,5 +43,5 @@ http-request ^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$ script-path=ht
 
 [Mitm]
 hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, *.googlevideo.com
-# UMP 试验入口默认关闭；媒体域名的 MitM 仍生效，完整撤销需移除该 hostname。
+# UMP 响应处理随“开发抓包”启停；媒体域名的 MitM 仍生效，完整撤销需移除该 hostname。
 # googlevideo 的 UDP 仅回退到 TCP，媒体请求仍正常放行。

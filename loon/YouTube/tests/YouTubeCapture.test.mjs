@@ -13,7 +13,7 @@ function run(name, store, extra = {}, failingKey = '') {
   const logs = [];
   const context = {
     $persistentStore:{read:key=>store.get(key),write(value,key){if (key === failingKey) return false; if(value===undefined)store.delete(key);else store.set(key,value);return true;}},
-    $argument:{script_debug:false,log_enabled:true,log_level:'error',capture_raw:true,capture_budget:'32',ump_enabled:true,ump_mode:'inspect'},
+    $argument:{script_debug:false,log_enabled:true,log_level:'error',capture_raw:true,capture_budget:'32',ump_mode:'inspect'},
     $loon:'test-device test-os test-build', $done(value){result=value;calls++;}, console:{log:value=>logs.push(value)},
     Uint8Array,ArrayBuffer,TextDecoder,TextEncoder,...extra
   };
@@ -115,7 +115,7 @@ test('modified UMP exports original and cleaned binary as independently recovera
   const original=new Uint8Array([69,8,10,6,10,4,8,1,16,6]);
   const r=run('YouTubeStreamAds',store,{
     $request:{url:media,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:original},
-    $argument:{log_enabled:true,capture_raw:true,ump_enabled:true,ump_mode:'clean_prefetch'}
+    $argument:{log_enabled:true,capture_raw:true,ump_mode:'clean_prefetch'}
   });
   const c=exportData(store).events[0].capture;
   assert.deepEqual(Buffer.from(c.responseBefore.body.data,'base64'),Buffer.from(original));

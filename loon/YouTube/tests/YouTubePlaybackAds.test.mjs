@@ -74,8 +74,9 @@ test('plugin routes playback and stream responses to distinct standalone scripts
   const active = plugin.split('\n').filter(line => !line.startsWith('#')).join('\n');
   assert.ok(active.split('[Mitm]')[1].includes('*.googlevideo.com'));
   assert.ok(active.includes('background_playback = switch,false,'));
-  assert.ok(active.includes('ump_enabled = switch,false,'));
-  assert.ok(entries[1].includes('enable={ump_enabled}'));
+  assert.ok(!active.includes('ump_enabled = switch,false,'));
+  assert.ok(entries[1].includes('enable={capture_raw}'));
+  assert.ok(entries[1].includes('argument=[{script_debug},{ump_mode},{log_enabled},{log_level},{capture_raw},{capture_budget}]'));
   assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js'));
   assert.ok(!source.includes('function processUMP('));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));

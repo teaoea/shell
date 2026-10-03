@@ -147,7 +147,7 @@
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", background_playback:devFlag(args.background_playback), log_level:args.log_level || "info"}}};
+          arguments:{development_capture:devFlag(args.capture_raw), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", background_playback:devFlag(args.background_playback), log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
@@ -266,7 +266,7 @@
       settings:{rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
       completeness:{allReferencedSamplesReadable:issues.length === 0, stoppedDueToLimitOrError:!!(c && c.haltReason), issues:issues,
         limitations:["Only matched player/get_watch/browse/next/search/reel_watch_sequence/log_event/config/initplayback/player/ad_break and enabled UMP response scripts; not all YouTube traffic.",
-          "Media response capture requires ump_enabled=true; inspect is recommended.",
+          "Media response capture is enabled together with development capture; inspect mode is recommended.",
           "Runtime bodies may already be decoded; these are not TLS/HTTP wire bytes.",
           "Missing runtime bodies are marked unavailable; before/after transport headers are not reconstructed.",
           "URL/method hashes are grouping hints, not guaranteed request/response pairs.",
@@ -368,7 +368,7 @@
       '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存原始数据' : '未开启，只保存摘要') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，原始样本另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
-      '<p>开发抓包在主插件手动开启，请先选择容量，再开始记录。唯一的 .log 文件保存完整 URL、请求头、文本正文和 Base64 二进制，可能包含账号凭据与签名；文件留在本机，不会自动上传。UMP 响应需要开启 UMP 试验处理，先用 inspect。</p>' +
+      '<p>开发抓包在主插件手动开启，请先选择容量和 UMP 模式，再开始记录。它会同时读取 UMP 响应；唯一的 .log 文件保存完整 URL、请求头、文本正文和 Base64 二进制，可能包含账号凭据与签名；文件留在本机，不会自动上传。</p>' +
       '<p>在主插件选择日志保存级别：debug 为全部排查摘要；info 为修改结果及异常；warn 为警告及错误；error 为未预期错误。调整级别只影响新记录。</p>' +
       '<p>开发抓包记录不受摘要级别过滤。日志无法读取 Loon 的连接、证书或脚本超时记录。抓包可能增加播放等待，复现后应关闭。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form></html>';

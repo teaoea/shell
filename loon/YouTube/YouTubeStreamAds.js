@@ -1,6 +1,6 @@
 /*
- * YouTubeStreamAds 1.4.0 — UMP stream ad PREFETCH cue cleanup experiment.
- * Handles googlevideo /videoplayback only; disabled by default in the plugin.
+ * YouTubeStreamAds 1.5.0 — UMP stream capture and ad PREFETCH cue cleanup experiment.
+ * Handles googlevideo /videoplayback only; enabled together with development capture.
  * Does not remove ad media already transmitted or implement instant ad skip.
  * No imports, remote calls, redirects, or playback API processing.
  * Shared wire helpers are included here so Loon can run this file directly.
@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.4.0";
+  var VERSION = "1.5.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   var debug = args.script_debug !== false && args.script_debug !== "false";
@@ -148,7 +148,7 @@
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{ump_enabled:devFlag(args.ump_enabled), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
+          arguments:{development_capture:devFlag(args.capture_raw), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
@@ -394,7 +394,7 @@
 
   function runUMP() {
     endpoint = "ump";
-    if (args.ump_enabled !== true && args.ump_enabled !== "true") return {};
+    if (!devFlag(args.capture_raw)) return {};
     var type = header($response.headers, "content-type").split(";")[0].trim();
     if (type !== "application/vnd.yt-ump") { log("pass: non-UMP"); return {}; }
     if (Number($response.status) !== 200) { log("pass: non-200"); return {}; }

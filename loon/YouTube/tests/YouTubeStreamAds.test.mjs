@@ -109,7 +109,7 @@ for (const [label, input] of [
   assert.throws(() => processUMP(bytes(input), 'clean_prefetch'));
 });
 
-function runtime(body, mode = 'clean_prefetch', enabled = true, type = 'application/vnd.yt-ump', url = 'https://rr5.googlevideo.com/videoplayback?ctier=L&sig=PRIVATE_SIG') {
+function runtime(body, mode = 'clean_prefetch', capture = true, type = 'application/vnd.yt-ump', url = 'https://rr5.googlevideo.com/videoplayback?ctier=L&sig=PRIVATE_SIG') {
   let output;
   let calls = 0;
   const logs = [];
@@ -117,12 +117,12 @@ function runtime(body, mode = 'clean_prefetch', enabled = true, type = 'applicat
     Uint8Array, ArrayBuffer, TextDecoder, TextEncoder,
     $request: { url },
     $response: { status: 200, body, headers: { 'Content-Type': type } },
-    $argument: { ump_enabled: enabled, ump_mode: mode, script_debug: true },
+    $argument: { capture_raw: capture, ump_mode: mode, script_debug: true },
     $done(result) { output = result; calls++; }, console: { log(line) { logs.push(line); } }
   }, { timeout: 1000 });
   assert.equal(calls, 1);
   assert.ok(!logs.join('\n').includes('PRIVATE_SIG'));
-  assert.ok(logs.every(line => line.startsWith('[YouTubeStreamAds 1.4.0]')));
+  assert.ok(logs.every(line => line.startsWith('[YouTubeStreamAds 1.5.0]')));
   return { output, logs };
 }
 
@@ -131,7 +131,7 @@ test('live adapter returns original whole response on later malformed part', () 
   assert.deepEqual(Object.keys(runtime(input).output), []);
 });
 
-test('live adapter has a real cleanup route, inspect default, and an off switch', () => {
+test('live adapter has a real cleanup route, inspect default, and follows the development capture switch', () => {
   const input = bytes(shortPart(69, adPrefetch), media, end);
   assert.deepEqual(Array.from(runtime(input).output.body), Array.from(bytes([69, 0], media, end)));
   assert.deepEqual(Object.keys(runtime(input, 'inspect').output), []);

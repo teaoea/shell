@@ -139,11 +139,12 @@ test('playback and stream summaries append to the same buffer and one file', () 
   const r = execute(stream, store, {
     $request:{url:'https://rr5.googlevideo.com/videoplayback?sig=PRIVATE'},
     $response:{status:200, headers:{'Content-Type':'application/vnd.yt-ump'}, body:media},
-    $argument:{script_debug:false, log_enabled:true, log_level:"debug", ump_enabled:true, ump_mode:'inspect'}
+    $argument:{script_debug:false, log_enabled:true, log_level:"debug", capture_raw:true, capture_budget:'32', ump_mode:'inspect'}
   });
   assert.equal(Object.keys(r.output).length, 0);
   const entries = JSON.parse(store.get(cacheKey)).entries;
-  assert.equal(entries.length,2);assert.ok(entries[1].message.includes('pass: mode=inspect'));assert.ok(entries[1].message.includes('parts=21:1'));
+  assert.equal(entries.length,2);assert.ok(entries[1].message.includes('development capture: response'));
+  const streamCapture=events(store)[1].capture;assert.ok(streamCapture.processing.messages[0].includes('pass: mode=inspect'));assert.ok(streamCapture.processing.messages[0].includes('parts=21:1'));
   assert.deepEqual(entries.map(r => r.source), ['YouTubePlaybackAds', 'YouTubeStreamAds']);
   assert.ok(!store.has('ytads.logger.YouTubePlaybackAds.v1') && !store.has('ytads.logger.YouTubeStreamAds.v1'));
 });
@@ -204,10 +205,10 @@ test('failed migration preserves old caches for retry', () => {
   assert.ok(store.has(legacy));
   assert.equal(store.has(cacheKey), false);
 });
-test('disabled UMP produces no stream entries', () => {
+test('disabled development capture produces no stream entries', () => {
   const store = new Map();
   request(store, '/start', 'POST');
-  execute(stream, store, {$request:{url:'https://rr5.googlevideo.com/videoplayback?x=1'}, $response:{}, $argument:{ump_enabled:false}});
+  execute(stream, store, {$request:{url:'https://rr5.googlevideo.com/videoplayback?x=1'}, $response:{}, $argument:{capture_raw:false}});
   assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 0);
 });
 test('shared buffer stops at 600 entries and preserves every prior entry', () => {
@@ -268,7 +269,7 @@ test('all write/read failures leave ad cleanup operational, errors contain no ra
     const ump = execute(stream, store, {
       $request:{url:'https://rr5.googlevideo.com/videoplayback?sig=PRIVATE'},
       $response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:new Uint8Array([69,8,10,6,10,4,8,1,16,6])},
-      $argument:{script_debug:true,log_enabled:true,log_level:"debug",ump_enabled:true,ump_mode:'clean_prefetch'}
+      $argument:{script_debug:true,log_enabled:true,log_level:"debug",capture_raw:true,capture_budget:'32',ump_mode:'clean_prefetch'}
     }, failure);
     assert.deepEqual(Array.from(ump.output.body), [69,0]);
     assert.ok(!ump.logs.join('\n').includes('secret'));
