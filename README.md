@@ -120,8 +120,11 @@ bash -c 'set -e; runner=(); if [ "$(id -u)" -ne 0 ]; then runner=(sudo --preserv
 ### SSH 端口和认证
 
 - 修改端口时暂时同时监听新旧端口，先放行 SSH 端口，再重载 SSH 服务；应用前检查配置语法和实际生效选项，应用后检查新端口监听状态。
-- 可选关闭 `PasswordAuthentication` 和 `KbdInteractiveAuthentication`，启用公钥并将 `AuthenticationMethods` 设置为 `publickey`。保持已有 root 登录策略；不会替用户生成、上传或安装公钥。
-- 关闭密码登录必须明确确认已实际用公钥登录，并且指定用户的 `AuthorizedKeysFile` 中存在可识别公钥。只配置 SSH 证书或 `AuthorizedKeysCommand`、没有本地公钥文件的环境需要单独处理。公钥文件检查不能替代真实登录测试。
+- 可选关闭 `PasswordAuthentication` 和 `KbdInteractiveAuthentication`，启用公钥并将 `AuthenticationMethods` 设置为 `publickey`。保持已有 root 登录策略；不会生成或索取客户端私钥。
+- 交互模式会检查目标用户是否已有可识别公钥；没有时提示粘贴 `.pub` 文件中的完整一行，如 `ssh-ed25519 AAAA... user@device`。输入空行可跳过安装并保留认证配置；如果选择关闭密码登录，则空输入会取消该操作。私钥、无效格式或无法解析的密钥会被拒绝，可以重新输入。
+- 公钥写入当前 `AuthorizedKeysFile` 已启用的用户家目录标准 `.ssh/authorized_keys` 或 `.ssh/authorized_keys2`，原有内容保留，相同密钥不重复追加。目录权限设为 `700`、文件权限设为 `600`，归属目标用户；存在旧文件时先备份到 `/var/lib/vps-security/public-key-backups/`，再通过临时文件替换。符号链接路径不会写入。
+- 关闭密码登录必须明确确认已实际用公钥登录。新公钥写入后，先保留当前 SSH 认证配置，提示在另一个终端用该密钥验证；确认成功才继续关闭密码登录。未确认时，本次改为保留原认证配置，继续其余安全设置，之后可以重跑脚本关闭密码登录。非交互模式不会索取或自动安装公钥，需要事先准备密钥并明确传入 `--key-login-confirmed`。
+- 只配置 SSH 证书、`AuthorizedKeysCommand` 或自定义公钥路径、未启用标准用户公钥文件的环境需要单独处理。公钥文件检查不能替代真实登录测试；公钥安装属于独立准备步骤，SSH/UFW 回滚不会删除本次新安装的公钥。
 
 ### UFW 防火墙
 

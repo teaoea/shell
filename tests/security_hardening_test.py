@@ -29,7 +29,7 @@ ASSUME_YES=true
 ALLOW_PORTS=(443/tcp 443/udp)
 LOG="$1/operations"
 : >"$LOG"
-getent() { printf 'root:x:0:0:root:%s:/bin/bash\n' "$1_ROOT/home"; }
+getent() { printf 'root:x:%s:%s:root:%s:/bin/bash\n' "$(command id -u)" "$(command id -g)" "$FIXTURE_ROOT/home"; }
 id() { if [[ "$1" == -un ]]; then echo root; else command id "$@"; fi; }
 mkdir -p -m 700 "$STATE_DIR"
 systemctl() {
@@ -84,7 +84,7 @@ passed = 0
 with tempfile.TemporaryDirectory(prefix='security-hardening-test-') as temp:
     root = Path(temp)
 
-    def run(name, body, expected=0, setup=None, verify=None):
+    def run(name, body, expected=0, setup=None, verify=None, inputs=None):
         global passed
         folder = root / str(passed)
         folder.mkdir()
@@ -94,12 +94,26 @@ with tempfile.TemporaryDirectory(prefix='security-hardening-test-') as temp:
             setup(folder, main)
             original = main.read_bytes()
         env = dict(os.environ)
-        code = COMMON.replace('$1_ROOT', '$FIXTURE_ROOT')
+        code = COMMON
         if platform.system() == 'Darwin':
             code += 'sed() { if [[ "$1" == -i ]]; then shift; command sed -i "" "$@"; else command sed "$@"; fi; }\n'
+            code += 'mv() { if [[ "$1" == -fT ]]; then shift; command mv -f "$@"; else command mv "$@"; fi; }\n'
         code += body
         env['FIXTURE_ROOT'] = str(folder)
-        result = subprocess.run(['/bin/bash', '-s', '--', str(folder)], input=code, text=True, capture_output=True, env=env)
+        if inputs is None:
+            result = subprocess.run(['/bin/bash', '-s', '--', str(folder)], input=code, text=True, capture_output=True, env=env)
+        else:
+            runner = folder / 'interactive-test.sh'
+            runner.write_text(code)
+            master, slave = os.openpty()
+            process = subprocess.Popen(['/bin/bash', str(runner), str(folder)], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True)
+            os.close(slave)
+            try:
+                os.write(master, inputs(folder).encode())
+                stdout, stderr = process.communicate(timeout=20)
+                result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+            finally:
+                os.close(master)
         if result.returncode != expected:
             raise AssertionError(f'{name}: exit {result.returncode}\n{result.stdout}\n{result.stderr}')
         if verify:
@@ -209,4 +223,67 @@ SSH_CONNECTION='203.0.113.10 60000 192.0.2.10 22222'
 SUDO_USER=otheruser
 confirm_changes
 ''', 1)
+
+    def installed_key(folder, main, original, result):
+        target = folder / 'home/.ssh/authorized_keys'
+        assert target.read_text().strip() == (folder / 'host-key.pub').read_text().strip()
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert target.parent.stat().st_mode & 0o777 == 0o700
+        assert target.stat().st_uid == os.getuid()
+
+    missing_key = lambda f,m: (f/'home/.ssh/authorized_keys').unlink()
+    pub = lambda f: (f/'host-key.pub').read_text()
+    run('interactive missing key is installed; unverified login keeps password', r'''
+ASSUME_YES=false
+rm "$FIXTURE_ROOT/home/.ssh/authorized_keys"
+check_public_key
+[[ "$KEY_CONFIRMED" == false ]]
+confirm_key_login
+[[ "$PASSWORD_MODE" == keep-password ]]
+[[ "$(config_value "$("$SSHD" -T)" passwordauthentication)" == yes ]]
+''', inputs=lambda f: pub(f)+'n\n', verify=installed_key)
+    run('interactive key installation plus verified login permits hardening', r'''
+ASSUME_YES=false
+apply_changes
+[[ "$KEY_CONFIRMED" == true && "$PASSWORD_MODE" == disable-password ]]
+[[ "$(config_value "$("$SSHD" -T)" passwordauthentication)" == no ]]
+''', setup=missing_key, inputs=lambda f: pub(f)+'y\ny\n', verify=installed_key)
+    run('key can be installed while choosing to preserve authentication', r'''
+ASSUME_YES=false
+PASSWORD_MODE=keep-password
+FIREWALL_MODE=keep
+apply_changes
+[[ "$(config_value "$("$SSHD" -T)" passwordauthentication)" == yes ]]
+''', setup=missing_key, inputs=lambda f: pub(f)+'y\n', verify=installed_key)
+    run('private key text rejected; user can retry with valid public key', r'''
+ASSUME_YES=false
+check_public_key
+confirm_key_login
+[[ "$PASSWORD_MODE" == keep-password ]]
+''', setup=missing_key, inputs=lambda f: '-----BEGIN OPENSSH PRIVATE KEY-----\n'+pub(f)+'n\n', verify=installed_key)
+    run('existing key file preserved, backed up, and duplicate skipped', r'''
+key=$(<"$FIXTURE_ROOT/host-key.pub")
+target="$FIXTURE_ROOT/home/.ssh/authorized_keys"
+printf '# existing note\n' >"$target"
+write_public_key "$key" "$target" "$(command id -u)" "$(command id -g)" "$FIXTURE_ROOT/home"
+write_public_key "$key" "$target" "$(command id -u)" "$(command id -g)" "$FIXTURE_ROOT/home"
+grep -Fxq '# existing note' "$target"
+[[ "$(grep -Fc "$key" "$target")" == 1 ]]
+[[ "$(find "$STATE_DIR/public-key-backups" -type f | wc -l | tr -d ' ')" == 1 ]]
+''')
+    run('symlink public key target refused without touching its destination', r'''
+key=$(<"$FIXTURE_ROOT/host-key.pub")
+target="$FIXTURE_ROOT/home/.ssh/authorized_keys"
+rm "$target"
+printf 'untouched\n' >"$FIXTURE_ROOT/outside"
+ln -s "$FIXTURE_ROOT/outside" "$target"
+write_public_key "$key" "$target" "$(command id -u)" "$(command id -g)" "$FIXTURE_ROOT/home"
+''', 1, verify=lambda f,m,o,r: (f/'outside').read_text()=='untouched\n' or (_ for _ in ()).throw(AssertionError(r.stderr)))
+    run('failed atomic key installation leaves original key file intact', r'''
+key=$(<"$FIXTURE_ROOT/host-key.pub")
+target="$FIXTURE_ROOT/home/.ssh/authorized_keys"
+printf '# unchanged\n' >"$target"
+mv() { return 1; }
+if write_public_key "$key" "$target" "$(command id -u)" "$(command id -g)" "$FIXTURE_ROOT/home"; then exit 9; fi
+''', 1, verify=lambda f,m,o,r: (f/'home/.ssh/authorized_keys').read_text()=='# unchanged\n' or (_ for _ in ()).throw(AssertionError(r.stderr)))
 print(f'{passed} isolated checks passed; real SSH configuration parser used, no services/firewalls changed.')

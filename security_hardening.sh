@@ -45,7 +45,7 @@ usage() {
   --disable-password    关闭密码及键盘交互登录，仅允许公钥认证
   --keep-password       保留原有认证配置
   --login-user USER     检查该用户的公钥登录条件，默认 sudo 用户或 root
-  --key-login-confirmed 确认已实际使用公钥登录该用户；关闭密码登录必需
+  --key-login-confirmed 确认已实际使用公钥登录该用户；非交互关闭密码时必需
   --firewall MODE       configure：配置 UFW 并保留启用状态（交互默认）
                         enable：配置并启用 UFW；keep：不修改防火墙
   --allow PORT[/PROTO]  额外放行端口，PROTO 为 tcp/udp，默认 tcp；可重复
@@ -55,7 +55,8 @@ usage() {
   --status              查看 SSH、UFW 和待确认状态
   -h, --help            显示帮助
 应用后须在 10 分钟内从新端口执行 --confirm，否则自动回滚。
-保持原有 root 登录策略。不会生成、上传公钥或修改云安全组。
+交互运行时，缺少公钥会提示粘贴并安装；验证登录前保留原认证配置。
+保持原有 root 登录策略。不会生成私钥或修改云安全组。
 HELP
 }
 
@@ -110,7 +111,7 @@ require_environment() {
   [[ -r /etc/os-release ]] || die "无法识别系统"
   . /etc/os-release
   [[ "${ID:-}" == debian || "${ID:-}" == ubuntu ]] || die "目前仅支持 Debian/Ubuntu"
-  for name in systemctl flock awk grep cp install mktemp ss getent ssh-keygen sort sed readlink ln mkdir cat date rm; do
+  for name in systemctl flock awk grep cp install mktemp ss getent ssh-keygen sort sed readlink ln mkdir cat date rm mv chmod chown; do
     command -v "$name" >/dev/null 2>&1 || die "缺少工具: $name"
   done
   SSHD=$(command -v sshd) || die "未安装 OpenSSH 服务端"
@@ -161,11 +162,6 @@ select_options() {
       read -r -p '是否关闭密码及键盘交互登录，仅保留公钥？(y/N): ' answer
       if [[ "$answer" =~ ^[Yy]$ ]]; then PASSWORD_MODE=disable-password; else PASSWORD_MODE=keep-password; fi
     fi
-    if [[ "$PASSWORD_MODE" == disable-password && "$KEY_CONFIRMED" != true ]]; then
-      read -r -p "已用公钥实际登录 ${LOGIN_USER} 并验证成功？(y/N): " answer
-      [[ "$answer" =~ ^[Yy]$ ]] || die "请先验证公钥登录，再关闭密码登录"
-      KEY_CONFIRMED=true
-    fi
     if [[ -z "$FIREWALL_MODE" ]]; then
       log '防火墙：1) 配置并保持启用状态  2) 配置并启用  3) 不修改'
       read -r -p '选择（默认 1）: ' answer
@@ -181,17 +177,74 @@ select_options() {
   validate_port "$SSH_PORT" || die "SSH 端口必须是 1-65535"
   SSH_PORT=$((10#$SSH_PORT))
   case "$FIREWALL_MODE" in configure|enable|keep) ;; *) die "无效的防火墙模式" ;; esac
-  [[ "$PASSWORD_MODE" != disable-password || "$KEY_CONFIRMED" == true ]] || die "关闭密码登录需要 --key-login-confirmed"
+  if [[ "$ASSUME_YES" == true && "$PASSWORD_MODE" == disable-password && "$KEY_CONFIRMED" != true ]]; then
+    die "非交互关闭密码登录需要 --key-login-confirmed"
+  fi
+}
+
+write_public_key() {
+  local public_key=${1%$'\r'} target=$2 user_uid=$3 user_gid=$4 home=$5
+  local validation temp key_type key_data backup
+  [[ "$public_key" != *$'\n'* && "$public_key" != *$'\r'* &&
+     "$public_key" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)[[:space:]]+[A-Za-z0-9+/]+={0,3}([[:space:]].*)?$ ]] || {
+    warn "请输入公钥文件中的完整单行（如 ssh-ed25519 ...），不要输入私钥"
+    return 1
+  }
+  validation=$(mktemp /tmp/vps-security-key.XXXXXX) || die "无法创建公钥校验文件"
+  TEMP_FILES+=("$validation")
+  printf '%s\n' "$public_key" >"$validation" || die "无法写入公钥校验文件"
+  if ! ssh-keygen -l -f "$validation" >/dev/null 2>&1; then
+    warn "公钥内容未通过 ssh-keygen 校验"
+    return 1
+  fi
+  [[ "$target" == "$home/.ssh/authorized_keys" || "$target" == "$home/.ssh/authorized_keys2" ]] ||
+    die "交互安装仅支持用户家目录中的标准 authorized_keys 文件"
+  [[ -d "$home" && ! -L "$home" && ! -L "$home/.ssh" && ! -L "$target" ]] ||
+    die "公钥目标路径不存在或包含符号链接，未写入"
+  [[ ! -e "$target" || -f "$target" ]] || die "公钥目标不是普通文件"
+  IFS=' ' read -r key_type key_data _ <<<"$public_key"
+  if [[ -f "$target" ]] && awk -v type="$key_type" -v data="$key_data" '
+    /^[[:space:]]*#/ {next}
+    {for(i=1;i<NF;i++) if($i==type && $(i+1)==data) found=1}
+    END {exit !found}
+  ' "$target"; then
+    log "同一公钥已存在，未重复写入: $target"
+    return 0
+  fi
+  mkdir -p -m 700 "$home/.ssh" || die "无法创建 .ssh 目录"
+  chown "$user_uid:$user_gid" "$home/.ssh" || die "无法设置 .ssh 目录归属"
+  chmod 700 "$home/.ssh" || die "无法设置 .ssh 目录权限"
+  if [[ -f "$target" ]]; then
+    mkdir -p -m 700 "$STATE_DIR/public-key-backups" || die "无法创建公钥备份目录"
+    backup="$STATE_DIR/public-key-backups/$(date +%Y%m%d-%H%M%S)-$user_uid-$$"
+    cp -a -- "$target" "$backup" || die "无法备份原公钥文件"
+    log "原公钥文件备份: $backup"
+  fi
+  temp=$(mktemp "$home/.ssh/.authorized_keys.XXXXXX") || die "无法创建公钥写入临时文件"
+  TEMP_FILES+=("$temp")
+  if [[ -f "$target" ]]; then
+    cat "$target" >"$temp" || die "无法读取原公钥文件"
+    printf '\n' >>"$temp" || die "无法写入公钥分隔行"
+  fi
+  printf '%s\n' "$public_key" >>"$temp" || die "无法写入新公钥"
+  chown "$user_uid:$user_gid" "$temp" || die "无法设置公钥文件归属"
+  chmod 600 "$temp" || die "无法设置公钥文件权限"
+  mv -fT -- "$temp" "$target" || die "无法保存公钥文件，原文件已保留"
+  log "公钥已写入: ${target}（目录权限 700，文件权限 600）"
+  ssh-keygen -l -f "$validation" | awk '{print "公钥指纹: " $1 " " $2}'
 }
 
 check_public_key() {
-  local entry user_uid user_gid home shell effective paths path root_policy
+  local required=${1:-true} entry user_uid user_gid home shell effective paths path root_policy target="" public_key
   entry=$(getent passwd "$LOGIN_USER") || die "登录用户不存在: $LOGIN_USER"
   IFS=: read -r _ _ user_uid user_gid _ home shell <<<"$entry"
   [[ "$shell" != */nologin && "$shell" != */false ]] || die "该用户没有可用的登录 shell"
   effective=$("$SSHD" -T -C "$(connection_context)")
   root_policy=$(config_value "$effective" permitrootlogin)
-  [[ "$LOGIN_USER" != root || "$root_policy" != no ]] || die "现有策略禁止 root 登录，请指定可登录的用户"
+  if [[ "$LOGIN_USER" == root && "$root_policy" == no ]]; then
+    [[ "$required" == true ]] || { warn "现有策略禁止 root 登录，跳过 root 公钥安装"; return 0; }
+    die "现有策略禁止 root 登录，请指定可登录的用户"
+  fi
   paths=$(config_value "$effective" authorizedkeysfile)
   local -a key_paths
   read -r -a key_paths <<<"$paths"
@@ -200,8 +253,42 @@ check_public_key() {
     path=${path//%h/$home}; path=${path//%u/$LOGIN_USER}; path=${path//%U/$user_uid}; path=${path//%%/%}
     [[ "$path" == /* ]] || path="$home/$path"
     if [[ -s "$path" ]] && ssh-keygen -l -f "$path" >/dev/null 2>&1; then return 0; fi
+    if [[ -z "$target" && ( "$path" == "$home/.ssh/authorized_keys" || "$path" == "$home/.ssh/authorized_keys2" ) ]]; then
+      target=$path
+    fi
   done
-  die "${LOGIN_USER} 的 AuthorizedKeysFile 中未找到可识别的公钥；不会关闭密码登录"
+  if [[ "$ASSUME_YES" == true || ! -t 0 ]]; then
+    [[ "$required" == true ]] || return 0
+    die "${LOGIN_USER} 未找到可识别的公钥；请交互运行并输入公钥，或先安装公钥后重试"
+  fi
+  if [[ -z "$target" ]]; then
+    [[ "$required" == true ]] || { warn "当前配置使用自定义公钥来源，跳过公钥安装"; return 0; }
+    die "当前 AuthorizedKeysFile 未启用标准用户公钥文件，请先调整配置"
+  fi
+  log "${LOGIN_USER} 尚未配置可用公钥。请从客户端的 .pub 文件复制公钥完整一行。"
+  while true; do
+    read -r -p '粘贴公钥完整一行（不关闭密码时可回车跳过；不要粘贴私钥）: ' public_key
+    if [[ -z "$public_key" ]]; then
+      [[ "$required" == true ]] || { log '已跳过公钥安装，保留原有认证配置。'; return 0; }
+      die "未提供公钥，已取消关闭密码登录"
+    fi
+    if write_public_key "$public_key" "$target" "$user_uid" "$user_gid" "$home"; then break; fi
+  done
+  # 新写入的公钥尚未实测，已有命令行确认不能代替本次验证。
+  KEY_CONFIRMED=false
+}
+
+confirm_key_login() {
+  local answer
+  [[ "$KEY_CONFIRMED" != true ]] || return 0
+  log "当前 SSH 认证配置尚未修改。请保留此会话，另开终端，用公钥登录 ${LOGIN_USER} 验证。"
+  read -r -p '已经实际使用公钥重新登录成功，继续关闭密码登录？(y/N): ' answer
+  if [[ "$answer" =~ ^[Yy]$ ]]; then
+    KEY_CONFIRMED=true
+  else
+    PASSWORD_MODE=keep-password
+    log '本次保留原有 SSH 认证配置，继续其他安全配置；验证公钥登录后可再次运行以关闭密码登录。'
+  fi
 }
 
 preflight() {
@@ -417,7 +504,12 @@ apply_changes() {
   read_current_ports
   select_options
   preflight
-  [[ "$PASSWORD_MODE" != disable-password ]] || check_public_key
+  if [[ "$PASSWORD_MODE" == disable-password ]]; then
+    check_public_key
+    confirm_key_login
+  elif [[ "$ASSUME_YES" != true ]]; then
+    check_public_key false
+  fi
   log "SSH 端口: ${OLD_PORTS[*]} -> ${SSH_PORT}（确认前同时保留旧端口）"
   log "认证: ${PASSWORD_MODE}；防火墙: ${FIREWALL_MODE}；额外放行: ${ALLOW_PORTS[*]:-无}"
   if [[ "$FIREWALL_MODE" != keep ]]; then
