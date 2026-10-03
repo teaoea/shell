@@ -151,12 +151,12 @@ test('matching initplayback key passes through; mismatch clears state and trigge
   assert.equal(stale.has(stateKey), false);
 });
 
-test('matching initplayback request is authenticated, cleaned, re-encrypted and signed locally', () => {
+test('matching initplayback request is authenticated, cleaned, re-encrypted and signed locally without a runtime crypto API', () => {
   const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast',forceAdParameters:'forced'}}};
   const body=makeEncryptedInit(clientKey,encryptKey,player);
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body,cryptoApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body);
   assert.ok(result.output.body instanceof Uint8Array);
   assert.equal(result.output.headers['Content-Length'],undefined);
   assert.equal(result.output.headers['Content-Encoding'],undefined);
@@ -216,7 +216,7 @@ test('raw development events use the shared cache while summaries never expose k
   initPlayback(store,[9,8,7],youtubeUA,{capture_raw:true});
   const entries = JSON.parse(store.get(logCacheKey)).entries;
   assert.deepEqual(entries.map(entry => entry.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
-  assert.match(entries[1].message, /development capture: pass: crypto-unavailable changed=false/);
+  assert.match(entries[1].message, /development capture: pass: invalid-client-key changed=false/);
   assert.ok(entries.every(entry => entry.captureRef));
   assert.ok(entries.every(entry => !entry.message.includes('CQgH')));
 });
