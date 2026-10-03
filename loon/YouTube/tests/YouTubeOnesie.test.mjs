@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
@@ -33,7 +34,7 @@ const makeConfig = ({client=[1,2,3], encrypt=[9,8,7], lifetime=600, enabled=1}={
 };
 const makeInit = key => message(3, concat(message(2, Uint8Array.from([4,5])), message(5, Uint8Array.from(key)), message(6, Uint8Array.from([6])), message(7, Uint8Array.from([7]))));
 
-function execute(source, {store=new Map(), request, response, argument={}}={}) {
+function execute(source, {store=new Map(), request, response, argument={}, cryptoApi}={}) {
   let output, calls = 0;
   const logs = [];
   const context = {
@@ -44,6 +45,7 @@ function execute(source, {store=new Map(), request, response, argument={}}={}) {
     $done(value){output=value;calls++;},
     console:{log(value){logs.push(value);}}
   };
+  if (cryptoApi) context.$crypto = cryptoApi;
   if (response !== undefined) context.$response = response;
   vm.runInNewContext(source, context, {timeout:1000});
   assert.equal(calls, 1);
@@ -57,9 +59,33 @@ function configResponse(store, body=makeConfig(), ua=youtubeUA, argument={}) {
 function logEvent(store, ua=youtubeUA, headers={}) {
   return execute(configSource, {store,request:{url:'https://youtubei.googleapis.com/youtubei/v1/log_event',method:'POST',headers:{'User-Agent':ua,...headers},body:Uint8Array.from([8,1])}});
 }
-function initPlayback(store, key, ua=youtubeUA, argument={}) {
-  return execute(initSource, {store,request:{url:'https://rr5---sn-test.googlevideo.com/initplayback?ack=1&sig=PRIVATE',method:'POST',headers:{'User-Agent':ua},body:makeInit(key)},argument});
+function initPlayback(store, key, ua=youtubeUA, argument={}, body=makeInit(key), cryptoApi) {
+  return execute(initSource, {store,request:{url:'https://rr5---sn-test.googlevideo.com/initplayback?ack=1&sig=PRIVATE',method:'POST',headers:{'User-Agent':ua,'Content-Length':'100','Content-Encoding':'br'},body},argument,cryptoApi});
 }
+
+const cryptoApi = {aes:{
+  encrypt(data,{key,iv}) { const cipher=crypto.createCipheriv('aes-128-ctr',Buffer.from(key),Buffer.from(iv)); return {ciphertext:new Uint8Array(Buffer.concat([cipher.update(Buffer.from(data)),cipher.final()]))}; },
+  decrypt(data,{key,iv}) { const decipher=crypto.createDecipheriv('aes-128-ctr',Buffer.from(key),Buffer.from(iv)); return new Uint8Array(Buffer.concat([decipher.update(Buffer.from(data)),decipher.final()])); }
+}};
+const hmac = (key, ...parts) => new Uint8Array(crypto.createHmac('sha256',Buffer.from(key)).update(Buffer.concat(parts.map(part=>Buffer.from(part)))).digest());
+const aesCtr = (key,iv,data) => cryptoApi.aes.encrypt(data,{key,iv}).ciphertext;
+const readVarint = (bytes,cursor) => { let value=0,factor=1; for(let i=0;i<10;i++){const byte=bytes[cursor.pos++];value+=(byte&127)*factor;if(byte<128)return value;factor*=128;} throw new Error('invalid-varint'); };
+const fields = bytes => { const cursor={pos:0},result=[]; while(cursor.pos<bytes.length){const start=cursor.pos,tag=readVarint(bytes,cursor),no=Math.floor(tag/8),wire=tag&7;let dataStart=cursor.pos,dataEnd=cursor.pos,value;if(wire===0){value=readVarint(bytes,cursor);dataEnd=cursor.pos;}else if(wire===2){const length=readVarint(bytes,cursor);dataStart=cursor.pos;cursor.pos+=length;dataEnd=cursor.pos;}else throw new Error('unsupported-wire');result.push({no,wire,start,end:cursor.pos,dataStart,dataEnd,value});}return result; };
+const field = (bytes,no,wire=2) => { const item=fields(bytes).find(entry=>entry.no===no&&entry.wire===wire); return item && bytes.subarray(item.dataStart,item.dataEnd); };
+const makeEncryptedInit = (clientKey,encryptKey,player,{tamper=false,preroll=true}={}) => {
+  const iv=Uint8Array.from({length:16},(_,i)=>i+1);
+  const plain=concat(message(1,new TextEncoder().encode('https://youtubei.googleapis.com/youtubei/v1/player')),message(3,new TextEncoder().encode(JSON.stringify(player))));
+  const encrypted=aesCtr(clientKey.subarray(0,16),iv,plain);
+  const mac=hmac(clientKey.subarray(16),encrypted,iv); if(tamper)mac[0]^=255;
+  const envelope=concat(message(2,encrypted),message(5,encryptKey),message(6,iv),message(7,mac),scalar(13,preroll?1:0));
+  return message(3,envelope);
+};
+const decryptPlayer = (body,clientKey) => {
+  const envelope=field(body,3),encrypted=field(envelope,2),iv=field(envelope,6),mac=field(envelope,7);
+  assert.deepEqual(mac,hmac(clientKey.subarray(16),encrypted,iv));
+  const plain=cryptoApi.aes.decrypt(encrypted,{key:clientKey.subarray(0,16),iv});
+  return {player:JSON.parse(new TextDecoder().decode(field(plain,3))),preroll:fields(envelope).find(entry=>entry.no===13)?.value};
+};
 
 test('plugin routes the YouTube-only Onesie lifecycle to two function-specific scripts', () => {
   assert.ok(plugin.includes('onesie_enabled = switch,true'));
@@ -118,6 +144,33 @@ test('matching initplayback key passes through; mismatch clears state and trigge
   assert.equal(result.output.response.headers['Content-Type'], 'application/x-protobuf');
   assert.equal(result.output.response.body.length, 0);
   assert.equal(stale.has(stateKey), false);
+});
+
+test('matching initplayback request is authenticated, cleaned, re-encrypted and signed locally', () => {
+  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+  const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+  const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast',forceAdParameters:'forced'}}};
+  const body=makeEncryptedInit(clientKey,encryptKey,player);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body,cryptoApi);
+  assert.ok(result.output.body instanceof Uint8Array);
+  assert.equal(result.output.headers['Content-Length'],undefined);
+  assert.equal(result.output.headers['Content-Encoding'],undefined);
+  assert.equal(result.output.headers['User-Agent'],youtubeUA);
+  const cleaned=decryptPlayer(result.output.body,clientKey);
+  assert.equal(cleaned.player.context.adSignalsInfo,undefined);
+  assert.equal(cleaned.player.playbackContext.contentPlaybackContext.adParams,undefined);
+  assert.equal(cleaned.player.playbackContext.contentPlaybackContext.forceAdParameters,undefined);
+  assert.equal(cleaned.player.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd,true);
+  assert.equal(cleaned.preroll,0);
+});
+
+test('initplayback crypto authentication failure passes through without changing the request', () => {
+  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+  const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+  const body=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{}}},{tamper:true});
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body,cryptoApi);
+  assert.deepEqual(Object.keys(result.output),[]);
+  assert.equal(store.has(stateKey),true);
 });
 
 test('fallback can be disabled, and absent config never blocks playback', () => {

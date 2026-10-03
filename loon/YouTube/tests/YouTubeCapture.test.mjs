@@ -43,7 +43,7 @@ test('capture is opt-in, main plugin reads request bodies only for its opt-in re
   assert.ok(new RegExp(playerLine.split(' ')[1]).test(api));
   assert.ok(!regex.test('https://youtubei.googleapis.com.evil/youtubei/v1/player'));
   const onesie=plugin.split('\n').find(x=>x.includes('tag=YouTube Onesie 配置刷新'));
-  const init=plugin.split('\n').find(x=>x.includes('tag=YouTube initplayback 本地校验'));
+  const init=plugin.split('\n').find(x=>x.includes('tag=YouTube initplayback 广告协商清理'));
   const onesieRegex=new RegExp(onesie.split(' ')[1]),initRegex=new RegExp(init.split(' ')[1]);
   assert.ok(onesie.includes('enable={onesie_enabled}')&&onesie.includes('requires-body=true,binary-body-mode=true'));
   assert.ok(init.includes('enable={onesie_enabled}')&&init.includes('requires-body=true,binary-body-mode=true'));
