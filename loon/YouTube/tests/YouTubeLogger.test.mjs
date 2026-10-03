@@ -42,6 +42,10 @@ function play(store, debug = false, failure = '') {
     $argument: {script_debug:debug,log_enabled:true,log_level:"debug"}
   }, failure);
 }
+function events(store) {
+  const state=JSON.parse(store.get(cacheKey)||'{"entries":[]}');
+  return state.entries.map(summary=>{if(!summary.captureRef)return {summary,capture:null};const text=Array.from({length:summary.captureRef.chunks},(_,i)=>store.get(summary.captureRef.prefix+i)).join('');return {summary,capture:JSON.parse(text)};});
+}
 
 test('main plugin contains ad rules, function-specific Onesie scripts and one disabled logger entry; no separate plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
@@ -80,9 +84,9 @@ test('modern playback logger captures initplayback requests and config responses
   assert.deepEqual(rows.map(row => [row.source,row.endpoint,row.phase]), [
     ['YouTubeLogger','initplayback','request'],['YouTubeLogger','config','response']
   ]);
-  const data = JSON.parse(request(store, '/download.json').body);
-  assert.equal(data.events[0].capture.request.url, init);
-  assert.equal(data.events[1].capture.responseBefore.body.bytes, 2);
+  const data = events(store);
+  assert.equal(data[0].capture.request.url, init);
+  assert.equal(data[1].capture.responseBefore.body.bytes, 2);
 });
 test('shared exports retain function-specific Onesie summaries', () => {
   const session = 'onesie-session';
@@ -90,28 +94,30 @@ test('shared exports retain function-specific Onesie summaries', () => {
     [configKey, JSON.stringify({enabled:false,session})],
     [cacheKey, JSON.stringify({session,captureBytes:0,entries:[
       {source:'YouTubeOnesieConfig',version:'1.0.0',endpoint:'config',level:'info',time:'2026-10-04T01:00:00.000Z',phase:'response',message:'updated: lifetime_seconds=600 hot_config=true'},
-      {source:'YouTubeInitPlayback',version:'1.1.1',endpoint:'initplayback',level:'warn',time:'2026-10-04T01:00:01.000Z',phase:'request',message:'mismatch: config cleared refresh=true'}
+      {source:'YouTubeInitPlayback',version:'1.1.2',endpoint:'initplayback',level:'warn',time:'2026-10-04T01:00:01.000Z',phase:'request',message:'mismatch: config cleared refresh=true'}
     ]})]
   ]);
-  const data = JSON.parse(request(store, '/download.json').body);
-  assert.deepEqual(data.events.map(event => event.summary.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
-  assert.match(request(store, '/download.log').body, /YouTubeInitPlayback 1\.1\.1/);
+  assert.deepEqual(events(store).map(event => event.summary.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
+  assert.match(request(store).body, /保留 2 条/);
 });
 test('manual entry points to the local page without silently enabling recording', () => {
   const store = new Map();
   const r = execute(logger, store);
   assert.ok(r.output.content.includes(base));
+  assert.ok(r.output.content.includes('复现后下载日志'));
   assert.equal(r.notices[0][3].openUrl, base + '/');
   assert.equal(store.size, 0);
 });
-test('recording is off by default; export supplies an actual attachment and empty-state explanation', () => {
+test('recording is off by default and only the complete log export is exposed', () => {
   const store = new Map();
   play(store);
   assert.equal(store.size, 0);
-  const r = request(store, '/download.log');
-  assert.equal(r.status, 200);
-  assert.match(r.headers['Content-Disposition'], /^attachment; filename="YouTube-.*\.log"$/);
-  assert.ok(r.body.includes('No entries.'));
+  const rootPage=request(store);
+  assert.equal(rootPage.status,200);assert.ok(rootPage.body.includes('导出完整日志文件 .log'));
+  assert.equal((rootPage.body.match(/href="\/export"/g)||[]).length,1);
+  assert.ok(!rootPage.body.includes('.json')&&!rootPage.body.includes('export-feed'));
+  assert.equal(request(store,'/download.log').status,303);
+  assert.equal(request(store,'/download.json').status,404);
 });
 test('start, collect with console off, pause and export playback results without request secrets', () => {
   const store = new Map();
@@ -122,10 +128,8 @@ test('start, collect with console off, pause and export playback results without
   assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 1);
   request(store, '/pause', 'POST');
   play(store);
-  const exportLog = request(store, '/download.log');
-  assert.ok(exportLog.body.includes('Entries: 1'));
-  assert.ok(exportLog.body.includes('[YouTubePlaybackAds 2.1.0] player changed'));
-  assert.ok(!exportLog.body.includes('PRIVATE') && !exportLog.body.includes('SECRET'));
+  assert.equal(JSON.parse(store.get(cacheKey)).entries.length,1);
+  assert.match(JSON.parse(store.get(cacheKey)).entries[0].message,/changed/);
 });
 test('playback and stream summaries append to the same buffer and one file', () => {
   const store = new Map();
@@ -138,12 +142,8 @@ test('playback and stream summaries append to the same buffer and one file', () 
     $argument:{script_debug:false, log_enabled:true, log_level:"debug", ump_enabled:true, ump_mode:'inspect'}
   });
   assert.equal(Object.keys(r.output).length, 0);
-  const exported = request(store, '/download.log').body;
-  assert.ok(exported.includes('Entries: 2'));
-  assert.ok(exported.includes('[YouTubeStreamAds 1.4.0] ump pass: mode=inspect'));
-  assert.ok(exported.includes('parts=21:1'));
-  assert.ok(!exported.includes('PRIVATE'));
   const entries = JSON.parse(store.get(cacheKey)).entries;
+  assert.equal(entries.length,2);assert.ok(entries[1].message.includes('pass: mode=inspect'));assert.ok(entries[1].message.includes('parts=21:1'));
   assert.deepEqual(entries.map(r => r.source), ['YouTubePlaybackAds', 'YouTubeStreamAds']);
   assert.ok(!store.has('ytads.logger.YouTubePlaybackAds.v1') && !store.has('ytads.logger.YouTubeStreamAds.v1'));
 });
@@ -181,9 +181,8 @@ test('each save level includes its own severity and higher levels only', () => {
     const levels = JSON.parse(store.get(cacheKey)).entries.map(r => r.level);
     const all = ['debug','info','warn','error'];
     assert.deepEqual(levels, all.slice(all.indexOf(minimum)));
-    const exported = request(store, '/download.log').body;
-    assert.ok(!exported.includes('SECRET'));
-    assert.ok(exported.includes('[ERROR]'));
+    assert.ok(!JSON.stringify(JSON.parse(store.get(cacheKey)).entries).includes('SECRET'));
+    assert.ok(levels.includes('error'));
   }
 });
 
@@ -192,8 +191,8 @@ test('old per-source caches migrate once to one cache without duplicating export
   for (const source of ['YouTubePlaybackAds','YouTubeStreamAds']) store.set(`ytads.logger.${source}.v1`, JSON.stringify({session:'legacy-session',entries:[{
     time:'2026-10-02T01:00:00.000Z',version:'1.2.1',endpoint:source === 'YouTubePlaybackAds' ? 'player' : 'ump',message:'changed: removed=1'
   }]}));
-  assert.ok(request(store, '/download.log').body.includes('Entries: 2'));
-  assert.ok(request(store, '/download.log').body.includes('Entries: 2'));
+  assert.ok(request(store).body.includes('保留 2 条'));
+  assert.ok(request(store).body.includes('保留 2 条'));
   assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 2);
   assert.ok(!store.has('ytads.logger.YouTubePlaybackAds.v1') && !store.has('ytads.logger.YouTubeStreamAds.v1'));
 });
@@ -251,7 +250,7 @@ test('clear rotates session and preserves other scripts storage', () => {
   assert.equal(store.get('unrelated'), 'keep');
   // An in-flight writer from the previous session cannot resurrect old logs.
   store.set(cacheKey, old);
-  assert.ok(request(store, '/download.log').body.includes('Entries: 0'));
+  assert.ok(request(store).body.includes('保留 0 条'));
 });
 test('clearing can recover corrupt owned storage', () => {
   const store = new Map([[configKey, '{invalid']]);
@@ -294,10 +293,11 @@ test('export ignores stale sessions and malformed records and sorts timestamps',
   store.set(cacheKey, JSON.stringify({session,entries:[row('2026-10-02T02:00:00.000Z'),row('2026-10-02T01:00:00.000Z'), {...row('2026-10-02T01:00:00.000Z'),message:'bad\nline'}]}));
   const valid = store.get(cacheKey);
   store.set(cacheKey, JSON.stringify({session:'stale',entries:[row('2026-10-02T00:00:00.000Z')]}));
-  assert.ok(request(store, '/download.log').body.includes('Entries: 0'));
+  assert.ok(request(store).body.includes('保留 0 条'));
   store.set(cacheKey, valid);
-  const body = request(store, '/download.log').body;
-  assert.ok(body.includes('Entries: 2'));
-  assert.ok(body.indexOf('01:00:00') < body.indexOf('02:00:00'));
-  assert.ok(!body.includes('bad\nline'));
+  request(store,'/pause','POST');
+  const manifest=JSON.parse(request(store,'/export-manifest.json').body);
+  assert.equal(manifest.rows.length,2);
+  assert.ok(manifest.rows[0].time.includes('01:00:00')&&manifest.rows[1].time.includes('02:00:00'));
+  assert.ok(!JSON.stringify(manifest.rows).includes('bad\\nline'));
 });

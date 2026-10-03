@@ -25,7 +25,17 @@ function page(store,path,method='GET') {
   return run('YouTubeLogger',store,{$request:{url:'http://youtube-logs.invalid/'+path,method}}).result.response;
 }
 function started() {const store=new Map();assert.equal(page(store,'start','POST').status,303);return store;}
-function exportData(store){return JSON.parse(page(store,'download.json').body);}
+function checksum(text){let hash=2166136261;for(let i=0;i<text.length;i++){hash^=text.charCodeAt(i);hash=Math.imul(hash,16777619);}return 'fnv1a32-utf16:'+('00000000'+(hash>>>0).toString(16)).slice(-8);}
+function exportData(store){
+  const config=JSON.parse(store.get(configKey)||'null'),state=JSON.parse(store.get(indexKey)||'null');
+  const rows=state&&config&&state.session===config.session?state.entries:[],issues=[];
+  const events=rows.map(summary=>{
+    if(!summary.captureRef)return {summary,capture:null};
+    try{const text=Array.from({length:summary.captureRef.chunks},(_,i)=>store.get(summary.captureRef.prefix+i)).join('');if(text.length!==summary.captureRef.chars||checksum(text)!==summary.captureRef.checksum)throw new Error();return {summary,capture:JSON.parse(text)};}
+    catch{issues.push({time:summary.time,source:summary.source});return {summary,capture:null,captureError:'capture-unavailable-or-corrupt'};}
+  });
+  return {events,completeness:{allReferencedSamplesReadable:issues.length===0,issues,stoppedDueToLimitOrError:!!config?.haltReason}};
+}
 function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":{"id":"ORIGINAL"}}',extra={}) {
   return run('YouTubePlaybackAds',store,{
     $request:{url:api,method:'POST',headers:{Authorization:'Bearer SECRET','Content-Encoding':'br'}},
@@ -216,19 +226,20 @@ test('raw capture keeps exception details in development export without leaking 
   assert.ok(c.responseBefore.body.data.includes('SECRET'));
   assert.ok(!r.logs.join('\n').includes('SECRET'));
 });
-test('missing runtime body is explicit; downloads are attachments; unmatched requests stay untouched',()=>{
+test('missing runtime body is explicit; legacy JSON routes are gone; unmatched requests stay untouched',()=>{
   const store=started();
   run('YouTubeLogger',store,{$request:{url:api,method:'POST',headers:{}}});
   assert.equal(exportData(store).events[0].capture.request.body.available,false);
-  const response=page(store,'download.json');
-  assert.match(response.headers['Content-Disposition'],/attachment; filename="YouTube-.*\.json"/);
+  assert.equal(page(store,'download.json').status,404);
+  assert.equal(page(store,'download-feed.json').status,404);
+  assert.equal(page(store,'export-feed').status,404);
   const before=store.get(indexKey);
   const r=run('YouTubeLogger',store,{$request:{url:'https://example.com/',method:'GET'}});
   assert.equal(Object.keys(r.result).length,0);
   assert.equal(store.get(indexKey),before);
 });
 
-test('feed request and before/after response samples share the existing cache and filtered export',()=>{
+test('feed request and before/after response samples share the one full-chain cache',()=>{
   const store=started();
   sources.YouTubeFeedAds=fs.readFileSync(new URL('YouTubeFeedAds.js',root),'utf8');
   const url='https://youtubei.googleapis.com/youtubei/v1/browse?key=FEED';
@@ -237,21 +248,20 @@ test('feed request and before/after response samples share the existing cache an
   run('YouTubeFeedAds',store,{$request:{url,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/json'},body}});
   player(store);page(store,'mark-ad','POST');
   const all=exportData(store);assert.equal(all.events.length,4);
-  const feed=JSON.parse(page(store,'download-feed.json').body);
-  assert.equal(feed.exportScope,'feed-with-user-marks');assert.equal(feed.events.length,3);
-  assert.equal(feed.events[0].capture.source,'YouTubeFeedAds');assert.equal(feed.events[0].capture.endpoint,'browse');
-  assert.equal(feed.events[1].capture.responseBefore.body.data,body);
-  assert.equal(feed.events[1].capture.responseAfter.changed,true);
-  assert.equal(JSON.parse(feed.events[1].capture.responseAfter.body.data).contents.length,1);
+  assert.equal(all.events[0].capture.source,'YouTubeFeedAds');assert.equal(all.events[0].capture.endpoint,'browse');
+  assert.equal(all.events[1].capture.responseBefore.body.data,body);
+  assert.equal(all.events[1].capture.responseAfter.changed,true);
+  assert.equal(JSON.parse(all.events[1].capture.responseAfter.body.data).contents.length,1);
+  assert.equal(all.events[2].capture.source,'YouTubePlaybackAds');
   assert.equal([...store.keys()].filter(k=>k==='ytads.logger.entries.v2').length,1);
   assert.ok(![...store.keys()].some(k=>k==='ytads.logger.YouTubeFeedAds.v1'));
 });
 
-test('large export reads bounded chunks and browser assembles exactly one complete JSON file',async()=>{
+test('large export reads bounded chunks and browser assembles exactly one complete full-chain log file',async()=>{
   const store=started();
   const original='{"playabilityStatus":{},"data":"'+'x'.repeat(4500000)+'"}';
   player(store,original);page(store,'pause','POST');
-  assert.equal(page(store,'download.json').status,413,'direct response never silently truncates');
+  assert.equal(page(store,'download.json').status,404,'JSON log interface is removed');
   const html=page(store,'export');assert.equal(html.status,200);
   assert.ok(html.headers['Content-Security-Policy'].includes("connect-src 'self'"));
   const script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
@@ -261,13 +271,11 @@ test('large export reads bounded chunks and browser assembles exactly one comple
     URL:{createObjectURL(blob){savedBlob=blob;return 'blob:local-test';}},
     async fetch(path){const r=page(store,path.replace(/^\//,''));sizes.push(Buffer.byteLength(r.body));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}
   },{timeout:5000});
-  assert.equal(save.hidden,false);assert.ok(save.download.endsWith('.json'));
-  const exported=JSON.parse(await savedBlob.text());assert.equal(exported.events.length,1);
-  assert.equal(exported.events[0].capture.responseBefore.body.data,original);
-  assert.equal(exported.events[0].capture.responseAfter.body.reference,'responseBefore.body');
-  assert.equal(exported.completeness.allReferencedSamplesReadable,true);
+  assert.equal(save.hidden,false);assert.ok(save.download.endsWith('.log'));
+  const exported=await savedBlob.text();assert.match(exported,/YouTube full diagnostic log/);assert.match(exported,/EVENT 1/);
+  assert.ok(exported.includes(original));assert.match(exported,/Reference: responseBefore\.body/);assert.match(exported,/All-Referenced-Samples-Readable: true/);
   assert.ok(Math.max(...sizes)<1048576,'no large response generated by chunk route');
-  assert.equal(page(store,'download.log').status,200,'summaries remain available');
+  assert.equal(page(store,'download.log').status,303,'old log bookmark redirects to the sole exporter');
 });
 
 test('chunk exports require paused same-session records and reject missing, invalid and foreign chunks',()=>{
@@ -296,12 +304,14 @@ test('browser export refuses checksum-corrupt bytes instead of offering an incom
  assert.equal(blob,undefined);assert.equal(save.hidden,true);assert.ok(status.textContent.includes('校验失败'));
 });
 
-test('filtered browser export resolves feed chunks from the same cache, excluding media/player samples',async()=>{
+test('single browser export includes browse, refresh, player and binary media samples from the same cache',async()=>{
  const store=started();sources.YouTubeFeedAds=fs.readFileSync(new URL('YouTubeFeedAds.js',root),'utf8');
  player(store);run('YouTubeFeedAds',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/browse'},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"contents":[{"adSlotRenderer":{}}]}'}});
- page(store,'pause','POST');const html=page(store,'export-feed'),script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
+ run('YouTubeLogger',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/config',method:'POST'},$response:{status:200,headers:{'Content-Type':'application/x-protobuf'},body:new Uint8Array([8,1])}});
+ run('YouTubeStreamAds',store,{$request:{url:media,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:new Uint8Array([21,3,1,2,3])}});
+ page(store,'pause','POST');const html=page(store,'export'),script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
  const status={textContent:''},save={hidden:true};let blob;
  await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:x=>{blob=x;return 'blob:local';}},async fetch(path){const r=page(store,path.slice(1));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}},{timeout:5000});
- assert.equal(save.hidden,false);assert.ok(save.download.startsWith('YouTube-Feed-'));
- const exported=JSON.parse(await blob.text());assert.equal(exported.exportScope,'feed-with-user-marks');assert.equal(exported.events.length,1);assert.equal(exported.events[0].capture.source,'YouTubeFeedAds');assert.equal(exported.events[0].capture.responseAfter.changed,true);
+ assert.equal(save.hidden,false);assert.ok(save.download.startsWith('YouTube-')&&save.download.endsWith('.log'));
+ const exported=await blob.text();assert.match(exported,/Source: YouTubePlaybackAds/);assert.match(exported,/Source: YouTubeFeedAds/);assert.match(exported,/Source: YouTubeLogger/);assert.match(exported,/Endpoint: config/);assert.match(exported,/Source: YouTubeStreamAds/);assert.match(exported,/Encoding: base64/);assert.match(exported,/FQMBAgM=/);assert.match(exported,/Response-After:/);
 });

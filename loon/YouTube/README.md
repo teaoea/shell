@@ -83,7 +83,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeInitPlay
 [YouTubePlayerRequest 1.0.0] player changed: context_ad_signals=1 playback_ad_params=1 inline_no_ad=1
 [YouTubeAdBreak 1.0.0] ad_break blocked: empty-protobuf status=200
 [YouTubeOnesieConfig 1.0.0] config updated: lifetime_seconds=600 hot_config=true
-[YouTubeInitPlayback 1.1.1] initplayback changed: authenticated=true context_ad_signals=1 playback_ad_params=1 inline_no_ad=1
+[YouTubeInitPlayback 1.1.2] initplayback changed: authenticated=true context_ad_signals=1 playback_ad_params=1 inline_no_ad=1
 [YouTubeShortsAds 1.0.0] reel_watch_sequence changed: removed=1 format=protobuf
 [YouTubePlaybackAds 2.1.0] get_watch pass: removed=0 tracking_removed=0 background_modified=0 format=protobuf
 ```
@@ -92,7 +92,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeInitPlay
 - `pass: removed=0` 表示没有可清理的已识别广告字段，也可能没有识别到已知 Player 结构。
 - `pass: ...` 错误或格式原因表示整个响应未修改。
 - 没有日志时，先确认新 JS 已下载及控制台日志已开启，再查看是否出现匹配路径的请求。不要求每次播放必然访问 `youtubei.googleapis.com`。
-- 控制台及普通摘要只记录接口名、格式、计数及固定错误原因；手动开启开发抓包后，JSON 文件包含完整 URL、请求头和正文。Loon 自带的 debug 请求记录仍可能包含敏感内容，分享前请遮盖。
+- 控制台及未开启开发抓包时的普通记录只含接口名、格式、计数及固定错误原因；手动开启开发抓包后，唯一导出的 `.log` 包含完整 URL、请求头、文本正文和 Base64 二进制。Loon 自带的 debug 请求记录也可能包含敏感内容，分享前请检查。
 
 ## 信息流赞助卡片清理
 
@@ -166,7 +166,7 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 1. 发布后更新主插件和 JS；完全退出 YouTube，再打开。先观察首页赞助卡片是否消失。
 2. 仍有卡片时，在主插件打开“日志工具”“开发抓包”，关闭“UMP 试验处理”。抓首页接口不需要 UMP；关闭它能减少无关媒体样本和播放等待。
 3. Safari 打开 `http://youtube-logs.invalid/`，先保留需要的旧记录，然后清空并开始记录。回到 YouTube 首页，下拉刷新一次，让赞助卡片出现；不必点开视频。
-4. 回到日志页面暂停，选择“导出信息流开发记录 .json（排查首页赞助卡片）”。等待合成完成后保存一个 JSON 文件。它从同一缓存筛选 `YouTubeFeedAds` 请求、响应及人工标记，不建立第二套日志缓存。
+4. 回到日志页面暂停，选择“导出完整日志文件 .log”。该文件同时包含 `browse/next/search` 信息流、刷新配置和播放链路，不再单独生成信息流文件。
 5. 先确认文件能作为 JSON 完整打开，事件中有 `endpoint: "browse"`（或 `next/search`）、`phase: "response"`，且 `responseBefore.body.available` 为 `true`。如果这些记录仍缺失，应先检查脚本更新、MitM 和实际请求路径。未知 EML 卡片需要该响应样本才能继续适配。
 
 本次实际响应的离线回放日志（不是手机界面实测）：
@@ -210,25 +210,25 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 - 原始样本带长度与 FNV-1a UTF-16 校验值，导出时检查块、长度和校验。校验是存储一致性检查，不是密码学完整性保证。丢失/损坏样本单独标记，不丢弃其他可读记录。
 - 页面可添加“正在播放广告”或“正在播放正片”的人工标记，用时间比较两个状态。标记是用户观察，不代表脚本已识别广告。
 
-**开发 JSON 会包含完整播放签名、请求头，可能含 Cookie、Authorization 或账号相关数据。数据只在本机保存，插件没有自动上传；分享开发文件前应检查敏感内容。**普通 `.log` 仍只包含摘要与标记。
+**完整 `.log` 会包含播放签名、请求头和正文，可能含 Cookie、Authorization 或账号相关数据。数据只在本机保存，插件没有自动上传；分享前应检查敏感内容。**未开启“开发抓包”时，同一出口只能导出已保存的摘要和标记，无法补回之前未保存的正文。
 
 ### 开发抓包操作
 
-1. 更新主插件和九份 JS。开发记录要求 `YouTubeFeedAds.js` 为 2.0.0、`YouTubePlayerRequest.js` 为 1.0.0、`YouTubePlaybackAds.js` 为 2.1.0、`YouTubeAdBreak.js` 为 1.0.0、`YouTubeShortsAds.js` 为 1.0.0、`YouTubeStreamAds.js` 为 1.4.0、`YouTubeOnesieConfig.js` 为 1.0.0、`YouTubeInitPlayback.js` 为 1.1.1、`YouTubeLogger.js` 为 1.8.0。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
+1. 更新主插件和九份 JS。开发记录要求 `YouTubeFeedAds.js` 为 2.0.0、`YouTubePlayerRequest.js` 为 1.0.0、`YouTubePlaybackAds.js` 为 2.1.0、`YouTubeAdBreak.js` 为 1.0.0、`YouTubeShortsAds.js` 为 1.0.0、`YouTubeStreamAds.js` 为 1.4.0、`YouTubeOnesieConfig.js` 为 1.0.0、`YouTubeInitPlayback.js` 为 1.1.2、`YouTubeLogger.js` 为 1.9.0。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
 2. 主插件开启“日志工具”和“开发抓包”，选择容量。要取得媒体响应，**还必须开启“UMP 试验处理”并先选择 `inspect`**；关闭 UMP 响应入口时仍能取得开发请求，但不会取得媒体响应。普通摘要级别不会过滤开发样本。
 3. Safari 输入 **`http://youtube-logs.invalid/`**，或手动运行主插件的“ YouTube 日志入口 ”后点通知。地址由 Loon 在本地直接响应，不需要额外 MitM。先导出需要保留的旧记录；需要干净样本时清空，再点“开始记录”。
 4. 重现一次广告和一次正常播放。在相近时间添加广告/正片标记，减少其他播放、预览或自动播放，以便比较样本。切换 App 添加标记会有时间误差，不把它当作精确的广告边界。
-5. 回到页面暂停记录，点击 **“导出完整开发记录 .json（合成一个文件）”**，等待显示文件已生成，再点击“保存日志文件”，通过 Safari 保存到“文件”。也可另外下载 `.log` 快速查看摘要；开发 JSON 本身包含摘要，不要求下载两个文件。
-6. 查看 JSON 中的 `stoppedReason`、`completeness.issues` 和每个事件的 `captureError` / 正文 `available` 字段。未修改响应的 `responseAfter.body.reference` 指向 `responseBefore.body`；修改响应会同时保存两个正文。
+5. 回到页面暂停记录，只点击 **“导出完整日志文件 .log（浏览、刷新、播放全链路）”**。等待显示文件已生成，再点击“保存日志文件”，通过 Safari 保存到“文件”。这是唯一的用户日志出口。
+6. 查看文件头的 `Stopped-Reason`，每个 `EVENT` 的 `Capture-Error`、各正文的 `Available/Reason`，以及末尾 `All-Referenced-Samples-Readable`。未修改响应的正文会用 `Reference` 指向原响应；修改响应会同时保存修改前后正文。
 7. 复现后关闭“开发抓包”。全部停止新增时关闭“日志工具”；已有样本保留。页面清空会删除本项目索引、已索引原始样本和旧日志缓存，保留其他脚本数据。
 
 旧摘要没有保存过正文，不能恢复成原始二进制，需要用新模式重新录制。两次抓包都需先检查完整性，不把一次 `200 OK` 当成所有数据都已捕获。
 
 ### 单文件分块导出
 
-此前直接把整个开发 JSON 放进一个脚本响应，大文件可能在设备上无法完整生成或保存；用户提供的文件已出现不完整 JSON，但仅凭文件无法确定截断发生在哪一步。当前页面会先读取一个小索引，再逐块读取本机样本，在浏览器中检查长度、校验值和元数据，最终合成 **一个 JSON 文件**。导出前必须暂停记录，并保持 Loon 开启；会话变化、样本块缺失或校验失败时不提供保存按钮，保留原有缓存供重试。
+此前直接把整个开发数据放进一个脚本响应，大文件可能在设备上无法完整生成或保存。当前页面会先读取一个小索引，再逐块读取本机样本，在浏览器中检查长度、校验值和元数据，最终合成 **一个完整 `.log` 文件**。导出前必须暂停记录，并保持 Loon 开启；会话变化、样本块缺失或校验失败时不提供保存按钮，保留原有缓存供重试。
 
-“导出完整开发记录”包含所有来源；“导出信息流开发记录”仅筛选首页/推荐/搜索来源及人工标记。二者使用同一个缓存。已有直接下载地址 `/download.json` 和 `/download-feed.json` 仍可导出不超过 4 MiB 的文件；超过时返回明确错误并引导使用页面上的分块导出，不返回截断正文。4 MiB 是保守的响应大小上限，不能证明所有设备都支持该大小。
+唯一导出包含所有已匹配来源：`browse/next/search` 浏览与刷新、`log_event/config` 配置协商、`player/get_watch/initplayback/ad_break` 播放链路、Shorts 与 UMP 媒体事件。旧 `/download.log` 地址只跳转到这个完整导出；`/download.json`、`/download-feed.json` 和信息流专用出口已移除。页面内部使用的小型清单和分块接口只负责本机传输，不会作为日志文件提供给用户。
 
 浏览器分块合成没有读取 Loon 未捕获的数据，也不能修复已经下载的不完整文件。Safari 内存、后台切换和保存行为仍需要实机验证。完整开发记录可能较大，排查首页广告优先使用信息流导出；导出失败时不要清空缓存。
 
@@ -271,7 +271,7 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 [YouTubeStreamAds 1.4.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
 ```
 
-这里的 `20:1` 表示类型 20 出现 1 次；`ad_prefetch` 是符合两个条件的元数据条目数。控制台和普通摘要不输出媒体内容、视频 ID、签名、token 或上下文原文；开发 JSON 会保留运行时可见的原始数据。
+这里的 `20:1` 表示类型 20 出现 1 次；`ad_prefetch` 是符合两个条件的元数据条目数。控制台和普通摘要不输出媒体内容、视频 ID、签名、token 或上下文原文；开启开发抓包后，完整 `.log` 会保留运行时可见的原始数据。
 
 ### 片头广告完整样本结论
 
@@ -284,6 +284,8 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 本地脚本现在具备请求侧 HMAC 校验、AES-CTR 解密、广告协商清理、重新加密和签名逻辑；它仍不解密或重建返回的 UMP 媒体流，也不删除广告媒体片段。因此，`changed: authenticated=true` 只证明内层 Player 请求已在发送前完成改写，实际广告是否消失仍取决于服务端是否接受这些请求标志。失配回退不是按 `ctier=L` 阻断媒体，但仍可能让客户端多做一次协商；若出现等待，可关闭“新版播放链路去广告”。
 
 2026-10-03 的实机导出进一步确认，`YouTubeInitPlayback 1.1.0` 命中了十条 `initplayback` 请求，但每条都记录 `pass: unsupported-wire`，没有产生 `requestAfter`，所以该版本实际上没有改写任何一条 Onesie 请求。1.1.1 为解密后的内层 Protobuf 增加 wire type 3/4 group 的配对读取；未知 group 连同起止标记按原字节保留，只允许修改独立的 JSON 正文字段。group 不闭合、结束字段不匹配、出现协议无效 wire type 或任何后续校验失败时仍整条原样放行。本地测试能证明这一结构可被安全保留，但片头广告是否消失仍需更新后的实机结果确认。
+
+随后一轮实机日志确认 1.1.1 已加载，但六条 `initplayback` 仍全部为 `changed=false`。当时单独导出的信息流文件不含播放请求，无法区分下一处失败阶段。1.1.2 把安全的固定处理结果写入事件摘要，并为外层、加密信封、解密正文、内层 JSON、解密和加密分别增加固定阶段前缀；可看到例如 `decrypted-unsupported-wire`、`inner-json-failed` 或 `decrypt-failed`。1.9.0 日志工具取消信息流专用文件，统一导出浏览、刷新和播放全链路，避免再次遗漏 `initplayback/player/UMP`。
 
 之前空 502 拦截导致几秒黑屏，当前实现不重新采用这一方法。**广告预取提示清理不等于删除正在播放的广告。单靠 Content-Type 不能定位广告，也无法从纯广告响应生成缺失的正片。**
 

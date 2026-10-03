@@ -1,4 +1,4 @@
-/* YouTubeLogger 1.8.0 — shared diagnostic cache, levels and .log export.
+/* YouTubeLogger 1.9.0 — shared diagnostic cache and one complete full-chain .log export.
  * No network calls, filesystem assumptions, third-party code, or automatic uploads.
  * Enabled manually in the main plugin; no separate Logger plugin.
  */
@@ -8,7 +8,7 @@
   var CACHE = "ytads.logger.entries.v2";
   var SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback", "YouTubeLogger"];
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "1.8.0";
+  var VERSION = "1.9.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -273,13 +273,13 @@
           "Loon storage has no atomic append here; concurrent writers may lose index entries.",
           "Script timeouts, TLS failures and requests bypassing MitM are not observed."]}, events:events};
   }
-  function exportPage(feedOnly) {
-    // Read small owned chunks, then assemble one JSON file in the browser.
-    // No remote scripts, uploads or additional log caches.
-    var script = '(' + browserExport.toString() + ')(' + (feedOnly ? 'true' : 'false') + ');';
+  function exportPage() {
+    // Read small owned chunks, then assemble one complete text log in the browser.
+    // The manifest and chunks are local transport details, not separate log files.
+    var script = '(' + browserExport.toString() + ')();';
     return response(200, '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 导出</title><p id="status">正在读取本地记录，请保持 Loon 开启…</p><a id="save" hidden>保存日志文件</a><p>文件生成后点击保存；Safari 也可通过分享菜单存储到“文件”。</p><script>' + script + '</script></html>', "text/html; charset=utf-8", {"Content-Security-Policy":"default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"});
   }
-  async function browserExport(feedOnly) {
+  async function browserExport() {
     var status = document.getElementById("status"), save = document.getElementById("save");
     try {
       async function get(path) {
@@ -292,46 +292,70 @@
         for (var i = 0; i < text.length; i++) {hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619);}
         return "fnv1a32-utf16:" + ("00000000" + (hash >>> 0).toString(16)).slice(-8);
       }
-      var manifest = await get(feedOnly ? "/export-manifest-feed.json" : "/export-manifest.json");
-      var rows = manifest.rows, data = manifest.data, parts = [];
+      function value(v) { if (v === null) return "null"; if (v === undefined) return "unavailable"; return typeof v === "string" ? v.replace(/\r/g,"\\r").replace(/\n/g,"\\n") : String(v); }
+      function structure(label, v, lines, depth) {
+        var indent = new Array(depth + 1).join("  ");
+        if (v === null || v === undefined || typeof v !== "object") { lines.push(indent + label + ": " + value(v)); return; }
+        if (Array.isArray(v)) { lines.push(indent + label + ": array(" + v.length + ")"); for (var i=0;i<v.length;i++) structure("["+i+"]",v[i],lines,depth+1); return; }
+        var keys=Object.keys(v).sort(); lines.push(indent+label+": object("+keys.length+")");
+        for(var k=0;k<keys.length;k++) structure(keys[k],v[keys[k]],lines,depth+1);
+      }
+      function body(label,v,lines) {
+        lines.push(label+":");
+        if(v&&v.reference){lines.push("  Reference: "+value(v.reference));return;}
+        if(!v||v.available!==true){lines.push("  Available: false");lines.push("  Reason: "+value(v&&v.reason));return;}
+        lines.push("  Available: true");lines.push("  Encoding: "+value(v.encoding));lines.push("  Bytes: "+value(v.bytes));
+        if(Object.prototype.hasOwnProperty.call(v,"data")){var encoding=v.encoding==="base64"?"BASE64":"UTF-8 TEXT";lines.push("  ----- BEGIN "+encoding+" -----");lines.push(String(v.data));lines.push("  ----- END "+encoding+" -----");}
+      }
+      function exchange(label,v,lines){
+        lines.push(label+":");if(!v){lines.push("  unavailable");return;}
+        var names=["url","method","status","synthetic","changed","transportHeadersRecomputedByLoon"];
+        for(var i=0;i<names.length;i++)if(Object.prototype.hasOwnProperty.call(v,names[i]))lines.push("  "+names[i]+": "+value(v[names[i]]));
+        if(Object.prototype.hasOwnProperty.call(v,"headers"))structure("headers",v.headers,lines,1);
+        if(Object.prototype.hasOwnProperty.call(v,"h2_trailers"))structure("h2_trailers",v.h2_trailers,lines,1);
+        if(Object.prototype.hasOwnProperty.call(v,"body"))body("  body",v.body,lines);
+      }
+      function eventText(index,row,capture,captureError){
+        var lines=["","================================================================================","EVENT "+(index+1),"================================================================================","Time: "+row.time,"Level: "+String(row.level).toUpperCase(),"Source: "+row.source,"Version: "+row.version,"Endpoint: "+row.endpoint,"Phase: "+value(row.phase),"Summary: "+row.message];
+        if(captureError)lines.push("Capture-Error: "+captureError);if(!capture){lines.push("Capture: unavailable");return lines.join("\n")+"\n";}
+        lines.push("Runtime: "+value(capture.runtime));structure("Correlation",capture.correlation,lines,0);structure("Processing",capture.processing,lines,0);
+        exchange("Request-Before",capture.request,lines);exchange("Request-After",capture.requestAfter,lines);exchange("Response-Before",capture.responseBefore,lines);exchange("Response-After",capture.responseAfter,lines);
+        return lines.join("\n")+"\n";
+      }
+      var manifest = await get("/export-manifest.json");
+      var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
+      parts.push(["YouTube full diagnostic log","Format-Version: 1","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Raw-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Binary-Body-Encoding: Base64","Sensitive-Data: full URLs, headers and bodies may contain account credentials, cookies, tokens and signatures","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
       for (var n = 0; n < rows.length; n++) {
-        var row = rows[n], event = {summary:row, capture:null};
+        var row = rows[n], capture = null, captureError = row.captureError || null;
         status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;
         if (row.captureRef) {
           var ref = row.captureRef, chunks = [];
           for (var k = 0; k < ref.chunks; k++) {
-            var piece = await get("/export-chunk/" + manifest.session + "/" + n + "/" + k + (feedOnly ? "?feed=1" : ""));
+            var piece = await get("/export-chunk/" + manifest.session + "/" + n + "/" + k);
             if (typeof piece.chunk !== "string") throw new Error("本地样本块无效，请重新导出。");
             chunks.push(piece.chunk);
           }
           var text = chunks.join("");
           if (text.length !== ref.chars || checksum(text) !== ref.checksum) throw new Error("样本校验失败，请保留已有记录并检查存储。");
-          var capture = JSON.parse(text);
+          capture = JSON.parse(text);
           if (capture.schema !== 1 || capture.source !== row.source || capture.time !== row.time || capture.phase !== row.phase) throw new Error("样本元数据不匹配，请重新导出。");
-          event.capture = capture;
-        } else if (row.captureError) {
-          event.captureError = row.captureError;
-          data.completeness.issues.push({time:row.time, source:row.source, reason:row.captureError});
-        }
-        if (n) parts.push(",");
-        parts.push(new Blob([JSON.stringify(event)], {type:"application/json"}));
+        } else if (captureError) issues.push(row.time+" "+row.source+" "+captureError);
+        parts.push(eventText(n,row,capture,captureError));
       }
-      data.completeness.allReferencedSamplesReadable = data.completeness.issues.length === 0;
-      delete data.events;
-      var blob = new Blob([JSON.stringify(data).slice(0,-1), ',"events":[', ...parts, ']}'], {type:"application/json;charset=utf-8"});
+      parts.push("\n================================================================================\nLIMITATIONS\n================================================================================\n");
+      for(var q=0;q<data.completeness.limitations.length;q++)parts.push((q+1)+". "+data.completeness.limitations[q]+"\n");
+      parts.push("All-Referenced-Samples-Readable: "+(issues.length===0)+"\n");for(q=0;q<issues.length;q++)parts.push("Issue: "+issues[q]+"\n");
+      var blob = new Blob(parts, {type:"text/plain;charset=utf-8"});
       save.href = URL.createObjectURL(blob);
-      save.download = "YouTube-" + (feedOnly ? "Feed-" : "") + data.exportedAt.replace(/[:.]/g, "-") + ".json";
+      save.download = "YouTube-" + data.exportedAt.replace(/[:.]/g, "-") + ".log";
       save.hidden = false;
-      status.textContent = "已合成一个完整 JSON 文件（" + rows.length + " 条记录）。点击下方保存日志文件。";
+      status.textContent = "已合成一个完整 .log 文件（" + rows.length + " 条记录）。点击下方保存日志文件。";
     } catch (error) {
       status.textContent = error.message || "导出失败，请检查 Loon 是否运行。";
       save.hidden = true;
     }
   }
-  function exportRows(c, feedOnly) {
-    var rows = records(c);
-    return feedOnly ? rows.filter(function (r) {return r.source === "YouTubeFeedAds" || (r.source === "YouTubeLogger" && r.message.indexOf("user mark:") === 0);}) : rows;
-  }
+  function exportRows(c) { return records(c); }
   function page(c, rows) {
     return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 日志</title>' +
       '<style>body{font:17px system-ui;margin:32px auto;padding:0 24px;max-width:620px;line-height:1.7}button,a{font:inherit}button{margin:6px 0;padding:8px 16px}a{display:block;margin:22px 0}</style>' +
@@ -340,12 +364,11 @@
       '<form method="post" action="/pause"><button>暂停记录</button></form>' +
       '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
       '<form method="post" action="/mark-content"><button>标记：正在播放正片</button></form>' +
-      '<a href="/download.log">下载日志文件 .log</a>' +
-      '<a href="/export">导出完整开发记录 .json（合成一个文件）</a><a href="/export-feed">导出信息流开发记录 .json（排查首页赞助卡片）</a>' +
+      '<a href="/export">导出完整日志文件 .log（浏览、刷新、播放全链路）</a>' +
       '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存原始数据' : '未开启，只保存摘要') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，原始样本另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
-      '<p>开发抓包在主插件手动开启，请先选择容量，再开始记录。它保存完整 URL、请求头和正文，可能包含账号凭据与签名；文件留在本机，不会自动上传。UMP 响应需要开启 UMP 试验处理，先用 inspect。</p>' +
+      '<p>开发抓包在主插件手动开启，请先选择容量，再开始记录。唯一的 .log 文件保存完整 URL、请求头、文本正文和 Base64 二进制，可能包含账号凭据与签名；文件留在本机，不会自动上传。UMP 响应需要开启 UMP 试验处理，先用 inspect。</p>' +
       '<p>在主插件选择日志保存级别：debug 为全部排查摘要；info 为修改结果及异常；warn 为警告及错误；error 为未预期错误。调整级别只影响新记录。</p>' +
       '<p>开发抓包记录不受摘要级别过滤。日志无法读取 Loon 的连接、证书或脚本超时记录。抓包可能增加播放等待，复现后应关闭。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form></html>';
@@ -412,49 +435,29 @@
       return response(303, "", "text/plain; charset=utf-8", {Location:BASE});
     }
     if (method !== "GET") return response(405, "Method not allowed", "text/plain; charset=utf-8", {Allow:"GET"});
-    if (path === "/export" || path === "/export-feed") return exportPage(path === "/export-feed");
-    if (path === "/export-manifest.json" || path === "/export-manifest-feed.json") {
+    if (path === "/export") return exportPage();
+    if (path === "/export-manifest.json") {
       if (c && c.enabled) return response(409, "请先在日志页面暂停记录，然后导出。", "text/plain; charset=utf-8");
-      var feedOnlyManifest = path === "/export-manifest-feed.json";
-      var manifestRows = exportRows(c, feedOnlyManifest);
+      var manifestRows = exportRows(c);
       var manifestData = developmentExport(c, []);
-      manifestData.exportScope = feedOnlyManifest ? "feed-with-user-marks" : "all";
       return response(200, JSON.stringify({session:c && c.session || "none", rows:manifestRows, data:manifestData}), "application/json; charset=utf-8");
     }
     var chunkPath = /^\/export-chunk\/([a-z0-9-]{1,80})\/(\d{1,3})\/(\d{1,3})$/.exec(path);
     if (chunkPath) {
       if (!c || c.enabled || c.session !== chunkPath[1]) return response(409, "记录状态已变化，请暂停后重新导出。", "text/plain; charset=utf-8");
       var rowNumber = Number(chunkPath[2]), chunkNumber = Number(chunkPath[3]);
-      var chunkRows = exportRows(c, /\?feed=1$/.test($request.url));
+      var chunkRows = exportRows(c);
       var ref = chunkRows[rowNumber] && chunkRows[rowNumber].captureRef;
       if (!ref || chunkNumber >= ref.chunks) return response(404, "Sample not found", "text/plain; charset=utf-8");
       var chunk = $persistentStore.read(ref.prefix + chunkNumber);
       if (typeof chunk !== "string" || chunk.length > 131072) return response(503, "样本块丢失或损坏，未生成截断文件。", "text/plain; charset=utf-8");
       return response(200, JSON.stringify({chunk:chunk}), "application/json; charset=utf-8");
     }
-    if (path !== "/" && path !== "/download.log" && path !== "/download.json" && path !== "/download-feed.json") return response(404, "Not found", "text/plain; charset=utf-8");
+    if (path !== "/" && path !== "/download.log") return response(404, "Not found", "text/plain; charset=utf-8");
     var rows = records(c);
     if (path === "/") return response(200, page(c, rows));
-    var now = new Date().toISOString();
-    if (path === "/download.json" || path === "/download-feed.json") {
-      var feedOnly = path === "/download-feed.json";
-      var data = developmentExport(c, feedOnly ? rows.filter(function (r) {return r.source === "YouTubeFeedAds" || (r.source === "YouTubeLogger" && r.message.indexOf("user mark:") === 0);}) : rows);
-      data.exportScope = feedOnly ? "feed-with-user-marks" : "all";
-      var serialized = JSON.stringify(data);
-      // Bound generated responses, never return a knowingly partial JSON file.
-      // This is a conservative cap, not a guarantee of every device's limit.
-      if (devUTF8Size(serialized) > 4194304) return response(413, "直接下载超过 4 MiB，未返回截断文件。请回到日志页面，暂停记录后选择“导出完整开发记录”，分块读取并合成一个 JSON 文件；首页广告可选择“导出信息流开发记录”。", "text/plain; charset=utf-8");
-      return response(200, serialized, "application/json; charset=utf-8", {"Content-Disposition":'attachment; filename="YouTube-' + (feedOnly ? 'Feed-' : '') + now.replace(/[:.]/g, "-") + '.json"'});
-    }
-    var filename = "YouTube-" + now.replace(/[:.]/g, "-") + ".log";
-    var lines = ["YouTube diagnostic log", "Exported (UTC): " + now, "Recording: " + (c && c.enabled === true ? "on" : "paused"),
-      "Minimum level for new entries: " + minimum,
-      "Entries: " + rows.length + " (shared cache; stops at capacity; does not overwrite old entries)",
-      "Stopped reason: " + (c && c.haltReason || "none"),
-      "This .log contains summaries only. Use .json for available raw captures.", "Concurrent writes may lose index entries; this is not a complete packet capture.", ""];
-    if (!rows.length) lines.push("No entries. Start recording, update both ad scripts, reproduce, then export.");
-    rows.forEach(function (r) { lines.push(r.time + " [" + r.level.toUpperCase() + "] [" + r.source + " " + r.version + "] " + r.endpoint + " " + r.message); });
-    return response(200, lines.join("\n") + "\n", "text/plain; charset=utf-8", {"Content-Disposition":'attachment; filename="' + filename + '"'});
+    // Keep old bookmarks working while exposing one canonical export interface.
+    return response(303, "", "text/plain; charset=utf-8", {Location:BASE + "export"});
   }
   var output;
   try { output = run(); }

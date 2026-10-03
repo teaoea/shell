@@ -216,6 +216,7 @@ test('raw development events use the shared cache while summaries never expose k
   initPlayback(store,[9,8,7],youtubeUA,{capture_raw:true});
   const entries = JSON.parse(store.get(logCacheKey)).entries;
   assert.deepEqual(entries.map(entry => entry.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
+  assert.match(entries[1].message, /development capture: pass: crypto-unavailable changed=false/);
   assert.ok(entries.every(entry => entry.captureRef));
   assert.ok(entries.every(entry => !entry.message.includes('CQgH')));
 });

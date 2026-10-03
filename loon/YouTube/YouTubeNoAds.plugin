@@ -13,7 +13,7 @@ remove_shorts_ads = switch,true,tag=清理 Shorts 广告,desc=删除明确标记
 adaptive_feed_ads = switch,true,tag=自适应信息流广告,desc=在已确认的信息流卡片内识别 pagead 标记，补充固定 EML 映射
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
 script_debug = switch,false,tag=控制台日志,desc=需要查看 Loon 脚本日志时手动开启
-log_enabled = switch,false,tag=日志工具,desc=手动开启后访问日志页面开始记录；关闭即停止写入
+log_enabled = switch,false,tag=日志工具,desc=手动开启后记录浏览、刷新和播放链路；日志页面统一导出一个完整 .log 文件
 log_level = select,"info","debug","warn","error",tag=日志保存级别,desc=仅保存此级别及更高严重程度；排查 UMP 请选择 debug
 capture_raw = switch,false,tag=开发抓包,desc=手动开启后保存完整 URL、请求头及二进制正文；含账号或签名信息，仅用于本地开发
 capture_budget = select,"32","16","64",tag=开发抓包容量 MB,desc=达到上限停止记录，保留已有样本；导出后再清空
