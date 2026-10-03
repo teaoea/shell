@@ -116,6 +116,7 @@ usage() {
 
 必须以 root 身份运行。可设置 XRAY_PORT、LOON_SERVER_IP 和
 REALITY_SERVER_NAME（默认 www.apple.com）。
+确认安装后会更新软件源索引，并通过 apt-get、dnf 或 yum 安装必要工具。
 EOF
 }
 
@@ -187,14 +188,8 @@ parse_arguments() {
 }
 
 check_environment() {
-  local command_name
-
   [[ "$(id -u)" -eq 0 ]] || die "请以 root 身份运行"
   command -v systemctl >/dev/null 2>&1 || die "需要使用 systemd 的 Linux 系统"
-  for command_name in curl openssl awk grep install mktemp cp date; do
-    command -v "$command_name" >/dev/null 2>&1 ||
-      die "缺少必需命令: $command_name"
-  done
 
   validate_xray_port
 
@@ -202,6 +197,59 @@ check_environment() {
     [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" == 0 ]]; then
     LISTEN_ADDRESS="::"
   fi
+}
+
+install_required_tools() {
+  local package_manager command_name
+  local -a packages=(ca-certificates openssl unzip kmod gawk grep e2fsprogs)
+
+  if command -v apt-get >/dev/null 2>&1; then
+    package_manager=apt-get
+    packages+=(iproute2 procps libc-bin ncurses-bin)
+  elif command -v dnf >/dev/null 2>&1; then
+    package_manager=dnf
+    packages+=(iproute procps-ng glibc-common ncurses)
+  elif command -v yum >/dev/null 2>&1; then
+    package_manager=yum
+    packages+=(iproute procps-ng glibc-common ncurses)
+  else
+    die "未找到 apt-get、dnf 或 yum，无法更新软件源和安装必要工具"
+  fi
+
+  # 精简镜像可能由 curl-minimal 或 coreutils-single 提供这些命令。
+  command -v curl >/dev/null 2>&1 || packages+=(curl)
+  for command_name in install mktemp cp date; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+      packages+=(coreutils)
+      break
+    fi
+  done
+
+  printf '正在更新软件源索引并安装 Xray 必要工具...\n'
+  case "$package_manager" in
+    apt-get)
+      apt-get update || die "apt-get 软件源更新失败，请检查网络和软件源配置"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}" ||
+        die "Xray 必要工具安装失败（apt-get）"
+      ;;
+    dnf)
+      dnf makecache --refresh || die "dnf 软件源更新失败，请检查网络和软件源配置"
+      dnf install -y "${packages[@]}" || die "Xray 必要工具安装失败（dnf）"
+      ;;
+    yum)
+      yum makecache || die "yum 软件源更新失败，请检查网络和软件源配置"
+      yum install -y "${packages[@]}" || die "Xray 必要工具安装失败（yum）"
+      ;;
+  esac
+}
+
+check_required_tools() {
+  local command_name
+  for command_name in curl openssl unzip awk grep install mktemp cp date \
+    ip ss sysctl getent tput lsattr chattr; do
+    command -v "$command_name" >/dev/null 2>&1 ||
+      die "安装依赖后仍缺少必需命令: $command_name"
+  done
 }
 
 validate_xray_port() {
@@ -324,7 +372,7 @@ confirm_installation_plan() {
   [[ "$OPTIMIZE_NETWORK" != true ]] || optimization_text="应用 Xray-REALITY 系统网络优化"
   mode_label=$(network_mode_label)
   printf '已选择: %s 优先；%s。\n' "$mode_label" "$optimization_text"
-  read -r -p "将先处理网络设置，再选择监听端口并配置 UFW，最后询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
+  read -r -p "将先更新软件源并安装必要工具，再处理网络设置、选择监听端口并配置 UFW，最后询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
   [[ "$answer" =~ ^[Yy]$ ]] || {
     printf '操作已取消。\n'
     exit 0
@@ -349,7 +397,6 @@ apply_network_optimization() {
 install_ufw() {
   printf '未检测到 UFW，正在安装...\n'
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y ufw
   elif command -v dnf >/dev/null 2>&1; then
     dnf install -y ufw
@@ -547,6 +594,8 @@ main() {
   check_environment
   select_network_preferences
   confirm_installation_plan
+  install_required_tools
+  check_required_tools
   apply_network_optimization
   find_loon_address
   select_xray_port

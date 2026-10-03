@@ -95,20 +95,125 @@ restore_runtime_sysctls() {
   return "$failed"
 }
 
+dns_lock_flags() {
+  local attributes flags=""
+  if [[ -f "$RESOLV_FILE" ]] && command -v lsattr >/dev/null 2>&1 &&
+    attributes=$(lsattr -d -- "$RESOLV_FILE" 2>/dev/null); then
+    attributes=${attributes%%[[:space:]]*}
+    [[ "$attributes" != *i* ]] || flags+=i
+    [[ "$attributes" != *a* ]] || flags+=a
+  fi
+  printf '%s\n' "$flags"
+}
+
+# 在子进程中临时解锁；无论写入是否成功，退出时都恢复锁定属性。
+update_static_dns() (
+  trap - ERR EXIT
+  local action=$1 source=${2:-} locks final_locks status=0
+  locks=$(dns_lock_flags)
+  final_locks=${3-$locks}
+  [[ "$final_locks" =~ ^(i?a?)$ ]] || { warn "DNS 锁定属性备份无效"; return 1; }
+  if [[ -n "$locks$final_locks" ]] && ! command -v chattr >/dev/null 2>&1; then
+    warn "$RESOLV_FILE 已锁定，缺少 chattr；请安装 e2fsprogs"
+    return 1
+  fi
+  relock_dns_on_exit() {
+    local result=$?
+    trap - EXIT
+    # 操作失败时保留操作前的保护状态。
+    ((result == 0)) || final_locks=$locks
+    if [[ -n "$final_locks" && -f "$RESOLV_FILE" ]]; then
+      if ! chattr "+$final_locks" -- "$RESOLV_FILE"; then
+        warn "无法恢复 $RESOLV_FILE 的锁定属性 +$final_locks"
+        result=1
+      fi
+    fi
+    exit "$result"
+  }
+  trap relock_dns_on_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  if [[ -n "$locks" ]]; then
+    if ! chattr "-$locks" -- "$RESOLV_FILE"; then
+      warn "无法临时解除 $RESOLV_FILE 的 +$locks 属性；可能缺少权限或受宿主机限制"
+      return 1
+    fi
+  fi
+  case "$action" in
+    probe)
+      if [[ -e "$RESOLV_FILE" ]]; then
+        # 仅打开文件，不写入内容；同时兼容单文件挂载。
+        if ! { : >>"$RESOLV_FILE"; }; then status=1; fi
+      elif [[ ! -w "${RESOLV_FILE%/*}" ]]; then
+        status=1
+      fi
+      ;;
+    write | restore)
+      [[ -f "$source" && ! -L "$RESOLV_FILE" ]] || return 1
+      if [[ -f "$RESOLV_FILE" ]]; then
+        # 保留 inode，避免 install/cp 替换挂载点或受保护文件。
+        if ! cmp -s -- "$source" "$RESOLV_FILE"; then
+          cat -- "$source" >"$RESOLV_FILE" || status=1
+        fi
+      else
+        install -m 644 -o root -g root "$source" "$RESOLV_FILE" || status=1
+      fi
+      if [[ "$action" == restore && "$status" == 0 ]]; then
+        chown --reference="$source" -- "$RESOLV_FILE" || status=1
+        chmod --reference="$source" -- "$RESOLV_FILE" || status=1
+      fi
+      cmp -s -- "$source" "$RESOLV_FILE" || status=1
+      ;;
+    remove)
+      rm -f -- "$RESOLV_FILE" || status=1
+      ;;
+    *) return 1 ;;
+  esac
+  if ((status != 0)); then
+    warn "$RESOLV_FILE 操作失败（${action}）；请检查文件属性、只读挂载和 VPS 权限限制"
+  fi
+  return "$status"
+)
+
+restore_static_dns() {
+  local backup_dir=$1 locks
+  if [[ -f "$backup_dir/resolv.conf" ]]; then
+    locks=$(dns_lock_flags)
+    [[ ! -f "$backup_dir/resolv.conf.locks" ]] || locks=$(<"$backup_dir/resolv.conf.locks")
+    # 未更改的受保护文件无需写入，也无需解除锁定。
+    if cmp -s -- "$backup_dir/resolv.conf" "$RESOLV_FILE" &&
+      [[ "$(dns_lock_flags)" == "$locks" ]]; then
+      return 0
+    fi
+    update_static_dns restore "$backup_dir/resolv.conf" "$locks"
+  elif [[ -f "$backup_dir/resolv.conf.absent" ]]; then
+    [[ -e "$RESOLV_FILE" || -L "$RESOLV_FILE" ]] || return 0
+    update_static_dns remove "" ""
+  else
+    warn "备份缺少 $RESOLV_FILE 的状态"
+    return 1
+  fi
+}
+
 restore_dns_config() {
   local backup_dir=$1 saved_mode failed=0
   [[ -f "$backup_dir/dns-mode" ]] || return 0
   saved_mode=$(<"$backup_dir/dns-mode")
   case "$saved_mode" in
+    skipped)
+      # 本次未修改 DNS，回滚也不覆盖 DNS 或重启解析服务。
+      return 0
+      ;;
     static)
-      restore_file "$backup_dir" resolv.conf "$RESOLV_FILE" || failed=1
+      restore_static_dns "$backup_dir" || failed=1
       ;;
     resolved)
       restore_file "$backup_dir" resolved.conf "$RESOLVED_FILE" || failed=1
       systemctl restart systemd-resolved || failed=1
       ;;
     static_resolved)
-      restore_file "$backup_dir" resolv.conf "$RESOLV_FILE" || failed=1
+      restore_static_dns "$backup_dir" || failed=1
       restore_file "$backup_dir" resolved.conf "$RESOLVED_FILE" || failed=1
       systemctl restart systemd-resolved || failed=1
       ;;
@@ -167,7 +272,8 @@ usage() {
 
 直接运行时会询问选择 IPv4 或 IPv6 出站优先级。
 IPv4 模式支持 Debian；IPv6 模式支持 Debian 13。
-两种模式都保留已有地址族，按可用网络设置 Cloudflare DNS；内核支持时启用 BBR + FQ。
+两种模式都保留已有地址族，DNS 可写时按可用网络设置 Cloudflare DNS；内核支持时启用 BBR + FQ。
+DNS 文件无法安全写入时保留原有 DNS，继续应用其他网络优化。
 默认应用适用于 Xray-REALITY TCP 传输的系统参数；使用 --general 保留通用优化。
 
   --xray-reality  应用 REALITY TCP 优化（默认；影响系统 TCP）
@@ -281,7 +387,7 @@ require_root() {
 
 require_commands() {
   local command_name
-  for command_name in awk cp date grep id install ip ln mkdir mktemp readlink rm sleep sysctl; do
+  for command_name in awk cat chmod chown cmp cp date grep id install ip ln mkdir mktemp readlink rm sleep sysctl; do
     command -v "$command_name" >/dev/null 2>&1 ||
       die "缺少必需命令: $command_name"
   done
@@ -501,6 +607,49 @@ detect_dns_mode() {
   fi
 }
 
+probe_resolved_dns() {
+  local path attributes directory=${RESOLVED_FILE%/*}
+  while [[ ! -d "$directory" && "$directory" != / ]]; do
+    directory=${directory%/*}
+    [[ -n "$directory" ]] || directory=/
+  done
+  [[ -w "$directory" ]] || return 1
+  for path in "$directory" "$RESOLVED_FILE"; do
+    [[ -e "$path" || -L "$path" ]] || continue
+    [[ ! -L "$path" ]] || return 1
+    if attributes=$(lsattr -d -- "$path" 2>/dev/null); then
+      attributes=${attributes%%[[:space:]]*}
+      [[ "$attributes" != *i* && "$attributes" != *a* ]] || return 1
+    fi
+  done
+  if [[ -e "$RESOLVED_FILE" ]]; then
+    [[ -f "$RESOLVED_FILE" ]] || return 1
+    { : >>"$RESOLVED_FILE"; } || return 1
+  fi
+  return 0
+}
+
+check_dns_writable() {
+  if ! command -v lsattr >/dev/null 2>&1; then
+    warn "缺少 lsattr，无法检查 DNS 文件的锁定属性"
+    DNS_MODE=skipped
+  fi
+  if [[ "$DNS_MODE" == static || "$DNS_MODE" == static_resolved ]]; then
+    if ! update_static_dns probe; then
+      DNS_MODE=skipped
+    fi
+  fi
+  if [[ "$DNS_MODE" == resolved || "$DNS_MODE" == static_resolved ]]; then
+    if ! probe_resolved_dns; then
+      warn "$RESOLVED_FILE 无法安全写入"
+      DNS_MODE=skipped
+    fi
+  fi
+  if [[ "$DNS_MODE" == skipped ]]; then
+    warn "跳过本次 DNS 修改，保留现有 DNS；继续应用其他网络优化"
+  fi
+}
+
 select_mode() {
   local answer default_choice=1
   [[ -n "$MODE" ]] && return 0
@@ -595,6 +744,7 @@ create_backup() {
   fi
   if [[ "$DNS_MODE" == static || "$DNS_MODE" == static_resolved ]]; then
     backup_file "$RESOLV_FILE" resolv.conf
+    dns_lock_flags >"$CURRENT_BACKUP/resolv.conf.locks"
   fi
   save_runtime_sysctls
   printf '%s\n' "$(date --iso-8601=seconds)" >"$CURRENT_BACKUP/created-at"
@@ -768,12 +918,13 @@ prepare_static_dns_config() {
 
 apply_dns_configuration() {
   local temp_dns
+  [[ "$DNS_MODE" != skipped ]] || return 0
   temp_dns=$(mktemp /tmp/network-dns.XXXXXX)
   TEMP_FILES+=("$temp_dns")
 
   if [[ "$DNS_MODE" == static || "$DNS_MODE" == static_resolved ]]; then
     prepare_static_dns_config "$temp_dns"
-    install -m 644 -o root -g root "$temp_dns" "$RESOLV_FILE"
+    update_static_dns write "$temp_dns"
   fi
   if [[ "$DNS_MODE" == resolved || "$DNS_MODE" == static_resolved ]]; then
     printf '# Managed by networt_optimization.sh\n[Resolve]\nDNS=%s %s\nDomains=~.\n' \
@@ -811,7 +962,8 @@ verify_configuration() {
 apply_configuration() {
   local temp_gai temp_sysctl temp_modules
 
-  confirm_action "将应用 ${MODE^^} 优先、Cloudflare DNS 和 ${PROFILE} TCP 优化（影响系统 TCP），是否继续？"
+  confirm_action "将应用 ${MODE^^} 优先、Cloudflare DNS 和 ${PROFILE} TCP 优化（影响系统 TCP；DNS 无法写入时跳过），是否继续？"
+  check_dns_writable
   create_backup
   APPLYING=true
   apply_ipv6_address
@@ -843,7 +995,11 @@ apply_configuration() {
   apply_dns_configuration
   APPLYING=false
 
-  log "已应用 ${MODE^^} 优先和 Cloudflare DNS；实际网络连通性见下方直连测试。"
+  if [[ "$DNS_MODE" == skipped ]]; then
+    log "已应用 ${MODE^^} 优先；DNS 修改已跳过，保留原有 DNS。实际网络连通性见下方直连测试。"
+  else
+    log "已应用 ${MODE^^} 优先和 Cloudflare DNS；实际网络连通性见下方直连测试。"
+  fi
   if [[ "$BBR_ENABLED" == true ]]; then
     log "BBR + FQ 已启用。"
   else

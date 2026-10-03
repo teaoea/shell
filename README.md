@@ -13,10 +13,14 @@
 在 VPS 上用一条命令运行 GitHub `main` 分支的脚本：
 
 ```bash
-xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh) && sudo bash -c "$xray_script"
+bash -c 'set -e; runner=(); if [ "$(id -u)" -ne 0 ]; then runner=(sudo); fi; if ! command -v curl >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then "${runner[@]}" apt-get update; "${runner[@]}" apt-get install -y ca-certificates curl; elif command -v dnf >/dev/null 2>&1; then "${runner[@]}" dnf install -y ca-certificates curl; elif command -v yum >/dev/null 2>&1; then "${runner[@]}" yum install -y ca-certificates curl; else echo "缺少 curl，且未找到支持的包管理器" >&2; exit 1; fi; fi; xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh); "${runner[@]}" bash -c "$xray_script"'
 ```
 
+上面的命令会在缺少 `curl` 时先安装 CA 证书和 `curl`，再下载脚本；已登录 root 时直接运行，普通用户通过 `sudo` 提权。下载失败不会继续安装。
+
 脚本要求 root 权限，默认使用 TCP 443 和 `www.apple.com` 作为 REALITY 伪装域名。交互安装会先询问 Xray 出站使用 IPv4 优先还是 IPv6 优先，并询问是否应用 Xray-REALITY 针对性系统网络优化；选择优化时先完成网络优化。随后脚本明确询问 Xray 监听端口，直接回车使用 443，并通过 UFW 放行相同的 TCP 端口。脚本在真正安装 Xray 前最后询问 REALITY 伪装域名，直接回车使用默认值；用户输入其他域名时，脚本会校验格式，并把同一域名写入 REALITY `target`、`serverNames` 和 Loon `sni`。Xray 使用 Happy Eyeballs 优先连接所选地址族，连接不通时回退到另一地址族；自动检测 Loon 节点公网地址时也按相同顺序尝试。
+
+确认安装后，脚本先更新软件源索引，再安装必要工具。Debian/Ubuntu 使用 `apt-get update` 和 `apt-get install`；使用 DNF 或 YUM 的系统分别执行 `dnf makecache --refresh` 或 `yum makecache`，随后安装对应依赖包。工具包括 CA 证书、`curl`、OpenSSL、`unzip`、`ip`/`ss`、`sysctl`、`kmod`、`awk`、`grep`、基础文件工具、`getent`、`tput` 和用于处理 DNS 文件锁定的 `lsattr`/`chattr`（`e2fsprogs`）。更新范围是软件源索引和这些依赖包；软件源更新或依赖安装失败时，脚本会停止并给出原因。
 
 选择网络优化后，脚本从本仓库 GitHub `main` 分支下载 `networt_optimization.sh`，按所选地址族运行 `--xray-reality` 配置，并在 Xray 配置中启用 TCP Fast Open。该操作会修改系统 TCP、Cloudflare DNS 和地址优先级，仅支持网络优化脚本声明的系统范围：IPv4 模式支持 Debian，IPv6 模式支持 Debian 13。若后续 Xray 安装失败，安装脚本会尝试回滚本次网络优化。选择不优化时，不修改系统网络配置，Xray 配置仍会保留所选地址族的优先级与回退。
 
@@ -98,7 +102,7 @@ sudo bash networt_optimization.sh --ipv4 --yes \
 
 新增地址和路由仅在运行时生效，重启或网络管理服务重新配置后可能丢失；持久化需写入本机使用的网络管理程序。脚本不会推算或申请服务商地址，也不会覆盖已有全局 IPv6 地址或默认路由。添加时会等待地址重复检测完成，失败会自动回滚；新增地址、默认路由和接口 IPv6 开关也纳入 `--rollback`。内核支持 IPv6 并不代表服务商提供了 IPv6 网络，实际连接结果仍以下方直连测试为准。
 
-DNS 修改会保留普通 `/etc/resolv.conf` 中的搜索域等设置；运行中的 `systemd-resolved` 会通过配置片段设置 DNS。遇到由其他程序管理的符号链接时，脚本会停止并提示先修改对应程序的配置。部分 VPS 会在续租或重启时重新生成普通 `resolv.conf`，此时需在其网络管理程序中设置持久 DNS。
+DNS 修改会保留普通 `/etc/resolv.conf` 中的搜索域等设置，并原位写入已有文件，兼容可写的单文件挂载。若文件设置了 immutable（`i`）或 append-only（`a`）属性，脚本会临时解除锁定，并在成功或失败后尝试恢复保护状态；恢复失败会明确报错。锁定属性也纳入备份与回滚。修改其他网络配置前会先检查 DNS 文件能否写入；只读挂载、宿主机不允许解锁或缺少锁定检查工具时，会警告并跳过本次 DNS 修改，保留原有 DNS，继续应用地址优先级、TCP 和 BBR 等其他网络优化，Xray 安装也会继续。跳过状态会写入备份记录，回滚时不覆盖 DNS，也不重启 DNS 服务；完成提示会明确说明 DNS 已跳过。解锁需要 `e2fsprogs` 提供的工具及相应系统权限；运行中的 `systemd-resolved` 会通过配置片段设置 DNS。遇到由其他程序管理的符号链接时，脚本会停止并提示先修改对应程序的配置。部分 VPS 会在续租或重启时重新生成普通 `resolv.conf`，此时需在其网络管理程序中设置持久 DNS。
 
 应用前会把现有配置和运行时参数备份到 `/var/lib/network-optimizer/backups/`。脚本还支持 `--status` 查看状态并用 `curl` 向 Cloudflare 固定 IP 发出带正确响应格式的 HTTPS DoH 请求，测试已配置地址族的直连；失败时会保留 HTTP 或 curl 错误，`--rollback` 恢复最近一次修改。直连测试不经过 DNS 或代理；脚本不额外验证 Cloudflare DNS 的解析可用性。已有长期运行的进程可能需要重启，才会重新读取地址选择策略。
 
