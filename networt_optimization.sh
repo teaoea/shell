@@ -23,12 +23,23 @@ readonly OLD_IPV6_MODULES="/etc/modules-load.d/ipv6-optimization.conf"
 
 ACTION="apply"
 MODE=""
+PROFILE="xray-reality"
+TCP_BUFFER_MIB=16
+REALITY_SYSCTLS=()
 ASSUME_YES=false
 APPLYING=false
 BBR_ENABLED=false
 DNS_MODE=""
 HAS_IPV4=false
 HAS_IPV6=false
+IPV6_SUPPORTED=false
+IPV6_HAS_ADDRESS=false
+IPV6_ADDRESS=""
+IPV6_ADDRESSES=()
+IPV6_PREFIX=""
+IPV6_SUFFIXES=""
+IPV6_INTERFACE=""
+IPV6_GATEWAY=""
 DNS_SERVERS=()
 CURRENT_BACKUP=""
 PREVIOUS_LATEST=""
@@ -120,6 +131,7 @@ restore_backup() {
   restore_file "$backup_dir" old-ipv4-modules.conf "$OLD_IPV4_MODULES" || failed=1
   restore_file "$backup_dir" old-ipv6-sysctl.conf "$OLD_IPV6_SYSCTL" || failed=1
   restore_file "$backup_dir" old-ipv6-modules.conf "$OLD_IPV6_MODULES" || failed=1
+  restore_added_ipv6 "$backup_dir" || failed=1
   restore_dns_config "$backup_dir" || failed=1
   restore_runtime_sysctls "$backup_dir" || failed=1
   return "$failed"
@@ -155,10 +167,22 @@ usage() {
 
 直接运行时会询问选择 IPv4 或 IPv6 出站优先级。
 IPv4 模式支持 Debian；IPv6 模式支持 Debian 13。
-两种模式都保留已有地址族，按可用网络设置 Cloudflare DNS，并应用保守的 TCP 优化；内核支持时启用 BBR + FQ。
+两种模式都保留已有地址族，按可用网络设置 Cloudflare DNS；内核支持时启用 BBR + FQ。
+默认应用适用于 Xray-REALITY TCP 传输的系统参数；使用 --general 保留通用优化。
 
+  --xray-reality  应用 REALITY TCP 优化（默认；影响系统 TCP）
+  --general      仅应用原有通用优化
+  --tcp-buffer-mib N  REALITY TCP 自动调节目标上限，默认 16 MiB（1 到 64）
+                     保留更大的现有上限，不提高每条连接的初始分配
   --ipv4       应用 IPv4 出站优先
   --ipv6       应用 IPv6 出站优先
+  --ipv6-prefix PREFIX  IPv6 网络前缀，必须以 :: 结尾
+  --ipv6-suffixes "S..." 后缀列表，以空格分隔；与 --ipv6-prefix 配套使用
+  --ipv6-address IP[/N] 添加用户指定的 IPv6 地址；可重复传入或用空格/逗号分隔
+                       兼容直接指定完整地址；省略前缀长度时使用 /128
+  --ipv6-interface IF  指定网卡；默认选择 IPv6 / IPv4 默认路由网卡
+  --ipv6-gateway IP    无 IPv6 默认路由时使用的网关
+                       仅在无全局 IPv6 地址时添加；运行时生效，重启不保留
   --status     查看当前配置和路由
   --rollback   恢复最近一次应用前的文件及运行时参数
   -y, --yes    跳过确认；应用时仍须指定 --ipv4 或 --ipv6
@@ -172,6 +196,25 @@ parse_arguments() {
       --ipv4 | --ipv6)
         [[ -z "$MODE" ]] || die "一次只能选择一种网络优先级"
         MODE=${1#--}
+        ;;
+      --xray-reality) PROFILE=xray-reality ;;
+      --general) PROFILE=general ;;
+      --tcp-buffer-mib)
+        [[ $# -ge 2 && "$2" =~ ^[0-9]{1,2}$ ]] || die "--tcp-buffer-mib 需要 1 到 64 的整数"
+        TCP_BUFFER_MIB=$((10#$2))
+        ((TCP_BUFFER_MIB >= 1 && TCP_BUFFER_MIB <= 64)) || die "--tcp-buffer-mib 范围为 1 到 64"
+        shift
+        ;;
+      --ipv6-prefix | --ipv6-suffixes | --ipv6-address | --ipv6-interface | --ipv6-gateway)
+        [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 缺少参数"
+        case "$1" in
+          --ipv6-prefix) IPV6_PREFIX=$2 ;;
+          --ipv6-suffixes) IPV6_SUFFIXES=$2 ;;
+          --ipv6-address) IPV6_ADDRESS="${IPV6_ADDRESS:+$IPV6_ADDRESS }$2" ;;
+          --ipv6-interface) IPV6_INTERFACE=$2 ;;
+          --ipv6-gateway) IPV6_GATEWAY=$2 ;;
+        esac
+        shift
         ;;
       --status | --rollback)
         [[ "$ACTION" == apply ]] || die "一次只能指定一个操作"
@@ -195,6 +238,40 @@ parse_arguments() {
 
   [[ "$ACTION" == apply || -z "$MODE" ]] ||
     die "--ipv4/--ipv6 只能用于应用配置"
+  if [[ "$ACTION" != apply &&
+        -n "$IPV6_PREFIX$IPV6_SUFFIXES$IPV6_ADDRESS$IPV6_INTERFACE$IPV6_GATEWAY" ]]; then
+    die "IPv6 地址参数只能用于应用配置"
+  fi
+}
+
+build_ipv6_addresses_from_prefix() {
+  local stem part suffix prefix_length
+  local -a prefix_parts suffixes
+
+  [[ -n "$IPV6_PREFIX" && -n "$IPV6_SUFFIXES" ]] ||
+    die "IPv6 前缀和后缀必须同时提供"
+  [[ "$IPV6_PREFIX" == *:: && "$IPV6_PREFIX" =~ ^[0-9a-fA-F:]+$ ]] ||
+    die "IPv6 前缀必须由十六进制段组成并以 :: 结尾"
+
+  stem=${IPV6_PREFIX%::}
+  [[ -n "$stem" ]] || die "IPv6 前缀不能只有 ::"
+  IFS=: read -r -a prefix_parts <<<"$stem"
+  ((${#prefix_parts[@]} >= 1 && ${#prefix_parts[@]} <= 7)) ||
+    die "IPv6 前缀包含的段数无效"
+  for part in "${prefix_parts[@]}"; do
+    [[ "$part" =~ ^[0-9a-fA-F]{1,4}$ ]] ||
+      die "IPv6 前缀段无效: $part"
+  done
+  prefix_length=$((${#prefix_parts[@]} * 16))
+
+  read -r -a suffixes <<<"$IPV6_SUFFIXES"
+  ((${#suffixes[@]} > 0)) || die "至少需要一个 IPv6 后缀"
+  IPV6_ADDRESS=""
+  for suffix in "${suffixes[@]}"; do
+    [[ "$suffix" =~ ^[0-9a-fA-F]{1,4}$ ]] ||
+      die "IPv6 后缀无效: ${suffix}（只允许 1 到 4 位十六进制）"
+    IPV6_ADDRESS="${IPV6_ADDRESS:+$IPV6_ADDRESS }${IPV6_PREFIX}${suffix}/${prefix_length}"
+  done
 }
 
 require_root() {
@@ -204,7 +281,7 @@ require_root() {
 
 require_commands() {
   local command_name
-  for command_name in awk cp date grep id install ip ln mkdir mktemp readlink rm sysctl; do
+  for command_name in awk cp date grep id install ip ln mkdir mktemp readlink rm sleep sysctl; do
     command -v "$command_name" >/dev/null 2>&1 ||
       die "缺少必需命令: $command_name"
   done
@@ -229,29 +306,151 @@ detect_ip_families() {
   local ipv4_address ipv4_route ipv6_address ipv6_route
   HAS_IPV4=false
   HAS_IPV6=false
+  IPV6_SUPPORTED=false
+  IPV6_HAS_ADDRESS=false
+  sysctl -n net.ipv6.conf.all.disable_ipv6 >/dev/null 2>&1 && IPV6_SUPPORTED=true
   command -v ip >/dev/null 2>&1 || return 0
 
   ipv4_address=$(ip -4 -o address show scope global 2>/dev/null |
     awk 'NR == 1 { print $4; exit }' || true)
   ipv4_route=$(ip -4 route show default 2>/dev/null |
     awk 'NR == 1 { print; exit }' || true)
-  ipv6_address=$(ip -6 -o address show scope global 2>/dev/null |
+  ipv6_address=$(ip -6 -o address show scope global -tentative -dadfailed 2>/dev/null |
     awk 'NR == 1 { print $4; exit }' || true)
   ipv6_route=$(ip -6 route show default 2>/dev/null |
     awk 'NR == 1 { print; exit }' || true)
 
+  [[ -z "$(ip -6 -o address show scope global 2>/dev/null || true)" ]] || IPV6_HAS_ADDRESS=true
   [[ -z "$ipv4_address" || -z "$ipv4_route" ]] || HAS_IPV4=true
   [[ -z "$ipv6_address" || -z "$ipv6_route" ]] || HAS_IPV6=true
 }
 
 validate_ip_mode() {
-  [[ "$HAS_IPV4" == true || "$HAS_IPV6" == true ]] ||
+  [[ "$HAS_IPV4" == true || "$HAS_IPV6" == true || -n "$IPV6_ADDRESS" ]] ||
     die "未检测到带全局地址和默认路由的 IPv4 或 IPv6 网络"
   if [[ "$MODE" == ipv4 && "$HAS_IPV4" != true ]]; then
     die "当前没有可用的 IPv4 地址和默认路由；请选择 --ipv6"
   fi
-  if [[ "$MODE" == ipv6 && "$HAS_IPV6" != true ]]; then
+  if [[ "$MODE" == ipv6 && "$HAS_IPV6" != true && -z "$IPV6_ADDRESS" ]]; then
     die "当前没有可用的 IPv6 地址和默认路由；请选择 --ipv4"
+  fi
+}
+
+prepare_ipv6_address() {
+  local default_route
+  if [[ "$IPV6_SUPPORTED" == true && "$IPV6_HAS_ADDRESS" == false &&
+        -z "$IPV6_PREFIX$IPV6_SUFFIXES$IPV6_ADDRESS$IPV6_INTERFACE$IPV6_GATEWAY" ]]; then
+    log "检测到内核支持 IPv6，但尚未配置全局 IPv6 地址。"
+    if [[ -t 0 && "$ASSUME_YES" != true ]]; then
+      read -r -p "第一步，输入 IPv6 前缀（例如 2a0c:9a40:8aa3:13c8::；回车默认不添加）: " IPV6_PREFIX
+      if [[ -n "$IPV6_PREFIX" ]]; then
+        read -r -p "第二步，输入 IPv6 后缀（多个用空格分隔，例如 1 2 a）: " IPV6_SUFFIXES
+      fi
+    else
+      log "可通过 --ipv6-prefix 和 --ipv6-suffixes 添加多个地址。"
+    fi
+  fi
+  [[ -n "$IPV6_PREFIX$IPV6_SUFFIXES$IPV6_ADDRESS$IPV6_INTERFACE$IPV6_GATEWAY" ]] || return 0
+  [[ "$IPV6_SUPPORTED" == true ]] || die "内核未提供 IPv6 支持"
+  [[ "$IPV6_HAS_ADDRESS" == false ]] || die "已有全局 IPv6 地址，不执行添加"
+
+  if [[ -n "$IPV6_PREFIX$IPV6_SUFFIXES" ]]; then
+    [[ -z "$IPV6_ADDRESS" ]] ||
+      die "--ipv6-prefix/--ipv6-suffixes 不能与 --ipv6-address 同时使用"
+    build_ipv6_addresses_from_prefix
+  fi
+  [[ -n "$IPV6_ADDRESS" ]] || die "请提供要添加的 IPv6 地址"
+  local cidr prefix address previous duplicate
+  IPV6_ADDRESS=${IPV6_ADDRESS//,/ }
+  local -a requested_addresses
+  read -r -a requested_addresses <<<"$IPV6_ADDRESS"
+  IPV6_ADDRESSES=()
+  for cidr in "${requested_addresses[@]}"; do
+    [[ "$cidr" == */* ]] || cidr="$cidr/128"
+    [[ "$cidr" =~ ^[0-9a-fA-F:]+/[0-9]{1,3}$ && "$cidr" == *:* ]] || die "IPv6 地址格式无效: $cidr"
+    prefix=${cidr##*/}
+    address=${cidr%/*}
+    ((10#$prefix <= 128)) || die "IPv6 前缀长度必须为 0 到 128"
+    [[ ! "$address" =~ ^[fF][eE][89aAbB] && "$address" != :: && "$address" != ::1 &&
+       ! "$address" =~ ^[fF][fF] ]] || die "请提供全局单播 IPv6 地址"
+    duplicate=false
+    for previous in ${IPV6_ADDRESSES[@]+"${IPV6_ADDRESSES[@]}"}; do
+      [[ "$previous" != "$cidr" ]] || duplicate=true
+    done
+    [[ "$duplicate" == true ]] || IPV6_ADDRESSES+=("$cidr")
+  done
+  [[ ${#IPV6_ADDRESSES[@]} -gt 0 ]] || die "请提供要添加的 IPv6 地址"
+  IPV6_ADDRESS=${IPV6_ADDRESSES[0]}
+  if [[ -z "$IPV6_INTERFACE" ]]; then
+    IPV6_INTERFACE=$(ip -6 route show default | awk '{for (i=1;i<NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+    if [[ -z "$IPV6_INTERFACE" ]]; then
+      IPV6_INTERFACE=$(ip -4 route show default | awk '{for (i=1;i<NF;i++) if ($i=="dev") {print $(i+1); exit}}')
+    fi
+    [[ -n "$IPV6_INTERFACE" ]] || die "无法确定默认网卡，请使用 --ipv6-interface 指定"
+  fi
+  [[ "$IPV6_INTERFACE" =~ ^[a-zA-Z0-9_.:-]+$ && "$IPV6_INTERFACE" != lo ]] || die "请指定有效的非 lo 网卡"
+  ip link show dev "$IPV6_INTERFACE" >/dev/null 2>&1 || die "网卡不存在: $IPV6_INTERFACE"
+  sysctl -n "net.ipv6.conf.$IPV6_INTERFACE.disable_ipv6" >/dev/null 2>&1 ||
+    die "网卡未提供 IPv6 参数"
+  default_route=$(ip -6 route show default)
+  if [[ -n "$IPV6_GATEWAY" ]]; then
+    [[ "$IPV6_GATEWAY" =~ ^[0-9a-fA-F:]+$ && "$IPV6_GATEWAY" == *:* ]] || die "IPv6 网关格式无效"
+    [[ -z "$default_route" ]] || die "已有 IPv6 默认路由，请省略 --ipv6-gateway"
+  fi
+  log "将添加运行时 IPv6 地址 ${IPV6_ADDRESSES[*]} dev ${IPV6_INTERFACE}；网关: ${IPV6_GATEWAY:-不修改路由}。重启不保留。"
+}
+
+restore_added_ipv6() {
+  local backup_dir=$1 interface address gateway failed=0
+  [[ -f "$backup_dir/added-ipv6.tsv" ]] || return 0
+  IFS=$'\t' read -r interface address gateway <"$backup_dir/added-ipv6.tsv" || return 0
+  if [[ -f "$backup_dir/ipv6-route-added" ]]; then
+    if ip -6 route show default dev "$interface" | grep -Fq "via $gateway "; then
+      ip -6 route del default via "$gateway" dev "$interface" metric 4096 || failed=1
+    fi
+  fi
+  while IFS=$'\t' read -r interface address gateway; do
+    [[ -n "$interface" && -n "$address" ]] || continue
+    local state
+    if ! state=$(ip -6 -o address show dev "$interface" to "$address"); then
+      failed=1
+    elif [[ -n "$state" ]]; then
+      ip -6 address del "$address" dev "$interface" || failed=1
+    fi
+  done <"$backup_dir/added-ipv6.tsv"
+  return "$failed"
+}
+
+apply_ipv6_address() {
+  local attempt state cidr
+  [[ -n "$IPV6_ADDRESS" ]] || return 0
+  : >"$CURRENT_BACKUP/added-ipv6.tsv"
+  sysctl -q -w "net.ipv6.conf.$IPV6_INTERFACE.disable_ipv6=0"
+  for cidr in ${IPV6_ADDRESSES[@]+"${IPV6_ADDRESSES[@]}"}; do
+    ip -6 address add "$cidr" dev "$IPV6_INTERFACE" || return 1
+    printf '%s\t%s\t%s\n' "$IPV6_INTERFACE" "$cidr" "$IPV6_GATEWAY" >>"$CURRENT_BACKUP/added-ipv6.tsv"
+    for ((attempt=0; attempt<10; attempt++)); do
+      state=$(ip -6 -o address show dev "$IPV6_INTERFACE" to "$cidr")
+      if [[ "$state" == *dadfailed* ]]; then
+        warn "IPv6 地址重复检测失败: $cidr"
+        return 1
+      fi
+      [[ -n "$state" && "$state" != *tentative* ]] && break
+      sleep 1
+    done
+    [[ -n "$state" && "$state" != *tentative* ]] || { warn "IPv6 地址尚未就绪: $cidr"; return 1; }
+  done
+  if [[ -n "$IPV6_GATEWAY" ]]; then
+    ip -6 route add default via "$IPV6_GATEWAY" dev "$IPV6_INTERFACE" metric 4096
+    : >"$CURRENT_BACKUP/ipv6-route-added"
+  fi
+  detect_ip_families
+  if [[ "$MODE" == ipv6 && "$HAS_IPV6" != true ]]; then
+    warn "添加后仍无可用 IPv6 地址和默认路由，无法应用 IPv6 优先"
+    return 1
+  fi
+  if [[ "$HAS_IPV6" != true ]]; then
+    log "IPv6 地址已添加；当前无 IPv6 默认路由，仅添加地址不会自动获得 IPv6 出站连接。"
   fi
 }
 
@@ -274,7 +473,7 @@ detect_dns_mode() {
         DNS_MODE=resolved
         ;;
       *)
-        die "$RESOLV_FILE 由其他程序管理（$target），请先配置该程序的 DNS"
+        die "$RESOLV_FILE 由其他程序管理（${target}），请先配置该程序的 DNS"
         ;;
     esac
   elif [[ -f "$RESOLV_FILE" ]] &&
@@ -315,7 +514,7 @@ select_mode() {
     log "请选择出站地址优先级："
     log "  1) IPv4 优先（需要 IPv4 地址和默认路由）"
     log "  2) IPv6 优先（需要 IPv6 地址和默认路由）"
-    read -r -p "输入 1 或 2（默认 $default_choice）: " answer
+    read -r -p "输入 1 或 2（默认 ${default_choice}）: " answer
     case "${answer:-$default_choice}" in
       1) MODE=ipv4; break ;;
       2) MODE=ipv6; break ;;
@@ -357,6 +556,13 @@ save_runtime_sysctls() {
     net.ipv4.tcp_congestion_control
   )
 
+  if [[ -n "$IPV6_ADDRESS" ]]; then
+    keys+=("net.ipv6.conf.$IPV6_INTERFACE.disable_ipv6")
+  fi
+  local entry
+  for entry in ${REALITY_SYSCTLS[@]+"${REALITY_SYSCTLS[@]}"}; do
+    keys+=("${entry%%=*}")
+  done
   : >"$CURRENT_BACKUP/runtime-sysctl.tsv"
   for key in "${keys[@]}"; do
     if value=$(sysctl -n "$key" 2>/dev/null); then
@@ -462,15 +668,54 @@ detect_bbr() {
   fi
 }
 
+prepare_reality_sysctls() {
+  local key value minimum initial maximum extra target=$((TCP_BUFFER_MIB * 1024 * 1024))
+  REALITY_SYSCTLS=()
+  [[ "$PROFILE" == xray-reality ]] || return 0
+  # TCP 自动调节上限；保留现有 min/default 和更大的 max。
+  for key in net.ipv4.tcp_rmem net.ipv4.tcp_wmem; do
+    value=$(sysctl -n "$key")
+    read -r minimum initial maximum extra <<<"$value"
+    [[ "$minimum" =~ ^[0-9]+$ && "$initial" =~ ^[0-9]+$ &&
+       "$maximum" =~ ^[0-9]+$ && -z "$extra" ]] || die "无效的 TCP 缓冲区参数: $key"
+    ((maximum >= target)) || maximum=$target
+    ((maximum >= initial)) || maximum=$initial
+    REALITY_SYSCTLS+=("$key=$minimum $initial $maximum")
+  done
+  for key in net.core.somaxconn net.ipv4.tcp_max_syn_backlog; do
+    value=$(sysctl -n "$key")
+    [[ "$value" =~ ^[0-9]+$ ]] || die "无效的连接队列参数: $key"
+    ((value >= 4096)) || value=4096
+    REALITY_SYSCTLS+=("$key=$value")
+  done
+  REALITY_SYSCTLS+=(
+    "net.ipv4.tcp_moderate_rcvbuf=1"
+    "net.ipv4.tcp_window_scaling=1"
+    "net.ipv4.tcp_sack=1"
+  )
+  # 修改前确认全部参数可读取，避免不支持的内核发生部分应用。
+  for value in ${REALITY_SYSCTLS[@]+"${REALITY_SYSCTLS[@]}"}; do
+    sysctl -n "${value%%=*}" >/dev/null || die "内核不支持 ${value%%=*}"
+  done
+}
+
 prepare_sysctl_config() {
   local output=$1
 
   cat >"$output" <<'EOF'
 # Managed by networt_optimization.sh
-# 保留内核 TCP 缓冲区自动调优，不设置固定的 rmem/wmem 上限。
+# 保留 TCP 缓冲区自动调优；REALITY 配置只提高 max，不提高 min/default。
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_mtu_probing = 1
 EOF
+
+  if [[ "$PROFILE" == xray-reality ]]; then
+    printf '# Xray-REALITY TCP profile; affects all system TCP sockets\n' >>"$output"
+    local entry
+    for entry in ${REALITY_SYSCTLS[@]+"${REALITY_SYSCTLS[@]}"}; do
+      printf '%s = %s\n' "${entry%%=*}" "${entry#*=}" >>"$output"
+    done
+  fi
 
   if [[ "$MODE" == ipv6 ]]; then
     cat >>"$output" <<'EOF'
@@ -540,6 +785,12 @@ apply_dns_configuration() {
 }
 
 verify_configuration() {
+  local entry actual expected
+  for entry in ${REALITY_SYSCTLS[@]+"${REALITY_SYSCTLS[@]}"}; do
+    actual=$(sysctl -n "${entry%%=*}" | awk '{$1=$1; print}')
+    expected=${entry#*=}
+    [[ "$actual" == "$expected" ]] || { warn "参数未生效: ${entry%%=*}"; return 1; }
+  done
   grep -Fxq "$GAI_BEGIN" "$GAI_FILE"
   [[ "$(sysctl -n net.ipv4.tcp_fastopen)" == 3 ]]
   [[ "$(sysctl -n net.ipv4.tcp_mtu_probing)" == 1 ]]
@@ -560,9 +811,11 @@ verify_configuration() {
 apply_configuration() {
   local temp_gai temp_sysctl temp_modules
 
-  confirm_action "将应用 ${MODE^^} 优先、Cloudflare DNS 和保守 TCP 优化，是否继续？"
+  confirm_action "将应用 ${MODE^^} 优先、Cloudflare DNS 和 ${PROFILE} TCP 优化（影响系统 TCP），是否继续？"
   create_backup
   APPLYING=true
+  apply_ipv6_address
+  select_dns_servers
 
   temp_gai=$(mktemp /tmp/network-gai.XXXXXX)
   temp_sysctl=$(mktemp /tmp/network-sysctl.XXXXXX)
@@ -595,6 +848,11 @@ apply_configuration() {
     log "BBR + FQ 已启用。"
   else
     log "当前内核未提供 BBR，保留现有拥塞控制算法。"
+  fi
+  if [[ "$PROFILE" == xray-reality ]]; then
+    log "Xray-REALITY TCP 系统参数已应用；缓冲区目标上限为 ${TCP_BUFFER_MIB} MiB，保留更大的现有值。"
+    log "请在维护窗口重启 Xray，使监听队列和新 TCP 连接使用新设置；本脚本不自动重启服务。"
+    log "gai.conf 不保证控制 Xray 的出站地址族；TCP Fast Open 还需 Xray sockopt 和客户端支持。"
   fi
   log "长期运行的进程可能需要重启才能重新读取地址选择策略。"
   show_status
@@ -716,8 +974,15 @@ show_status() {
   log "  地址选择: $mode"
   log "  DNS 设置: $dns_status"
   log "  IPv4 默认路由: $ipv4_route"
+  log "  IPv6 内核支持: ${IPV6_SUPPORTED}；已配置全局地址: $IPV6_HAS_ADDRESS"
   log "  IPv6 默认路由: $ipv6_route"
   log "  IPv6 all.disable_ipv6: $(read_sysctl net.ipv6.conf.all.disable_ipv6)（此值不代表实际连通性）"
+  log "  REALITY TCP 配置: $(if [[ -f "$SYSCTL_FILE" ]] && grep -Fq '# Xray-REALITY TCP profile;' "$SYSCTL_FILE"; then printf '已配置'; else printf '未配置'; fi)"
+  log "  TCP 接收缓冲区 min/default/max: $(read_sysctl net.ipv4.tcp_rmem)"
+  log "  TCP 发送缓冲区 min/default/max: $(read_sysctl net.ipv4.tcp_wmem)"
+  log "  TCP 接收自动调节: $(read_sysctl net.ipv4.tcp_moderate_rcvbuf)"
+  log "  监听队列上限: $(read_sysctl net.core.somaxconn)"
+  log "  SYN 队列上限: $(read_sysctl net.ipv4.tcp_max_syn_backlog)"
   log "  TCP Fast Open: $(read_sysctl net.ipv4.tcp_fastopen)"
   log "  MTU probing: $(read_sysctl net.ipv4.tcp_mtu_probing)"
   log "  拥塞控制: $(read_sysctl net.ipv4.tcp_congestion_control)"
@@ -754,11 +1019,13 @@ main() {
       require_root
       require_commands
       detect_ip_families
+      prepare_ipv6_address
       select_mode
       check_system
       validate_ip_mode
       select_dns_servers
       detect_dns_mode
+      prepare_reality_sysctls
       apply_configuration
       ;;
   esac
