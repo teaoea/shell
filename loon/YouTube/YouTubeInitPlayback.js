@@ -1,5 +1,5 @@
 /*
- * YouTubeInitPlayback 1.1.0 — local YouTube iOS initplayback ad negotiation cleanup.
+ * YouTubeInitPlayback 1.1.1 — local YouTube iOS initplayback ad negotiation cleanup.
  *
  * Validates the cached key, authenticates and decrypts the encrypted inner
  * player request locally, removes ad negotiation, then re-encrypts and signs
@@ -10,7 +10,7 @@
 (function () {
   "use strict";
 
-  var VERSION = "1.1.0";
+  var VERSION = "1.1.1";
   var SOURCE = "YouTubeInitPlayback";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -29,7 +29,8 @@
   function header(headers, name) { var keys = Object.keys(headers || {}), lower = name.toLowerCase(); for (var i = 0; i < keys.length; i++) if (keys[i].toLowerCase() === lower) return String(headers[keys[i]] || ""); return ""; }
   function isYouTubeApp() { var ua = header($request.headers,"user-agent"); return /(?:^|\s)com\.google\.ios\.youtube\//i.test(ua) && !/youtubemusic/i.test(ua); }
   function readVarint(bytes,cursor) { var value=0,factor=1,count=0; while(cursor.pos<bytes.length&&count++<10){var current=bytes[cursor.pos++];value+=(current&127)*factor;if(!Number.isSafeInteger(value))fail("unsafe-varint");if(current<128)return value;factor*=128;}fail("invalid-varint"); }
-  function parse(bytes,budget) { var cursor={pos:0},records=[]; while(cursor.pos<bytes.length){if(++budget.fields>MAX_FIELDS)fail("field-limit");var start=cursor.pos,tag=readVarint(bytes,cursor),no=Math.floor(tag/8),wire=tag&7;if(!no)fail("invalid-tag");var dataStart=cursor.pos,dataEnd=cursor.pos,value=null;if(wire===0){value=readVarint(bytes,cursor);dataEnd=cursor.pos;}else if(wire===1){cursor.pos+=8;dataEnd=cursor.pos;}else if(wire===2){var length=readVarint(bytes,cursor);if(!Number.isSafeInteger(length)||length<0||length>bytes.length-cursor.pos)fail("truncated-field");dataStart=cursor.pos;cursor.pos+=length;dataEnd=cursor.pos;}else if(wire===5){cursor.pos+=4;dataEnd=cursor.pos;}else fail("unsupported-wire");if(cursor.pos>bytes.length)fail("truncated-field");records.push({no:no,wire:wire,start:start,end:cursor.pos,dataStart:dataStart,dataEnd:dataEnd,value:value});}return records; }
+  function skipValue(bytes,cursor,no,wire,budget){if(wire===0)readVarint(bytes,cursor);else if(wire===1)cursor.pos+=8;else if(wire===2){var length=readVarint(bytes,cursor);if(!Number.isSafeInteger(length)||length<0||length>bytes.length-cursor.pos)fail("truncated-field");cursor.pos+=length;}else if(wire===3){while(cursor.pos<bytes.length){if(++budget.fields>MAX_FIELDS)fail("field-limit");var tag=readVarint(bytes,cursor),childNo=Math.floor(tag/8),childWire=tag&7;if(!childNo)fail("invalid-tag");if(childWire===4){if(childNo!==no)fail("mismatched-end-group");return;}skipValue(bytes,cursor,childNo,childWire,budget);}fail("truncated-group");}else if(wire===4)fail("unexpected-end-group");else if(wire===5)cursor.pos+=4;else fail("unsupported-wire");if(cursor.pos>bytes.length)fail("truncated-field");}
+  function parse(bytes,budget) { var cursor={pos:0},records=[]; while(cursor.pos<bytes.length){if(++budget.fields>MAX_FIELDS)fail("field-limit");var start=cursor.pos,tag=readVarint(bytes,cursor),no=Math.floor(tag/8),wire=tag&7;if(!no)fail("invalid-tag");var dataStart=cursor.pos,dataEnd=cursor.pos,value=null;if(wire===0){value=readVarint(bytes,cursor);dataEnd=cursor.pos;}else if(wire===1){cursor.pos+=8;dataEnd=cursor.pos;}else if(wire===2){var length=readVarint(bytes,cursor);if(!Number.isSafeInteger(length)||length<0||length>bytes.length-cursor.pos)fail("truncated-field");dataStart=cursor.pos;cursor.pos+=length;dataEnd=cursor.pos;}else if(wire===3){skipValue(bytes,cursor,no,wire,budget);dataEnd=cursor.pos;}else if(wire===5){cursor.pos+=4;dataEnd=cursor.pos;}else fail(wire===4?"unexpected-end-group":"unsupported-wire");if(cursor.pos>bytes.length)fail("truncated-field");records.push({no:no,wire:wire,start:start,end:cursor.pos,dataStart:dataStart,dataEnd:dataEnd,value:value});}return records; }
   function only(records,no,wire){var found=null;for(var i=0;i<records.length;i++)if(records[i].no===no&&records[i].wire===wire){if(found)fail("duplicate-schema-field");found=records[i];}return found;}
   function encryptedClientKey(body){var root=bytesOf(body);if(!root||!root.length||root.length>MAX_BODY)fail("unsupported-body");var budget={fields:0},outer=only(parse(root,budget),3,2);if(!outer)return null;var inner=root.subarray(outer.dataStart,outer.dataEnd),key=only(parse(inner,budget),5,2);return key?inner.subarray(key.dataStart,key.dataEnd):null;}
   function base64(bytes){var alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",result="";for(var i=0;i<bytes.length;i+=3){var a=bytes[i],b=i+1<bytes.length?bytes[i+1]:0,c=i+2<bytes.length?bytes[i+2]:0;result+=alphabet[a>>2]+alphabet[((a&3)<<4)|(b>>4)]+(i+1<bytes.length?alphabet[((b&15)<<2)|(c>>6)]:"=")+(i+2<bytes.length?alphabet[c&63]:"=");}return result;}

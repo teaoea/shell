@@ -70,11 +70,16 @@ const cryptoApi = {aes:{
 const hmac = (key, ...parts) => new Uint8Array(crypto.createHmac('sha256',Buffer.from(key)).update(Buffer.concat(parts.map(part=>Buffer.from(part)))).digest());
 const aesCtr = (key,iv,data) => cryptoApi.aes.encrypt(data,{key,iv}).ciphertext;
 const readVarint = (bytes,cursor) => { let value=0,factor=1; for(let i=0;i<10;i++){const byte=bytes[cursor.pos++];value+=(byte&127)*factor;if(byte<128)return value;factor*=128;} throw new Error('invalid-varint'); };
-const fields = bytes => { const cursor={pos:0},result=[]; while(cursor.pos<bytes.length){const start=cursor.pos,tag=readVarint(bytes,cursor),no=Math.floor(tag/8),wire=tag&7;let dataStart=cursor.pos,dataEnd=cursor.pos,value;if(wire===0){value=readVarint(bytes,cursor);dataEnd=cursor.pos;}else if(wire===2){const length=readVarint(bytes,cursor);dataStart=cursor.pos;cursor.pos+=length;dataEnd=cursor.pos;}else throw new Error('unsupported-wire');result.push({no,wire,start,end:cursor.pos,dataStart,dataEnd,value});}return result; };
+const fields = bytes => {
+  const cursor={pos:0},result=[];
+  const skip=(no,wire)=>{if(wire===0)readVarint(bytes,cursor);else if(wire===2){const length=readVarint(bytes,cursor);cursor.pos+=length;}else if(wire===3){while(cursor.pos<bytes.length){const tag=readVarint(bytes,cursor),childNo=Math.floor(tag/8),childWire=tag&7;if(childWire===4){assert.equal(childNo,no);return;}skip(childNo,childWire);}}else throw new Error('unsupported-wire');};
+  while(cursor.pos<bytes.length){const start=cursor.pos,tag=readVarint(bytes,cursor),no=Math.floor(tag/8),wire=tag&7;let dataStart=cursor.pos,dataEnd=cursor.pos,value;if(wire===0){value=readVarint(bytes,cursor);dataEnd=cursor.pos;}else if(wire===2){const length=readVarint(bytes,cursor);dataStart=cursor.pos;cursor.pos+=length;dataEnd=cursor.pos;}else if(wire===3){skip(no,wire);dataEnd=cursor.pos;}else throw new Error('unsupported-wire');result.push({no,wire,start,end:cursor.pos,dataStart,dataEnd,value});}return result;
+};
 const field = (bytes,no,wire=2) => { const item=fields(bytes).find(entry=>entry.no===no&&entry.wire===wire); return item && bytes.subarray(item.dataStart,item.dataEnd); };
-const makeEncryptedInit = (clientKey,encryptKey,player,{tamper=false,preroll=true}={}) => {
+const makeEncryptedInit = (clientKey,encryptKey,player,{tamper=false,preroll=true,unknownGroup=false}={}) => {
   const iv=Uint8Array.from({length:16},(_,i)=>i+1);
-  const plain=concat(message(1,new TextEncoder().encode('https://youtubei.googleapis.com/youtubei/v1/player')),message(3,new TextEncoder().encode(JSON.stringify(player))));
+  const group=unknownGroup?concat(varint(20*8+3),scalar(1,7),varint(20*8+4)):new Uint8Array(0);
+  const plain=concat(message(1,new TextEncoder().encode('https://youtubei.googleapis.com/youtubei/v1/player')),group,message(3,new TextEncoder().encode(JSON.stringify(player))));
   const encrypted=aesCtr(clientKey.subarray(0,16),iv,plain);
   const mac=hmac(clientKey.subarray(16),encrypted,iv); if(tamper)mac[0]^=255;
   const envelope=concat(message(2,encrypted),message(5,encryptKey),message(6,iv),message(7,mac),scalar(13,preroll?1:0));
@@ -84,7 +89,7 @@ const decryptPlayer = (body,clientKey) => {
   const envelope=field(body,3),encrypted=field(envelope,2),iv=field(envelope,6),mac=field(envelope,7);
   assert.deepEqual(mac,hmac(clientKey.subarray(16),encrypted,iv));
   const plain=cryptoApi.aes.decrypt(encrypted,{key:clientKey.subarray(0,16),iv});
-  return {player:JSON.parse(new TextDecoder().decode(field(plain,3))),preroll:fields(envelope).find(entry=>entry.no===13)?.value};
+  return {plain,player:JSON.parse(new TextDecoder().decode(field(plain,3))),preroll:fields(envelope).find(entry=>entry.no===13)?.value};
 };
 
 test('plugin routes the YouTube-only Onesie lifecycle to two function-specific scripts', () => {
@@ -171,6 +176,16 @@ test('initplayback crypto authentication failure passes through without changing
   const result=initPlayback(store,[...encryptKey],youtubeUA,{},body,cryptoApi);
   assert.deepEqual(Object.keys(result.output),[]);
   assert.equal(store.has(stateKey),true);
+});
+
+test('unknown protobuf groups in the decrypted request are preserved byte-for-byte', () => {
+  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+  const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+  const group=concat(varint(20*8+3),scalar(1,7),varint(20*8+4));
+  const body=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{value:'remove'}}},{unknownGroup:true});
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body,cryptoApi);
+  const plain=decryptPlayer(result.output.body,clientKey).plain;
+  assert.notEqual(Buffer.from(plain).indexOf(Buffer.from(group)),-1);
 });
 
 test('fallback can be disabled, and absent config never blocks playback', () => {

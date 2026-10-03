@@ -90,12 +90,12 @@ test('shared exports retain function-specific Onesie summaries', () => {
     [configKey, JSON.stringify({enabled:false,session})],
     [cacheKey, JSON.stringify({session,captureBytes:0,entries:[
       {source:'YouTubeOnesieConfig',version:'1.0.0',endpoint:'config',level:'info',time:'2026-10-04T01:00:00.000Z',phase:'response',message:'updated: lifetime_seconds=600 hot_config=true'},
-      {source:'YouTubeInitPlayback',version:'1.1.0',endpoint:'initplayback',level:'warn',time:'2026-10-04T01:00:01.000Z',phase:'request',message:'mismatch: config cleared refresh=true'}
+      {source:'YouTubeInitPlayback',version:'1.1.1',endpoint:'initplayback',level:'warn',time:'2026-10-04T01:00:01.000Z',phase:'request',message:'mismatch: config cleared refresh=true'}
     ]})]
   ]);
   const data = JSON.parse(request(store, '/download.json').body);
   assert.deepEqual(data.events.map(event => event.summary.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
-  assert.match(request(store, '/download.log').body, /YouTubeInitPlayback 1\.1\.0/);
+  assert.match(request(store, '/download.log').body, /YouTubeInitPlayback 1\.1\.1/);
 });
 test('manual entry points to the local page without silently enabling recording', () => {
   const store = new Map();
