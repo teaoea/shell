@@ -8,7 +8,7 @@
 suppress_player_ads = switch,true,tag=关闭播放器广告协商,desc=清理 player 请求中的广告信号与 VAST 参数，并声明不请求内联广告；不阻断媒体流
 block_ad_break = switch,true,tag=拦截片头/中插广告配置,desc=对明确的 player/ad_break 请求返回空 Protobuf；不拦截视频媒体
 background_playback = switch,false,tag=后台播放,desc=开启后允许普通视频在切换 App 或锁屏后继续播放音频；直播和受限内容仍由 YouTube 决定
-onesie_enabled = switch,true,tag=新版播放链路去广告,desc=仅为 YouTube App 在本机验证、解密、清理并重签 initplayback 播放器请求；使用内置标准 AES-CTR，不使用第三方服务
+onesie_enabled = switch,true,tag=新版播放链路去广告,desc=本机验证、解压、清理并重签 initplayback；压缩正文处理需 Loon Build 988+，不使用第三方服务
 remove_shorts_ads = switch,true,tag=清理 Shorts 广告,desc=删除明确标记 isAd 的 Shorts 播放条目；保留普通 Shorts
 adaptive_feed_ads = switch,true,tag=自适应信息流广告,desc=在已确认的信息流卡片内识别 pagead 标记，补充固定 EML 映射
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面

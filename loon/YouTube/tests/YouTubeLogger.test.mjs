@@ -94,7 +94,7 @@ test('shared exports retain function-specific Onesie summaries', () => {
     [configKey, JSON.stringify({enabled:false,session})],
     [cacheKey, JSON.stringify({session,captureBytes:0,entries:[
       {source:'YouTubeOnesieConfig',version:'1.0.0',endpoint:'config',level:'info',time:'2026-10-04T01:00:00.000Z',phase:'response',message:'updated: lifetime_seconds=600 hot_config=true'},
-      {source:'YouTubeInitPlayback',version:'1.2.0',endpoint:'initplayback',level:'warn',time:'2026-10-04T01:00:01.000Z',phase:'request',message:'mismatch: config cleared refresh=true'}
+      {source:'YouTubeInitPlayback',version:'1.3.0',endpoint:'initplayback',level:'warn',time:'2026-10-04T01:00:01.000Z',phase:'request',message:'mismatch: config cleared refresh=true'}
     ]})]
   ]);
   assert.deepEqual(events(store).map(event => event.summary.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
