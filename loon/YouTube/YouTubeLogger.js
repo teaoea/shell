@@ -1,4 +1,4 @@
-/* YouTubeLogger 1.7.0 — shared diagnostic cache, levels and .log export.
+/* YouTubeLogger 1.8.0 — shared diagnostic cache, levels and .log export.
  * No network calls, filesystem assumptions, third-party code, or automatic uploads.
  * Enabled manually in the main plugin; no separate Logger plugin.
  */
@@ -6,9 +6,9 @@
   "use strict";
   var CONFIG = "ytads.logger.config.v1";
   var CACHE = "ytads.logger.entries.v2";
-  var SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeLogger"];
+  var SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback", "YouTubeLogger"];
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "1.7.0";
+  var VERSION = "1.8.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;

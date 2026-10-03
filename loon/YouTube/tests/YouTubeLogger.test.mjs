@@ -43,15 +43,16 @@ function play(store, debug = false, failure = '') {
   }, failure);
 }
 
-test('main plugin contains ad rules, modern playback capture and one disabled logger entry; no separate plugin', () => {
+test('main plugin contains ad rules, function-specific Onesie scripts and one disabled logger entry; no separate plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
   assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 5);
   assert.ok(plugin.includes('log_enabled = switch,false'));
   assert.ok(plugin.includes('script_debug = switch,false'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
   const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
-  assert.equal(loggerLines.length, 5);
-  assert.ok(loggerLines.filter(x => x.includes('新版播放')).every(x => x.includes('enable={capture_raw},argument=[{log_enabled},{log_level},{capture_raw},{capture_budget}]')));
+  assert.equal(loggerLines.length, 3);
+  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeOnesieConfig.js')).length, 2);
+  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeInitPlayback.js')).length, 1);
   assert.ok(loggerLines.find(x => x.includes('开发请求抓包')).includes('requires-body=true,binary-body-mode=true'));
   assert.ok(plugin.includes('DOMAIN-SUFFIX,googlevideo.com'));
   const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('youtube-logs'));
@@ -82,6 +83,19 @@ test('modern playback logger captures initplayback requests and config responses
   const data = JSON.parse(request(store, '/download.json').body);
   assert.equal(data.events[0].capture.request.url, init);
   assert.equal(data.events[1].capture.responseBefore.body.bytes, 2);
+});
+test('shared exports retain function-specific Onesie summaries', () => {
+  const session = 'onesie-session';
+  const store = new Map([
+    [configKey, JSON.stringify({enabled:false,session})],
+    [cacheKey, JSON.stringify({session,captureBytes:0,entries:[
+      {source:'YouTubeOnesieConfig',version:'1.0.0',endpoint:'config',level:'info',time:'2026-10-04T01:00:00.000Z',phase:'response',message:'updated: lifetime_seconds=600 hot_config=true'},
+      {source:'YouTubeInitPlayback',version:'1.0.0',endpoint:'initplayback',level:'warn',time:'2026-10-04T01:00:01.000Z',phase:'request',message:'mismatch: config cleared refresh=true'}
+    ]})]
+  ]);
+  const data = JSON.parse(request(store, '/download.json').body);
+  assert.deepEqual(data.events.map(event => event.summary.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
+  assert.match(request(store, '/download.log').body, /YouTubeInitPlayback 1\.0\.0/);
 });
 test('manual entry points to the local page without silently enabling recording', () => {
   const store = new Map();

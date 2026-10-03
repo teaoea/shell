@@ -58,7 +58,7 @@ function passed(result) {
 test('plugin routes playback and stream responses to distinct standalone scripts', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
   assert.equal(allEntries.length, 5);
-  const entries = allEntries.filter(line => !line.includes('YouTubeFeedAds.js') && !line.includes('YouTubeShortsAds.js') && !line.includes('YouTubeLogger.js'));
+  const entries = allEntries.filter(line => !line.includes('YouTubeFeedAds.js') && !line.includes('YouTubeShortsAds.js') && !line.includes('YouTubeOnesieConfig.js'));
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
