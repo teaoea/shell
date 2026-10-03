@@ -295,6 +295,8 @@ node --test loon/YouTube/tests/*.test.mjs
 
 ## 规范参考
 
+- Maasea 两份上游构建文件的固定副本、可读还原与逻辑索引：[`vendor/Maasea/README.md`](vendor/Maasea/README.md)
+
 - 推荐接口字段描述（2025-02-18 逆向 schema）：https://github.com/davidzeng0/innertube/tree/main/protos/youtube/api/innertube
 - Protocol Buffers wire format：https://protobuf.dev/programming-guides/encoding/
 - Loon Script 语法：https://nsloon.app/en/docs/Script/
