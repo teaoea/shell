@@ -887,6 +887,7 @@ read_sysctl() {
 
 test_ip_connectivity() {
   local family=$1 address=$2
+  local curl_output
   local -a curl_family
 
   if [[ "$family" == IPv4 ]]; then
@@ -895,15 +896,21 @@ test_ip_connectivity() {
     curl_family=(-6)
   fi
 
-  if curl --disable --noproxy '*' "${curl_family[@]}" \
-    --resolve "cloudflare-dns.com:443:$address" \
-    --connect-timeout 3 --max-time 6 --fail --silent --show-error \
-    --output /dev/null \
-    'https://cloudflare-dns.com/dns-query?name=example.com&type=A' \
-    2>/dev/null; then
+  if curl_output=$(
+    trap - ERR
+    curl --disable --noproxy '*' "${curl_family[@]}" \
+      --resolve "cloudflare-dns.com:443:$address" \
+      --connect-timeout 3 --max-time 6 --fail --silent --show-error \
+      --header 'Accept: application/dns-json' \
+      --write-out 'HTTP %{http_code}' \
+      --output /dev/null \
+      'https://cloudflare-dns.com/dns-query?name=example.com&type=A' \
+      2>&1
+  ); then
     log "  $family 直连测试: 成功（$address:443）"
   else
-    log "  $family 直连测试: 失败或超时（$address:443）"
+    curl_output=${curl_output//$'\n'/'; '}
+    log "  $family 直连测试: 失败（$address:443；${curl_output:-无详细错误}）"
   fi
 }
 

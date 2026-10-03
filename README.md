@@ -16,11 +16,11 @@
 xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh) && sudo bash -c "$xray_script"
 ```
 
-脚本要求 root 权限，默认使用 TCP 443 和 `www.apple.com` 作为 REALITY 伪装域名。交互安装会先询问伪装域名，直接回车使用默认值；用户输入其他域名时，脚本会校验格式，并把同一域名写入 REALITY `target`、`serverNames` 和 Loon `sni`。随后会明确询问 Xray 出站使用 IPv4 优先还是 IPv6 优先，并询问是否应用 Xray-REALITY 针对性系统网络优化。Xray 使用 Happy Eyeballs 优先连接所选地址族，连接不通时回退到另一地址族；自动检测 Loon 节点公网地址时也按相同顺序尝试。
+脚本要求 root 权限，默认使用 TCP 443 和 `www.apple.com` 作为 REALITY 伪装域名。交互安装会先询问 Xray 出站使用 IPv4 优先还是 IPv6 优先，并询问是否应用 Xray-REALITY 针对性系统网络优化；选择优化时先完成网络优化。脚本在真正安装 Xray 前最后询问 REALITY 伪装域名，直接回车使用默认值；用户输入其他域名时，脚本会校验格式，并把同一域名写入 REALITY `target`、`serverNames` 和 Loon `sni`。Xray 使用 Happy Eyeballs 优先连接所选地址族，连接不通时回退到另一地址族；自动检测 Loon 节点公网地址时也按相同顺序尝试。
 
 选择网络优化后，脚本从本仓库 GitHub `main` 分支下载 `networt_optimization.sh`，按所选地址族运行 `--xray-reality` 配置，并在 Xray 配置中启用 TCP Fast Open。该操作会修改系统 TCP、Cloudflare DNS 和地址优先级，仅支持网络优化脚本声明的系统范围：IPv4 模式支持 Debian，IPv6 模式支持 Debian 13。若后续 Xray 安装失败，安装脚本会尝试回滚本次网络优化。选择不优化时，不修改系统网络配置，Xray 配置仍会保留所选地址族的优先级与回退。
 
-它随后调用 Xray 官方安装器，生成 VLESS + REALITY + XTLS Vision 服务端配置，校验后启动服务，并在终端打印可粘贴到 Loon `[Proxy]` 段的节点。已有的 Xray 服务端配置会在安装前备份，安装失败时尝试恢复。
+它随后调用 Xray 官方安装器，生成 VLESS + REALITY + XTLS Vision 服务端配置并启动服务。只有程序文件、当前配置校验、服务开机启动、服务运行状态全部通过检查，且在系统提供 `ss` 时确认目标 TCP 端口已监听，才会报告 Xray 已安装并输出可粘贴到 Loon `[Proxy]` 段的节点；任何一项失败都会报告具体状态并尝试恢复安装前的配置。已有的 Xray 服务端配置会在安装前备份。
 
 `--yes` 跳过安装确认，但必须同时用 `--ipv4` / `--ipv6` 明确网络优先级，并用 `--optimize-network` / `--no-optimize-network` 明确是否优化。例如：
 
@@ -34,7 +34,7 @@ sudo bash install_xray.sh --ipv6 --no-optimize-network \
 
 脚本仅校验 Xray 服务端配置及服务状态，不测试客户端到 VPS 的公网连通性。Loon 节点配置只打印在终端，不再写入 `/root/xray-reality-client.txt`；请自行保存输出并妥善保管连接凭据。脚本不修改防火墙或云安全组。
 
-安装后可用 `systemctl status xray` 查看服务状态。
+安装结果会逐项显示程序文件、配置校验、开机启动、运行状态和监听端口；安装后也可用 `systemctl status xray` 再次查看服务状态。
 
 如需重跑脚本，新的 UUID、密钥和 Short ID 会替换旧配置，Loon 中也要更新为最新输出。
 
@@ -100,7 +100,7 @@ sudo bash networt_optimization.sh --ipv4 --yes \
 
 DNS 修改会保留普通 `/etc/resolv.conf` 中的搜索域等设置；运行中的 `systemd-resolved` 会通过配置片段设置 DNS。遇到由其他程序管理的符号链接时，脚本会停止并提示先修改对应程序的配置。部分 VPS 会在续租或重启时重新生成普通 `resolv.conf`，此时需在其网络管理程序中设置持久 DNS。
 
-应用前会把现有配置和运行时参数备份到 `/var/lib/network-optimizer/backups/`。脚本还支持 `--status` 查看状态并用 `curl` 测试已配置地址族到 Cloudflare 固定 IP 的 HTTPS 直连，`--rollback` 恢复最近一次修改。直连测试不经过 DNS 或代理；脚本不额外验证 Cloudflare DNS 的解析可用性。已有长期运行的进程可能需要重启，才会重新读取地址选择策略。
+应用前会把现有配置和运行时参数备份到 `/var/lib/network-optimizer/backups/`。脚本还支持 `--status` 查看状态并用 `curl` 向 Cloudflare 固定 IP 发出带正确响应格式的 HTTPS DoH 请求，测试已配置地址族的直连；失败时会保留 HTTP 或 curl 错误，`--rollback` 恢复最近一次修改。直连测试不经过 DNS 或代理；脚本不额外验证 Cloudflare DNS 的解析可用性。已有长期运行的进程可能需要重启，才会重新读取地址选择策略。
 
 ## 许可证
 

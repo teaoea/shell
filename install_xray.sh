@@ -32,6 +32,7 @@ CONFIG_BACKUP=""
 REPLACEMENT_PENDING=false
 PREVIOUSLY_ACTIVE=false
 NETWORK_OPTIMIZATION_APPLIED=false
+XRAY_LISTENER_STATUS="未检查"
 
 die() {
   printf '错误: %s\n' "$*" >&2
@@ -285,15 +286,14 @@ find_loon_address() {
   validate_loon_address "$LOON_SERVER_IP"
 }
 
-confirm_installation() {
+confirm_installation_plan() {
   local answer mode_label optimization_text="不修改系统网络配置"
   [[ "$ASSUME_YES" == true ]] && return
   [[ -t 0 ]] || die "非交互运行请添加 --yes"
   [[ "$OPTIMIZE_NETWORK" != true ]] || optimization_text="应用 Xray-REALITY 系统网络优化"
   mode_label=$(network_mode_label)
-  printf '已选择: 伪装域名 %s；%s 优先；%s。\n' \
-    "$REALITY_SERVER_NAME" "$mode_label" "$optimization_text"
-  read -r -p "将按以上设置安装 Xray 并替换其服务端配置，继续？(y/N): " answer
+  printf '已选择: %s 优先；%s。\n' "$mode_label" "$optimization_text"
+  read -r -p "将先处理网络设置，再询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
   [[ "$answer" =~ ^[Yy]$ ]] || {
     printf '操作已取消。\n'
     exit 0
@@ -406,13 +406,48 @@ EOF
     journalctl -u xray --no-pager -n 30 >&2 || true
     die "Xray 服务未能启动"
   fi
+}
+
+verify_xray_installation() {
+  local attempt
+
+  [[ -x "$XRAY_BIN" ]] || die "安装状态检查失败：未找到可执行文件 $XRAY_BIN"
+  [[ -s "$XRAY_CONFIG_FILE" ]] || die "安装状态检查失败：未找到有效配置 $XRAY_CONFIG_FILE"
+  "$XRAY_BIN" run -test -config "$XRAY_CONFIG_FILE" >/dev/null ||
+    die "安装状态检查失败：Xray 配置校验未通过"
+  systemctl is-enabled --quiet xray ||
+    die "安装状态检查失败：Xray 服务未设置为开机启动"
+  systemctl is-active --quiet xray ||
+    die "安装状态检查失败：Xray 服务未运行"
+
+  if command -v ss >/dev/null 2>&1; then
+    for attempt in {1..10}; do
+      if ss -H -ltn 2>/dev/null |
+        awk -v port="$XRAY_PORT" '$4 ~ (":" port "$") {found=1} END {exit !found}'; then
+        XRAY_LISTENER_STATUS="TCP ${XRAY_PORT}（已监听）"
+        break
+      fi
+      sleep 0.2
+    done
+    [[ "$XRAY_LISTENER_STATUS" != "未检查" ]] ||
+      die "安装状态检查失败：未发现 TCP $XRAY_PORT 监听端口"
+  else
+    XRAY_LISTENER_STATUS="TCP ${XRAY_PORT}（未检查，系统缺少 ss）"
+  fi
+
   REPLACEMENT_PENDING=false
 }
 
 print_loon_config() {
   local mode_label
   mode_label=$(network_mode_label)
-  printf '\nXray 已安装并运行。Loon 节点配置（粘贴到 [Proxy] 段）：\n'
+  printf '\nXray 安装状态：\n'
+  printf '  程序文件: 已安装（%s）\n' "$XRAY_BIN"
+  printf '  服务端配置: 校验通过（%s）\n' "$XRAY_CONFIG_FILE"
+  printf '  开机启动: 已启用\n'
+  printf '  运行状态: 正在运行\n'
+  printf '  监听状态: %s\n' "$XRAY_LISTENER_STATUS"
+  printf '\nLoon 节点配置（粘贴到 [Proxy] 段）：\n'
   printf 'Xray-REALITY = VLESS,%s,%s,"%s",transport=tcp,flow=xtls-rprx-vision,public-key="%s",short-id=%s,over-tls=true,sni=%s,tls-profile=chrome,udp=true,block-quic=false\n' \
     "$LOON_SERVER_IP" "$XRAY_PORT" "$UUID" "$PUBLIC_KEY" "$SHORT_ID" "$REALITY_SERVER_NAME"
   printf 'REALITY 伪装域名: %s。\n' "$REALITY_SERVER_NAME"
@@ -427,16 +462,17 @@ print_loon_config() {
 main() {
   parse_arguments "$@"
   check_environment
-  select_reality_server_name
   select_network_preferences
-  confirm_installation
+  confirm_installation_plan
   apply_network_optimization
   find_loon_address
+  select_reality_server_name
   backup_existing_config
   install_xray
   generate_credentials
   write_xray_config
-  # Xray 已成功启动，此后即使终端输出失败也不回滚已完成的网络优化。
+  verify_xray_installation
+  # Xray 安装状态已核验，此后即使终端输出失败也不回滚已完成的网络优化。
   NETWORK_OPTIMIZATION_APPLIED=false
   print_loon_config
 }
