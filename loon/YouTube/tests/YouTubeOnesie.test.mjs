@@ -109,7 +109,7 @@ test('plugin routes the YouTube-only Onesie lifecycle through the merged configu
   const configLines = plugin.split('\n').filter(line => line.includes('YouTubeConfig.js'));
   const initLine = plugin.split('\n').find(line => line.includes('googlevideo\\.com\\/initplayback'));
   assert.equal(configLines.length, 3);
-  assert.ok(initLine && !initLine.includes('enable=') && initLine.includes('requires-body=false') && !initLine.includes('binary-body-mode=true'));
+  assert.ok(initLine && !initLine.includes('enable=') && initLine.includes('requires-body=true') && initLine.includes('binary-body-mode=true'));
   assert.ok(configLines.every(line => !line.includes('music\\.')));
   assert.ok(!initLine.includes('workers.dev'));
 });
@@ -152,25 +152,21 @@ test('log_event requests refresh full config only when the YouTube cache is abse
 
 test('matching initplayback key passes through; mismatch clears state and triggers one local fallback', () => {
   const matching = new Map(); configResponse(matching);
-  assert.deepEqual(Object.keys(initPlayback(matching,[9,8,7],youtubeUA,{onesie_classic_fallback:false}).output), []);
+  assert.deepEqual(Object.keys(initPlayback(matching,[9,8,7],youtubeUA,{onesie_local_crypto:true}).output), []);
   assert.equal(matching.has(stateKey), true);
 
   const stale = new Map(); configResponse(stale);
-  const result = initPlayback(stale,[3,3,3],youtubeUA,{onesie_classic_fallback:false});
+  const result = initPlayback(stale,[3,3,3],youtubeUA,{onesie_local_crypto:true});
   assert.equal(result.output.response.status, 200);
   assert.equal(result.output.response.headers['Content-Type'], 'application/x-protobuf');
   assert.equal(result.output.response.body.length, 0);
   assert.equal(stale.has(stateKey), false);
 });
 
-test('exact YouTube App initplayback immediately falls back without config, body parsing or repackaging', () => {
-  const store=new Map();
-  const result=initPlayback(store,[9,8,7],youtubeUA,{script_debug:true},Uint8Array.from([255]));
-  assert.equal(result.output.response.status,200);
-  assert.equal(result.output.response.headers['Content-Type'],'application/x-protobuf');
-  assert.equal(result.output.response.body.length,0);
-  assert.equal(store.has(stateKey),false);
-  assert.ok(result.logs.some(line=>line.includes('immediate=true classic_player=true')));
+test('default Onesie processing leaves malformed requests untouched instead of returning an empty response', () => {
+  const result=initPlayback(new Map(),[9,8,7],youtubeUA,{script_debug:true},Uint8Array.from([255]));
+  assert.deepEqual(Object.keys(result.output), []);
+  assert.ok(result.logs.some(line=>line.includes('pass:')));
 });
 
 test('matching initplayback request is authenticated, cleaned, re-encrypted and signed locally without a runtime crypto API', () => {
@@ -178,7 +174,7 @@ test('matching initplayback request is authenticated, cleaned, re-encrypted and 
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast',forceAdParameters:'forced'}}};
   const body=makeEncryptedInit(clientKey,encryptKey,player);
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_classic_fallback:false},body);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_local_crypto:true},body);
   assert.ok(result.output.body instanceof Uint8Array);
   assert.equal(result.output.headers['Content-Length'],undefined);
   assert.equal(result.output.headers['Content-Encoding'],undefined);
@@ -196,7 +192,7 @@ test('gzip-compressed inner request is decompressed, cleaned and recompressed be
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast'}}};
   const body=makeEncryptedInit(clientKey,encryptKey,player,{gzip:true});
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_classic_fallback:false},body,undefined,utilsApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_local_crypto:true},body,undefined,utilsApi);
   const cleaned=decryptPlayer(result.output.body,clientKey,{gzip:true});
   assert.equal(cleaned.player.context.adSignalsInfo,undefined);
   assert.equal(cleaned.player.playbackContext.contentPlaybackContext.adParams,undefined);
@@ -208,7 +204,7 @@ test('binary protobuf player body in iOS initplayback is cleaned without changin
   const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
   const store=new Map([[logConfigKey,JSON.stringify({enabled:true,session:'protobuf-session'})]]);configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const body=makeEncryptedInit(clientKey,encryptKey,protobufPlayer(),{protobuf:true,gzip:true});
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{capture_raw:true,onesie_classic_fallback:false},body,undefined,utilsApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{capture_raw:true,onesie_local_crypto:true},body,undefined,utilsApi);
   assert.ok(result.output.body instanceof Uint8Array);
   const decrypted=decryptPlayer(result.output.body,clientKey,{gzip:true});
   const player=field(decrypted.plain,3),context=field(player,1),playback=field(player,4),content=field(playback,1);
@@ -227,7 +223,7 @@ test('initplayback crypto authentication failure passes through without changing
   const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const body=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{}}},{tamper:true});
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_classic_fallback:false},body,cryptoApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_local_crypto:true},body,cryptoApi);
   assert.deepEqual(Object.keys(result.output),[]);
   assert.equal(store.has(stateKey),true);
 });
@@ -237,17 +233,17 @@ test('unknown protobuf groups in the decrypted request are preserved byte-for-by
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const group=concat(varint(20*8+3),scalar(1,7),varint(20*8+4));
   const body=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{value:'remove'}}},{unknownGroup:true});
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_classic_fallback:false},body,cryptoApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_local_crypto:true},body,cryptoApi);
   const plain=decryptPlayer(result.output.body,clientKey).plain;
   assert.notEqual(Buffer.from(plain).indexOf(Buffer.from(group)),-1);
 });
 
 test('fallback can be disabled, and absent config never blocks playback', () => {
   const stale = new Map(); configResponse(stale);
-  const result = initPlayback(stale,[3,3,3],youtubeUA,{onesie_classic_fallback:false,onesie_refresh_on_mismatch:false});
+  const result = initPlayback(stale,[3,3,3],youtubeUA,{onesie_local_crypto:true,onesie_refresh_on_mismatch:false});
   assert.deepEqual(Object.keys(result.output), []);
   assert.equal(stale.has(stateKey), false);
-  assert.deepEqual(Object.keys(initPlayback(new Map(),[9,8,7],youtubeUA,{onesie_classic_fallback:false}).output), []);
+  assert.deepEqual(Object.keys(initPlayback(new Map(),[9,8,7],youtubeUA,{onesie_local_crypto:true}).output), []);
 });
 
 test('YouTube Music, unknown clients, malformed messages and disabled execution pass through', () => {
@@ -267,10 +263,50 @@ test('YouTube Music, unknown clients, malformed messages and disabled execution 
 test('raw development events use the shared cache while summaries never expose key values', () => {
   const store = new Map([[logConfigKey,JSON.stringify({enabled:true,session:'raw-session'})]]);
   configResponse(store,makeConfig(),youtubeUA,{capture_raw:true});
-  initPlayback(store,[9,8,7],youtubeUA,{capture_raw:true});
+  initPlayback(store,[9,8,7],youtubeUA,{capture_raw:true},makeEncryptedInit(Uint8Array.from({length:32},(_,i)=>i+1),Uint8Array.from([9,8,7]),{videoId:"private"}));
   const entries = JSON.parse(store.get(logCacheKey)).entries;
   assert.deepEqual(entries.map(entry => entry.source), ['YouTubeConfig','YouTubeConfig']);
-  assert.match(entries[1].message, /development capture: fallback: immediate=true classic_player=true changed=true/);
+  assert.match(entries[1].message, /development capture: changed: preroll_flag=false mode=in_place crypto_unchanged=true fallback=false changed=true/);
   assert.ok(entries.every(entry => entry.captureRef));
   assert.ok(entries.every(entry => !entry.message.includes('CQgH')));
+});
+
+test('preroll flag changes one byte without decrypting, re-signing, or returning a synthetic response', () => {
+  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+  const original=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{params:[1]}},videoId:'PRIVATE'}, {tamper:true});
+  const snapshot=Uint8Array.from(original);
+  const result=initPlayback(new Map(),[],youtubeUA,{script_debug:true},original);
+  assert.equal(result.output.response,undefined);
+  assert.equal(result.output.body.length,original.length);
+  assert.deepEqual(original,snapshot);
+  const before=field(original,3),after=field(result.output.body,3);
+  for (const n of [2,5,6,7]) assert.deepEqual(field(after,n),field(before,n));
+  assert.equal(fields(after).find(x=>x.no===13).value,0);
+  assert.equal(Array.from(original).filter((x,i)=>x!==result.output.body[i]).length,1);
+  assert.ok(result.logs.some(x=>x.includes('mode=in_place crypto_unchanged=true fallback=false')));
+  assert.equal(result.output.headers['Content-Encoding'],undefined);
+  assert.equal(result.output.headers['Content-Length'],undefined);
+});
+
+test('missing preroll flag is appended only to the validated envelope without changing crypto bytes', () => {
+  const original=makeEncryptedInit(Uint8Array.from({length:32},(_,i)=>i+1),Uint8Array.from([9,8,7]),{videoId:'PRIVATE'});
+  const envelope=field(original,3),without=concat(...fields(envelope).filter(x=>x.no!==13).map(x=>envelope.subarray(x.start,x.end)));
+  const input=concat(scalar(99,42),message(3,without),message(100,Uint8Array.from([9,8])));
+  const result=initPlayback(new Map(),[],youtubeUA,{},input);
+  assert.equal(result.output.response,undefined);
+  const after=field(result.output.body,3);
+  for(const n of [2,5,6,7])assert.deepEqual(field(after,n),field(without,n));
+  assert.equal(fields(after).find(x=>x.no===13).value,0);
+  assert.deepEqual(field(result.output.body,100),field(input,100));
+  assert.equal(fields(result.output.body).find(x=>x.no===99).value,42);
+});
+
+test('disabled, duplicate and malformed preroll flags preserve the entire request without fallback', () => {
+  const original=makeEncryptedInit(Uint8Array.from({length:32},(_,i)=>i+1),Uint8Array.from([9,8,7]),{videoId:'PRIVATE'}, {preroll:false});
+  const envelope=field(original,3);
+  const noFlag=concat(...fields(envelope).filter(x=>x.no!==13).map(x=>envelope.subarray(x.start,x.end)));
+  for (const input of [message(3,concat(envelope,message(2,Uint8Array.from([1])))),message(3,concat(envelope,scalar(5,1))),original,message(3,concat(envelope,scalar(13,1))),message(3,concat(noFlag,message(13,Uint8Array.from([1])))),message(3,concat(noFlag,scalar(13,2))),concat(original,original),Uint8Array.from([26,255])]) {
+    const result=initPlayback(new Map(),[],youtubeUA,{},input);
+    assert.deepEqual(Object.keys(result.output),[]);
+  }
 });

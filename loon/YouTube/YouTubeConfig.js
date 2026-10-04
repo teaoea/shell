@@ -434,7 +434,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.6.0";
+  var VERSION = "1.7.0";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -445,7 +445,7 @@ function (key) {
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.onesie_enabled !== false && args.onesie_enabled !== "false";
   var refreshMismatch = args.onesie_refresh_on_mismatch !== false && args.onesie_refresh_on_mismatch !== "false";
-  var classicFallback = args.onesie_classic_fallback !== false && args.onesie_classic_fallback !== "false";
+  var directPreroll = !flag(args.onesie_local_crypto);
   var debug = flag(args.script_debug);
   var API = /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$/i;
 
@@ -499,6 +499,51 @@ function (key) {
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   function encryptedClientKey(body){var root=bytesOf(body);if(!root||!root.length||root.length>MAX_BODY)fail("unsupported-body");var budget={fields:0},outer=only(parse(root,budget),3,2);if(!outer)return null;var inner=root.subarray(outer.dataStart,outer.dataEnd),key=only(parse(inner,budget),5,2);return key?inner.subarray(key.dataStart,key.dataEnd):null;}
+  /**
+   * 功能：只关闭 Onesie 外层信封的片头广告请求标志，保留密文、密钥、IV、HMAC 与未知字段。
+   * 更新时间：2026-10-04T15:47:25+08:00
+   * @param {Uint8Array|ArrayBuffer} body 已由 Loon 提供的二进制请求正文。
+   * @returns {Object|null} 返回修改后的正文与方式；已关闭或未知结构返回空值。
+   * @throws {Error} 重复字段、字段类型异常或截断时拒绝修改。
+   */
+  function disablePreroll(body) {
+    var root = bytesOf(body);
+    if (!root || !root.length || root.length > MAX_BODY) fail("unsupported-body");
+    var budget = {fields:0}, roots = parse(root, budget);
+    var outer = only(roots, 3, 2);
+    if (!outer) return null;
+    var count = 0, i;
+    for (i = 0; i < roots.length; i++) if (roots[i].no === 3) count++;
+    if (count !== 1) fail("duplicate-schema-field");
+    var envelope = root.subarray(outer.dataStart, outer.dataEnd), fields = parse(envelope, budget);
+    for (var n = 0; n < 4; n++) {
+      var number = [2,5,6,7][n], total = 0;
+      for (i = 0; i < fields.length; i++) if (fields[i].no === number) {
+        total++;
+        if (fields[i].wire !== 2) fail("invalid-envelope-field");
+      }
+      if (total > 1) fail("duplicate-schema-field");
+    }
+    var cipher = only(fields, 2, 2), key = only(fields, 5, 2), iv = only(fields, 6, 2), mac = only(fields, 7, 2);
+    if (!cipher || !key || !iv || !mac || cipher.dataEnd === cipher.dataStart || key.dataEnd === key.dataStart || iv.dataEnd - iv.dataStart !== 16 || mac.dataEnd - mac.dataStart !== 32) return null;
+    var flags = [];
+    for (i = 0; i < fields.length; i++) if (fields[i].no === 13) flags.push(fields[i]);
+    if (flags.length > 1) fail("duplicate-schema-field");
+    var preroll = flags[0];
+    if (preroll && (preroll.wire !== 0 || (preroll.value !== 0 && preroll.value !== 1))) fail("invalid-preroll-flag");
+    if (preroll && preroll.value === 0) return null;
+    if (preroll && preroll.dataEnd - preroll.dataStart === 1) {
+      var result = new Uint8Array(root);
+      result[outer.dataStart + preroll.dataStart] = 0;
+      return {body:result, mode:"in_place"};
+    }
+    var parts = [];
+    for (i = 0; i < fields.length; i++) parts.push(fields[i] === preroll ? scalar(13, 0) : raw(envelope, fields[i]));
+    if (!preroll) parts.push(scalar(13, 0));
+    var changed = message(3, concat(parts)), rootParts = [];
+    for (i = 0; i < roots.length; i++) rootParts.push(roots[i] === outer ? changed : raw(root, roots[i]));
+    return {body:concat(rootParts), mode:"envelope_only"};
+  }
   /**
    * 功能：执行 base64 对应的内部处理步骤。
    * 更新时间：2026-10-04T08:54:22+08:00
@@ -734,9 +779,12 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
   var output = {};
   if (enabled && typeof $request !== "undefined" && typeof $response === "undefined" && API.test($request.url || "") && isYouTubeApp()) {
     try {
-      if (classicFallback) {
-        output = classicPlaybackResponse();
-        record("fallback: immediate=true classic_player=true", "info", output);
+      if (directPreroll) {
+        var direct = disablePreroll($request.body);
+        if (direct) {
+          output = {headers:rewrittenHeaders($request.headers), body:direct.body};
+          record("changed: preroll_flag=false mode=" + direct.mode + " crypto_unchanged=true fallback=false", "info", output);
+        } else record("pass: preroll already disabled or envelope unrecognized; fallback=false", "debug", output);
       } else {
         var state = readState(), key = encryptedClientKey($request.body);
         if (!key || !key.length) record("pass: encrypted client key absent", "debug", output);
