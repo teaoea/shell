@@ -108,7 +108,9 @@ const emlRoutes={
  carousel_footered_layout:{model:505359416,route:[31,8,10,4,169495254,138681778,2,138681066,3,449330433]},
  video_display_full_buttoned_layout:{model:454362329,route:[32,8,10,4,169495254,138681778,2,138681066,3,449330433]},
  video_display_carousel_button_group_layout:{model:33561652,route:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]},
- banner_text_icon_buttoned_layout:{model:378585263,route:[5,3,4,169495254,138681778,2,138681066,3,449330433]}
+ banner_text_icon_buttoned_layout:{model:378585263,route:[5,3,4,169495254,138681778,2,138681066,3,449330433]},
+ fullscreen_engagement_companion:{model:252081505,route:[13,1,169495254,138681778,2,138681066,3,449330433]},
+ engagement_header:{model:403122092,route:[5,2,4,169495254,138681778,2,138681066,3,449330433]}
 };
 const nested=(path,payload)=>path.reduceRight((b,f)=>msg(f,b),payload);
 function component(name,{model=emlRoutes[name]?.model??232954548,command=true,route=emlRoutes[name]?.route,modelData,typeSuffix='',id=`${name}.eml-fe|0123456789abcdef`}={}){
@@ -367,3 +369,25 @@ test('malformed deferred update discards all edits and unknown deferred fields r
  const unknown=nested([10,49399797,32,99],section(element('carousel_footered_layout')));
  assert.equal(Object.keys(run(unknown,{type:'application/x-protobuf'}).output).length,0);
 });
+
+for (const [fieldNo,path,name] of [
+ [37,[253885845,1],'fullscreen_engagement_companion'],
+ [42,[357104971,2,361256913,1,138681066,2,194605894,1],'engagement_header']
+]) {
+ test(`next field ${fieldNo}: removes verified ad companion and preserves unrelated recommendations`,()=>{
+  const adPanel=nested([fieldNo,...path],element(name));
+  const normalPanel=nested([fieldNo,...path],element(name,{command:false}));
+  const untouched=cat(msg(777,text('shared-template')),normalPanel,msg(47,text('normal-metadata')));
+  const result=run(cat(adPanel,untouched),{endpoint:'next',type:'application/x-protobuf'});
+  assert.deepEqual(Array.from(result.output.body),Array.from(untouched));
+  assert.ok(result.logs.some(x=>x.includes('removed=1')));
+ });
+ test(`next field ${fieldNo}: weak marker and wrong envelope are preserved`,()=>{
+  for(const payload of [nested([fieldNo,...path],element(name,{command:false})),nested([fieldNo+1,...path],element(name)),nested([fieldNo,...path],element('video_lockup_with_attachment',{command:false}))])
+   assert.deepEqual(Object.keys(run(payload,{endpoint:'next',type:'application/x-protobuf'}).output),[]);
+ });
+ test(`next field ${fieldNo}: malformed companion after a valid ad passes the whole response through`,()=>{
+  const input=cat(nested([fieldNo,...path],element(name)),msg(fieldNo,[255]));
+  assert.deepEqual(Object.keys(run(input,{endpoint:'next',type:'application/x-protobuf'}).output),[]);
+ });
+}

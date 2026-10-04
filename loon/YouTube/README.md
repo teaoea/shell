@@ -277,9 +277,11 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 Loon 官方 [Rewrite 文档](https://nsloon.app/en/docs/Rewrite/rewrite_v2/) 支持 reject(status) 空正文、reject_dict(status) 空对象、reject_array(status) 空数组、reject_img(status) 透明图片及 reject_video(status) 空白视频。它们是响应生成方式，不是 YouTube 跳过指令；空白视频不能代替 UMP 封装和缺失的正片。当前只对明确的 player/ad_break 返回空 Protobuf，不能把媒体 URL 全部替换为这些响应。
 
+2026-10-04T08:21:24Z 日志中的 next 响应已清理字段 14/15 的广告组件，但处理后仍保留字段 37 的 fullscreen_engagement_companion（模型 252081505）和字段 42 的 engagement_header（模型 403122092），两者均含已确认路径上的 skip_ad_on_block 命令。信息流处理版本 2.4.0 新增精确模板/模型映射，并只删除匹配结构的伴随面板消息。正常面板、错误路径、弱标记、未知及损坏结构保持原样；合成结构测试不等于实机显示已验证。该日志没有 initplayback/player/get_watch，无法据此确认本次片头请求是否经过清理。
+
 ## 本地验证
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 256 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 264 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeed.js

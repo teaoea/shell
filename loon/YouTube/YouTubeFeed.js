@@ -141,7 +141,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
  */
 (function () {
   "use strict";
-  var VERSION = "2.3.0";
+  var VERSION = "2.4.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -546,7 +546,9 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
     "carousel_footered_layout": {model:505359416, command:[31,8,10,4,169495254,138681778,2,138681066,3,449330433]},
     "video_display_full_buttoned_layout": {model:454362329, command:[32,8,10,4,169495254,138681778,2,138681066,3,449330433]},
     "video_display_carousel_button_group_layout": {model:33561652, command:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]},
-    "banner_text_icon_buttoned_layout": {model:378585263, command:[5,3,4,169495254,138681778,2,138681066,3,449330433]}
+    "banner_text_icon_buttoned_layout": {model:378585263, command:[5,3,4,169495254,138681778,2,138681066,3,449330433]},
+    "fullscreen_engagement_companion": {model:252081505, command:[13,1,169495254,138681778,2,138681066,3,449330433]},
+    "engagement_header": {model:403122092, command:[5,2,4,169495254,138681778,2,138681066,3,449330433]}
   };
   /**
    * 功能：执行 child 对应的内部处理步骤。
@@ -687,6 +689,23 @@ function (r) {return r.no === 3;})) return {ad:false, divider:false};
     var renderer = child(container, 153515154, budget);
     if (!renderer) return false;
     return classifyElement(renderer, budget).ad;
+  }
+  /**
+   * 功能：沿实机确认的播放页伴随面板路径检查广告模板、模型和跳过广告命令。
+   * 更新时间：2026-10-04T16:25:46+08:00
+   * @param {Uint8Array} bytes 面板消息正文。
+   * @param {number[]} route 已确认的消息字段路径。
+   * @param {Object} budget 当前响应共享的解析资源预算。
+   * @returns {boolean} 仅完整匹配广告组件结构时返回真。
+   */
+  function watchNextAdCompanion(bytes, route, budget) {
+    var container = bytes;
+    for (var i = 0; i < route.length; i++) {
+      container = child(container, route[i], budget);
+      if (!container) return false;
+    }
+    var renderer = child(container, 153515154, budget);
+    return !!renderer && classifyElement(renderer, budget).ad;
   }
 
   /**
@@ -870,6 +889,11 @@ function (r) {
         removed++; eml++; return;
       }
       if (kind === "next" && r.no === 14 && r.wire === 2 && watchNextAdOverlay(bytes.subarray(r.payloadStart, r.end), budget)) {
+        removed++; eml++; return;
+      }
+      if (kind === "next" && r.wire === 2 &&
+          ((r.no === 37 && watchNextAdCompanion(bytes.subarray(r.payloadStart, r.end), [253885845,1], budget)) ||
+           (r.no === 42 && watchNextAdCompanion(bytes.subarray(r.payloadStart, r.end), [357104971,2,361256913,1,138681066,2,194605894,1], budget)))) {
         removed++; eml++; return;
       }
       if (hideHomeShorts && endpoint === "browse" && homeContext && kind === "sectionItem" && r.no === 51845067) {
