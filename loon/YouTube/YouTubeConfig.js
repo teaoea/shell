@@ -434,7 +434,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.7.0";
+  var VERSION = "1.8.0";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -783,8 +783,32 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
         var direct = disablePreroll($request.body);
         if (direct) {
           output = {headers:rewrittenHeaders($request.headers), body:direct.body};
-          record("changed: preroll_flag=false mode=" + direct.mode + " crypto_unchanged=true fallback=false", "info", output);
-        } else record("pass: preroll already disabled or envelope unrecognized; fallback=false", "debug", output);
+        }
+        var innerStatus = "config_absent", innerCounts = "", innerChanged = false;
+        try {
+          var activeState = readState(), directBody = direct ? direct.body : $request.body;
+          if (activeState) {
+            var activeKey = encryptedClientKey(directBody);
+            if (!activeKey || !activeKey.length) innerStatus = "envelope_unrecognized";
+            else if (base64(activeKey) !== activeState.encryptKey) innerStatus = "key_mismatch";
+            else {
+              var innerCleaned = cleanEncryptedRequest(directBody, activeState);
+              innerStatus = innerCleaned ? "authenticated_cleaned" : "authenticated_unchanged";
+              if (innerCleaned) {
+                output = {headers:rewrittenHeaders($request.headers), body:innerCleaned.body};
+                innerChanged = true;
+                innerCounts = " context_ad_signals=" + innerCleaned.counts.contextAdSignals + " playback_ad_params=" + innerCleaned.counts.playbackAdParams + " inline_no_ad=" + innerCleaned.counts.inlineNoAd;
+              }
+            }
+          }
+        } catch (innerError) {
+          // 内层验证或改写失败时保留已完成的外层标志改动，不阻断播放。
+          var failureCode = innerError && innerError.ytNoAdsCode || "";
+          innerStatus = /hmac/.test(failureCode) ? "authentication_failed" :
+            /gzip/.test(failureCode) ? "compression_failed" :
+            /client-key/.test(failureCode) ? "invalid_config_key" : "protocol_cleanup_failed";
+        }
+        record((direct || innerChanged ? "changed" : "pass") + ": preroll_mode=" + (direct ? direct.mode : "unchanged") + " inner=" + innerStatus + " crypto_unchanged=" + !innerChanged + " fallback=false" + innerCounts, direct || innerChanged ? "info" : "debug", output);
       } else {
         var state = readState(), key = encryptedClientKey($request.body);
         if (!key || !key.length) record("pass: encrypted client key absent", "debug", output);

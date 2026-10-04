@@ -266,7 +266,7 @@ test('raw development events use the shared cache while summaries never expose k
   initPlayback(store,[9,8,7],youtubeUA,{capture_raw:true},makeEncryptedInit(Uint8Array.from({length:32},(_,i)=>i+1),Uint8Array.from([9,8,7]),{videoId:"private"}));
   const entries = JSON.parse(store.get(logCacheKey)).entries;
   assert.deepEqual(entries.map(entry => entry.source), ['YouTubeConfig','YouTubeConfig']);
-  assert.match(entries[1].message, /development capture: changed: preroll_flag=false mode=in_place crypto_unchanged=true fallback=false changed=true/);
+  assert.match(entries[1].message, /development capture: changed: preroll_mode=in_place inner=invalid_config_key crypto_unchanged=true fallback=false changed=true/);
   assert.ok(entries.every(entry => entry.captureRef));
   assert.ok(entries.every(entry => !entry.message.includes('CQgH')));
 });
@@ -283,7 +283,7 @@ test('preroll flag changes one byte without decrypting, re-signing, or returning
   for (const n of [2,5,6,7]) assert.deepEqual(field(after,n),field(before,n));
   assert.equal(fields(after).find(x=>x.no===13).value,0);
   assert.equal(Array.from(original).filter((x,i)=>x!==result.output.body[i]).length,1);
-  assert.ok(result.logs.some(x=>x.includes('mode=in_place crypto_unchanged=true fallback=false')));
+  assert.ok(result.logs.some(x=>x.includes('preroll_mode=in_place inner=config_absent crypto_unchanged=true fallback=false')));
   assert.equal(result.output.headers['Content-Encoding'],undefined);
   assert.equal(result.output.headers['Content-Length'],undefined);
 });
@@ -309,4 +309,54 @@ test('disabled, duplicate and malformed preroll flags preserve the entire reques
     const result=initPlayback(new Map(),[],youtubeUA,{},input);
     assert.deepEqual(Object.keys(result.output),[]);
   }
+});
+
+test('production request combines missing preroll flag with authenticated inner ad negotiation cleanup', () => {
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+ const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+ const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast',forceAdParameters:'ad'}},videoId:'KEEP'};
+ const original=makeEncryptedInit(clientKey,encryptKey,player);
+ const envelope=field(original,3),without=concat(...fields(envelope).filter(x=>x.no!==13).map(x=>envelope.subarray(x.start,x.end)));
+ const input=message(3,without),snapshot=Uint8Array.from(input);
+ const result=initPlayback(store,[...encryptKey],youtubeUA,{script_debug:true},input);
+ assert.equal(result.output.response,undefined);
+ assert.deepEqual(input,snapshot);
+ const clean=decryptPlayer(result.output.body,clientKey);
+ assert.equal(clean.preroll,0);
+ assert.equal(clean.player.context.adSignalsInfo,undefined);
+ assert.equal(clean.player.playbackContext.contentPlaybackContext.adParams,undefined);
+ assert.equal(clean.player.playbackContext.contentPlaybackContext.forceAdParameters,undefined);
+ assert.equal(clean.player.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd,true);
+ assert.equal(clean.player.videoId,'KEEP');
+ assert.ok(result.logs.some(x=>x.includes('inner=authenticated_cleaned')&&x.includes('crypto_unchanged=false fallback=false')));
+});
+
+test('production crypto mismatch or authentication failure retains the outer fix without empty fallback', () => {
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+ for (const tamper of [false,true]) {
+  const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:tamper?[...encryptKey]:[4,5,6]}));
+  const input=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{params:[1]}}},{tamper});
+  const result=initPlayback(store,[],youtubeUA,{script_debug:true},input);
+  assert.equal(result.output.response,undefined);
+  assert.equal(fields(field(result.output.body,3)).find(x=>x.no===13).value,0);
+  for (const n of [2,5,6,7])assert.deepEqual(field(field(result.output.body,3),n),field(field(input,3),n));
+  assert.ok(store.has(stateKey));
+  assert.ok(result.logs.some(x=>x.includes('fallback=false')&&x.includes(tamper?'inner=authentication_failed':'inner=key_mismatch')));
+ }
+});
+
+test('production gzip request keeps playback usable when compression is unavailable and cleans when available', () => {
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+ const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+ const body=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{}},playbackContext:{contentPlaybackContext:{adParams:'vast'}},videoId:'KEEP'},{gzip:true});
+ const unavailable=initPlayback(store,[],youtubeUA,{script_debug:true},body);
+ assert.equal(unavailable.output.response,undefined);
+ assert.ok(unavailable.logs.some(x=>x.includes('inner=compression_failed')));
+ assert.deepEqual(field(field(unavailable.output.body,3),2),field(field(body,3),2));
+ const available=initPlayback(store,[],youtubeUA,{script_debug:true},body,undefined,utilsApi);
+ const clean=decryptPlayer(available.output.body,clientKey,{gzip:true});
+ assert.equal(clean.preroll,0);
+ assert.equal(clean.player.context.adSignalsInfo,undefined);
+ assert.equal(clean.player.videoId,'KEEP');
+ assert.ok(available.logs.some(x=>x.includes('inner=authenticated_cleaned')));
 });
