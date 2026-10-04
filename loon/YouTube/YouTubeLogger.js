@@ -1,7 +1,7 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：2.2.0
+ * 版本：2.3.0
  * 更新时间：2026-10-04T08:54:22+08:00
  * 运行环境：Loon JavaScript
  */
@@ -133,7 +133,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.2.0";
+  var VERSION = "2.3.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -507,11 +507,11 @@ function (row) {
       return event;
     });
     return {schema:1, exportedAt:new Date().toISOString(), session:c && c.session || null,
-      recording:!!(c && c.enabled), stoppedReason:c && c.haltReason || null,
+      recording:!!(c && c.enabled), stoppedReason:c && c.haltReason || null, coverage:coverage(rows),
       settings:{rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
       completeness:{allReferencedSamplesReadable:issues.length === 0, stoppedDueToLimitOrError:!!(c && c.haltReason), issues:issues,
         limitations:["Only matched player/get_watch/browse/next/search/reel_watch_sequence/log_event/config/initplayback/player/ad_break and enabled UMP response scripts; not all YouTube traffic.",
-          "Media response capture is enabled together with development capture; inspect mode is recommended.",
+          "Media logging records headers only and does not buffer media bodies.",
           "Runtime bodies may already be decoded; these are not TLS/HTTP wire bytes.",
           "Missing runtime bodies are marked unavailable; before/after transport headers are not reconstructed.",
           "URL/method hashes are grouping hints, not guaranteed request/response pairs.",
@@ -605,7 +605,7 @@ function (row) {
       }
       var manifest = await get("/export-manifest.json");
       var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
-      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, request/config/media bodies and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, request/config/media bodies and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
       for (var n = 0; n < rows.length; n++) {
         var row = rows[n], capture = null, captureError = row.captureError || null;
         status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;
@@ -642,13 +642,38 @@ function (row) {
    */
   function exportRows(c) { return records(c); }
   /**
+   * 功能：统计日志实际记录到的接口与初始化版本，避免把声明范围误认为完整链路。
+   * 更新时间：2026-10-04T16:55:00+08:00
+   * @param {Object[]} rows 当前会话的事件摘要。
+   * @returns {Object} 接口计数、初始化观察状态和安全的版本列表。
+   */
+  function coverage(rows) {
+    var names = ['browse','next','search','config','log_event','initplayback','player','get_watch','ad_break','reel_watch_sequence','ump'];
+    var counts = {}, versions = [], parts = [], initialized = false;
+    for (var i = 0; i < names.length; i++) counts[names[i]] = 0;
+    for (i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!Object.prototype.hasOwnProperty.call(counts, row.endpoint)) continue;
+      counts[row.endpoint]++;
+      if (/^(initplayback|player|get_watch)$/.test(row.endpoint)) {
+        initialized = true;
+        if (/^\d+\.\d+\.\d+$/.test(row.version) && versions.indexOf(row.version) < 0) versions.push(row.version);
+      }
+    }
+    for (i = 0; i < names.length; i++) parts.push(names[i] + '=' + counts[names[i]]);
+    return {counts:counts, summary:parts.join(' / '), hasPlaybackInitialization:initialized, initializationVersions:versions};
+  }
+  /**
    * 功能：生成本地日志管理页面。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   function page(c, rows) {
+    var seen = coverage(rows);
     return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 日志</title>' +
       '<style>body{font:17px system-ui;margin:32px auto;padding:0 24px;max-width:620px;line-height:1.7}button,a{font:inherit}button{margin:6px 0;padding:8px 16px}a{display:block;margin:22px 0}</style>' +
       '<h1>YouTube 日志</h1><p>状态：' + (c && c.enabled === true ? '正在记录' : '已暂停') + '；保留 ' + rows.length + ' 条。保存级别：' + minimum + ' 及以上。</p>' +
+      '<p>实际记录接口：' + seen.summary + '</p>' +
+      (seen.hasPlaybackInitialization ? '<p>已记录播放初始化；版本：' + seen.initializationVersions.join('、') + '。</p>' : '<p>尚未记录 initplayback/player/get_watch，当前记录无法判断片头请求处理是否执行。缺失也可能来自缓存、未命中或并发写入，不能据此认定请求没有发生。</p>') +
       '<form method="post" action="/start"><button>开始记录（保留本次日志）</button></form>' +
       '<form method="post" action="/pause"><button>暂停记录</button></form>' +
       '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
@@ -744,6 +769,7 @@ function (source) { $persistentStore.write(undefined, "ytads.logger." + source +
       if (c && c.enabled) return response(409, "请先在日志页面暂停记录，然后导出。", "text/plain; charset=utf-8");
       var manifestRows = exportRows(c);
       var manifestData = developmentExport(c, []);
+      manifestData.coverage = coverage(manifestRows);
       return response(200, JSON.stringify({session:c && c.session || "none", rows:manifestRows, data:manifestData}), "application/json; charset=utf-8");
     }
     var chunkPath = /^\/export-chunk\/([a-z0-9-]{1,80})\/(\d{1,3})\/(\d{1,3})$/.exec(path);

@@ -331,3 +331,19 @@ test('media request and response logging never access streaming bodies', () => {
   assert.equal(rows[1].capture.responseBefore.body.available, false);
   assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
 });
+
+test('page and export report missing initialization rather than claiming full playback coverage', () => {
+ const store=new Map();request(store,'/start','POST');
+ request(store,'/mark-ad','POST');request(store,'/pause','POST');
+ const page=request(store).body;
+ assert.ok(page.includes('尚未记录 initplayback/player/get_watch'));
+ const manifest=JSON.parse(request(store,'/export-manifest.json').body);
+ assert.equal(manifest.data.coverage.hasPlaybackInitialization,false);
+ assert.equal(manifest.data.coverage.counts.initplayback,0);
+ play(store);
+ request(store,'/start','POST');play(store);request(store,'/pause','POST');
+ const complete=JSON.parse(request(store,'/export-manifest.json').body);
+ assert.equal(complete.data.coverage.hasPlaybackInitialization,true);
+ assert.equal(complete.data.coverage.counts.player,1);
+ assert.ok(request(store).body.includes('已记录播放初始化'));
+});
