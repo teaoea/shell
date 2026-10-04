@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../YouTubeAdBreak.js',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../YouTubePlayback.js',import.meta.url),'utf8');
 const plugin=fs.readFileSync(new URL('../YouTubeNoAds.plugin',import.meta.url),'utf8');
 const base='https://youtubei.googleapis.com/youtubei/v1/player/ad_break';
 const configKey='ytads.logger.config.v1', cacheKey='ytads.logger.entries.v2';
@@ -19,7 +19,7 @@ function run({url=base,enabled=true,response=false,store=new Map(),raw=false,deb
 
 test('plugin keeps ad-break configuration blocking enabled without a settings switch',()=>{
  assert.ok(!plugin.includes('block_ad_break = switch'));
- const line=plugin.split('\n').find(x=>x.startsWith('http-request')&&x.includes('YouTubeAdBreak.js'));
+ const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 片头与中插广告配置拦截'));
  assert.ok(line&&!line.includes('enable='));
  const regex=new RegExp(line.split(' ')[1],'i');
  assert.ok(regex.test(base+'?prettyPrint=false'));
@@ -47,7 +47,7 @@ test('summary uses the shared logger cache without storing request secrets',()=>
  run({store});
  const state=JSON.parse(store.get(cacheKey));
  assert.equal(state.entries.length,1);
- assert.equal(state.entries[0].source,'YouTubeAdBreak');
+ assert.equal(state.entries[0].source,'YouTubePlayback');
  assert.equal(state.entries[0].endpoint,'ad_break');
  assert.ok(!JSON.stringify(state).includes(base));
 });
@@ -56,7 +56,7 @@ test('development capture records the exact request and synthetic result in the 
  const store=new Map([[configKey,JSON.stringify({enabled:true,session:'test-session'})]]);
  run({store,raw:true});
  const state=JSON.parse(store.get(cacheKey)), entry=state.entries[0];
- assert.equal(entry.source,'YouTubeAdBreak');
+ assert.equal(entry.source,'YouTubePlayback');
  const chunks=Array.from({length:entry.captureRef.chunks},(_,i)=>store.get(entry.captureRef.prefix+i)).join('');
  const payload=JSON.parse(chunks);
  assert.equal(payload.request.url,base);

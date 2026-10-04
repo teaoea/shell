@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
-const sources = Object.fromEntries(['YouTubeLogger','YouTubePlaybackAds','YouTubeStreamAds'].map(name => [name,fs.readFileSync(new URL(name + '.js',root),'utf8')]));
+const sources = Object.fromEntries(['YouTubeLogger','YouTubePlayback','YouTubePlayback'].map(name => [name,fs.readFileSync(new URL(name + '.js',root),'utf8')]));
 const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root),'utf8');
 const configKey = 'ytads.logger.config.v1', indexKey = 'ytads.logger.entries.v2';
 const api = 'https://youtubei.googleapis.com/youtubei/v1/player?key=SIGNED';
@@ -37,7 +37,7 @@ function exportData(store){
   return {events,completeness:{allReferencedSamplesReadable:issues.length===0,issues,stoppedDueToLimitOrError:!!config?.haltReason}};
 }
 function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":{"id":"ORIGINAL"}}',extra={}) {
-  return run('YouTubePlaybackAds',store,{
+  return run('YouTubePlayback',store,{
     $request:{url:api,method:'POST',headers:{Authorization:'Bearer SECRET','Content-Encoding':'br'}},
     $response:{status:200,headers:{'Content-Type':'application/json'},body},...extra
   });
@@ -105,7 +105,7 @@ test('response event preserves before/after text plus processing result independ
 test('UMP response preserves exact raw binary, output reference and all headers',()=>{
   const store=started();
   const body=new Uint8Array([21,5,0,255,128,32,10]);
-  const r=run('YouTubeStreamAds',store,{$request:{url:media,method:'POST',headers:{}},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump','Alt-Svc':'h3=":443"'},body}});
+  const r=run('YouTubePlayback',store,{$request:{url:media,method:'POST',headers:{}},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump','Alt-Svc':'h3=":443"'},body}});
   assert.equal(Object.keys(r.result).length,0);
   const c=exportData(store).events[0].capture;
   assert.deepEqual(Buffer.from(c.responseBefore.body.data,'base64'),Buffer.from(body));
@@ -116,7 +116,7 @@ test('UMP response preserves exact raw binary, output reference and all headers'
 test('modified UMP exports original and cleaned binary as independently recoverable samples',()=>{
   const store=started();
   const original=new Uint8Array([69,8,10,6,10,4,8,1,16,6]);
-  const r=run('YouTubeStreamAds',store,{
+  const r=run('YouTubePlayback',store,{
     $request:{url:media,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:original},
     $argument:{log_enabled:true,capture_raw:true,ump_mode:'clean_prefetch'}
   });
@@ -205,7 +205,7 @@ test('failed manifest commit rolls back newly written sample chunks and preserve
   assert.ok(r.result.body);
   const keys=Array.from(store.keys());
   const index=store.get(indexKey);
-  const failed=run('YouTubePlaybackAds',store,{
+  const failed=run('YouTubePlayback',store,{
     $request:{url:api,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"playabilityStatus":{},"adSlots":[]}'},
   },indexKey);
   assert.equal(JSON.parse(failed.result.body).adSlots,undefined);
@@ -244,20 +244,20 @@ test('missing runtime body is explicit; legacy JSON routes are gone; unmatched r
 
 test('feed request and before/after response samples share the one full-chain cache',()=>{
   const store=started();
-  sources.YouTubeFeedAds=fs.readFileSync(new URL('YouTubeFeedAds.js',root),'utf8');
+  sources.YouTubeFeed=fs.readFileSync(new URL('YouTubeFeed.js',root),'utf8');
   const url='https://youtubei.googleapis.com/youtubei/v1/browse?key=FEED';
   const body='{"contents":[{"adSlotRenderer":{"title":"Robinhood"}},{"videoRenderer":{"title":"NORMAL"}}]}';
   run('YouTubeLogger',store,{$request:{url,method:'POST',body:new Uint8Array([1,2,3])}});
-  run('YouTubeFeedAds',store,{$request:{url,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/json'},body}});
+  run('YouTubeFeed',store,{$request:{url,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/json'},body}});
   player(store);page(store,'mark-ad','POST');
   const all=exportData(store);assert.equal(all.events.length,4);
-  assert.equal(all.events[0].capture.source,'YouTubeFeedAds');assert.equal(all.events[0].capture.endpoint,'browse');
+  assert.equal(all.events[0].capture.source,'YouTubeFeed');assert.equal(all.events[0].capture.endpoint,'browse');
   assert.equal(all.events[1].capture.responseBefore.body.data,body);
   assert.equal(all.events[1].capture.responseAfter.changed,true);
   assert.equal(JSON.parse(all.events[1].capture.responseAfter.body.data).contents.length,1);
-  assert.equal(all.events[2].capture.source,'YouTubePlaybackAds');
+  assert.equal(all.events[2].capture.source,'YouTubePlayback');
   assert.equal([...store.keys()].filter(k=>k==='ytads.logger.entries.v2').length,1);
-  assert.ok(![...store.keys()].some(k=>k==='ytads.logger.YouTubeFeedAds.v1'));
+  assert.ok(![...store.keys()].some(k=>k==='ytads.logger.YouTubeFeed.v1'));
 });
 
 test('large export reads bounded chunks and browser assembles exactly one complete full-chain log file',async()=>{
@@ -308,13 +308,13 @@ test('browser export refuses checksum-corrupt bytes instead of offering an incom
 });
 
 test('single browser export includes browse, refresh, player and binary media samples from the same cache',async()=>{
- const store=started();sources.YouTubeFeedAds=fs.readFileSync(new URL('YouTubeFeedAds.js',root),'utf8');
- player(store);run('YouTubeFeedAds',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/browse'},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"contents":[{"adSlotRenderer":{}}]}'}});
+ const store=started();sources.YouTubeFeed=fs.readFileSync(new URL('YouTubeFeed.js',root),'utf8');
+ player(store);run('YouTubeFeed',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/browse'},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"contents":[{"adSlotRenderer":{}}]}'}});
  run('YouTubeLogger',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/config',method:'POST'},$response:{status:200,headers:{'Content-Type':'application/x-protobuf'},body:new Uint8Array([8,1])}});
- run('YouTubeStreamAds',store,{$request:{url:media,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:new Uint8Array([21,3,1,2,3])}});
+ run('YouTubePlayback',store,{$request:{url:media,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:new Uint8Array([21,3,1,2,3])}});
  page(store,'pause','POST');const html=page(store,'export'),script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
  const status={textContent:''},save={hidden:true};let blob;
  await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:x=>{blob=x;return 'blob:local';}},async fetch(path){const r=page(store,path.slice(1));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}},{timeout:5000});
  assert.equal(save.hidden,false);assert.ok(save.download.startsWith('YouTube-')&&save.download.endsWith('.log'));
- const exported=await blob.text();assert.match(exported,/Source: YouTubePlaybackAds/);assert.match(exported,/Source: YouTubeFeedAds/);assert.match(exported,/Source: YouTubeLogger/);assert.match(exported,/Endpoint: config/);assert.match(exported,/Source: YouTubeStreamAds/);assert.match(exported,/Encoding: base64/);assert.match(exported,/FQMBAgM=/);assert.match(exported,/Response-After:/);
+ const exported=await blob.text();assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/Source: YouTubeFeed/);assert.match(exported,/Source: YouTubeConfig/);assert.match(exported,/Endpoint: config/);assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/Encoding: base64/);assert.match(exported,/FQMBAgM=/);assert.match(exported,/Response-After:/);
 });

@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 const root = new URL('../', import.meta.url);
-const configSource = fs.readFileSync(new URL('YouTubeOnesieConfig.js', root), 'utf8');
-const initSource = fs.readFileSync(new URL('YouTubeInitPlayback.js', root), 'utf8');
+const configSource = fs.readFileSync(new URL('YouTubeConfig.js', root), 'utf8');
+const initSource = fs.readFileSync(new URL('YouTubeConfig.js', root), 'utf8');
 const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root), 'utf8');
 const stateKey = 'ytads.onesie.youtube.v1';
 const logConfigKey = 'ytads.logger.config.v1';
@@ -104,11 +104,11 @@ const decryptPlayer = (body,clientKey,{gzip=false}={}) => {
 };
 const utilsApi={gzip:data=>new Uint8Array(zlib.gzipSync(data)),ungzip:data=>new Uint8Array(zlib.gunzipSync(data))};
 
-test('plugin routes the YouTube-only Onesie lifecycle to two function-specific scripts', () => {
+test('plugin routes the YouTube-only Onesie lifecycle through the merged configuration file', () => {
   assert.ok(!plugin.includes('onesie_enabled = switch'));
-  const configLines = plugin.split('\n').filter(line => line.includes('YouTubeOnesieConfig.js'));
-  const initLine = plugin.split('\n').find(line => line.includes('YouTubeInitPlayback.js'));
-  assert.equal(configLines.length, 2);
+  const configLines = plugin.split('\n').filter(line => line.includes('YouTubeConfig.js'));
+  const initLine = plugin.split('\n').find(line => line.includes('tag=YouTube initplayback 广告协商清理'));
+  assert.equal(configLines.length, 3);
   assert.ok(initLine && !initLine.includes('enable=') && initLine.includes('requires-body=true'));
   assert.ok(configLines.every(line => !line.includes('music\\.')));
   assert.ok(!initLine.includes('workers.dev'));
@@ -127,7 +127,7 @@ test('config response stores complete YouTube keys with a bounded lifetime and l
   assert.equal(state.useHotConfig, true);
   assert.ok(state.expiresAt >= before + 600000 && state.expiresAt <= Date.now() + 600000);
   const entries = JSON.parse(store.get(logCacheKey)).entries;
-  assert.equal(entries[0].source, 'YouTubeOnesieConfig');
+  assert.equal(entries[0].source, 'YouTubeConfig');
   assert.ok(!JSON.stringify(entries).includes(state.clientKey));
   assert.ok(!JSON.stringify(entries).includes(state.encryptKey));
 });
@@ -259,7 +259,7 @@ test('raw development events use the shared cache while summaries never expose k
   configResponse(store,makeConfig(),youtubeUA,{capture_raw:true});
   initPlayback(store,[9,8,7],youtubeUA,{capture_raw:true});
   const entries = JSON.parse(store.get(logCacheKey)).entries;
-  assert.deepEqual(entries.map(entry => entry.source), ['YouTubeOnesieConfig','YouTubeInitPlayback']);
+  assert.deepEqual(entries.map(entry => entry.source), ['YouTubeConfig','YouTubeConfig']);
   assert.match(entries[1].message, /development capture: pass: invalid-client-key changed=false/);
   assert.ok(entries.every(entry => entry.captureRef));
   assert.ok(entries.every(entry => !entry.message.includes('CQgH')));

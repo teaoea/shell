@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-const source=fs.readFileSync(new URL('../YouTubeFeedAds.js',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../YouTubeFeed.js',import.meta.url),'utf8');
 const plugin=fs.readFileSync(new URL('../YouTubeNoAds.plugin',import.meta.url),'utf8');
 function run(body,{endpoint='browse',host='youtubei.googleapis.com',type='application/json',status=200,url=`https://${host}/youtubei/v1/${endpoint}`,extra={}}={}) {
  let output,calls=0;const logs=[];
@@ -19,7 +19,7 @@ const normal=msg(50195462,msg(1,msg(99,[255,254,0])));
 const tracking=msg(4,[1,2,3]);
 const initial=list=>msg(9,msg(49399797,list));
 test('main plugin routes all feed endpoints exclusively to its own standalone script',()=>{
- const entry=plugin.split('\n').find(x=>x.startsWith('http-response ')&&x.includes('YouTubeFeedAds.js'));
+ const entry=plugin.split('\n').find(x=>x.startsWith('http-response ')&&x.includes('YouTubeFeed.js'));
  const re=new RegExp(entry.split(' ')[1]);
  for(const host of ['youtubei.googleapis.com','youtubei-att.googleapis.com','youtube.com','www.youtube.com','m.youtube.com','music.youtube.com'])for(const ep of ['browse','next','search'])assert.ok(re.test(`https://${host}/youtubei/v1/${ep}?key=x`));
  for(const url of ['https://youtubei.googleapis.com.evil/youtubei/v1/browse','https://youtubei.googleapis.com/youtubei/v1/player','https://youtubei.googleapis.com/youtubei/v1/browse/extra','https://rr5.googlevideo.com/videoplayback?x=1'])assert.ok(!re.test(url));
@@ -205,7 +205,7 @@ const continuation=(list,token=shortToken())=>msg(10,msg(49399797,cat(list,msg(2
 test('Shorts switch is off by default and passed only to the feed script',()=>{
  assert.match(plugin,/hide_home_shorts = switch,false,tag=隐藏首页 Shorts/);
  const entries=plugin.split('\n').filter(line=>line.includes('argument=')&&line.includes('{hide_home_shorts}'));
- assert.equal(entries.length,1);assert.ok(entries[0].includes('YouTubeFeedAds.js'));
+ assert.equal(entries.length,1);assert.ok(entries[0].includes('YouTubeFeed.js'));
  const body=identifiedTab(msg(1,shortsShelf(shortsCell())));
  for(const value of [undefined,false,'false','1'])assert.equal(Object.keys(run(body,{type:'application/x-protobuf',extra:{$argument:{hide_home_shorts:value}}}).output).length,0);
 });

@@ -1,11 +1,31 @@
-/*
- * YouTubeFeedAds 2.1.0 — sponsored feed/watch cards and optional home Shorts hiding.
- * browse/next/search JSON; narrowly mapped browse/next Protobuf list envelopes.
- * Protocol mapping reference: davidzeng0/innertube (2025-02-18 schema).
- * Browser-derived strategy: remove complete promoted list entries before render.
- * Known EML ads require a template/model pair and a structural ad command;
- * optional adaptive mode recognizes pagead only inside a confirmed card entry.
- * Sample-derived mapping: YouTube iOS 21.39.4, 2026-10-04. Unknown EML stays raw.
+/**
+ * 文件：YouTubeFeed.js
+ * 功能：清理首页与推荐信息流广告，并按开关隐藏首页 Shorts 推荐区。
+ * 版本：3.0.0
+ * 更新时间：2026-10-04T08:54:22+08:00
+ * 运行环境：Loon JavaScript
+ */
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+(function () {
+  "use strict";
+  var dispatcherUrl = typeof $request !== "undefined" ? String($request.url || "") : "";
+  var dispatcherResponse = typeof $response !== "undefined";
+  if (dispatcherResponse && /\/youtubei\/v1\/(?:browse|next|search)(?:\?[^#]*)?$/i.test(dispatcherUrl)) {
+
+
+
+
+
+
+
+
+
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
  */
 (function () {
   "use strict";
@@ -22,19 +42,35 @@
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(?:\?[^#]*)?$/i;
   var devMessages = [];
   var devException = null;
+  /**
+   * 功能：保存运行异常的结构化信息，供完整日志导出。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devFailure(error) {
     if (!devFlag(args.capture_raw)) return;
     try { devException = {name:String(error.name || "Error"), message:String(error.message || ""), stack:typeof error.stack === "string" ? error.stack : null, code:error.ytNoAdsCode || null}; } catch (_) {}
   }
   var devStarted = Date.now();
 
+  /**
+   * 功能：判断开发日志参数是否明确开启。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devFlag(value) { return value === true || value === "true"; }
+  /**
+   * 功能：读取并校验当前日志记录会话配置。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devConfig() {
     if (!devFlag(args.log_enabled) || typeof $persistentStore === "undefined") return null;
     var raw = $persistentStore.read("ytads.logger.config.v1");
     var c = raw && raw.length <= 2048 ? JSON.parse(raw) : null;
     return c && c.enabled === true && typeof c.session === "string" && /^[a-z0-9-]{1,80}$/.test(c.session) ? c : null;
   }
+  /**
+   * 功能：计算字符串序列化为 UTF-8 后的字节数。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devUTF8Size(text) {
     var size = 0;
     for (var i = 0; i < text.length; i++) {
@@ -46,6 +82,10 @@
     }
     return size;
   }
+  /**
+   * 功能：把二进制数据编码为 Base64 文本。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devBase64(bytes) {
     var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     var parts = [], text = "";
@@ -58,6 +98,10 @@
     parts.push(text);
     return parts.join("");
   }
+  /**
+   * 功能：把运行时正文转换为可导出的文本或二进制结构。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devBody(body) {
     if (body === undefined || body === null) return {available:false, reason:"not-provided-by-runtime"};
     if (typeof body === "string") {
@@ -73,6 +117,10 @@
     if (bytes.length > 8388608) throw new Error("capture-body-limit");
     return {available:true, encoding:"base64", bytes:bytes.length, data:devBase64(bytes)};
   }
+  /**
+   * 功能：在日志容量或存储异常时暂停继续写入。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devHalt(c, reason) {
     if (c) {
       c.enabled = false;
@@ -82,6 +130,10 @@
     }
     if (typeof console !== "undefined") console.log("[YouTubeLogger] recording-stopped: " + reason);
   }
+  /**
+   * 功能：把摘要与原始样本追加到统一日志缓存。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devAppend(entry, payload) {
     var written = [], c = null;
     try {
@@ -123,20 +175,37 @@
       if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {
-      written.forEach(function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} });
+      written.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} });
       try { devHalt(c, "storage-or-serialization-failed"); } catch (_) {}
       return false;
     }
   }
+  /**
+   * 功能：计算日志分块的一致性校验值。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devChecksum(text) {
     var hash = 2166136261;
     for (var i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
     return "fnv1a32-utf16:" + ("00000000" + (hash >>> 0).toString(16)).slice(-8);
   }
+  /**
+   * 功能：生成请求与响应之间的本地关联标识。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devCorrelation(method, url) {
-    // A grouping hint, never a claim of a unique request/response pairing.
+
     return devChecksum(method + " " + url);
   }
+  /**
+   * 功能：记录请求或响应处理前后的完整开发样本。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devCapture(source, phase, endpoint, version, output) {
     if (!devFlag(args.capture_raw)) return;
     var c = null;
@@ -166,31 +235,47 @@
     }
   }
 
+  /**
+   * 功能：把符合级别要求的处理摘要保存到统一日志。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function saveLog(message) {
     devMessages.push(message);
-    // Raw mode saves one complete response event, irrespective of log level.
+
     if (devFlag(args.capture_raw)) return;
     var ranks = {debug:0, info:1, warn:2, error:3};
     var level = message.indexOf("changed:") === 0 ? "info" :
       message === "pass: parse/schema check failed" ? "error" :
       /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
     var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubeFeedAds", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
+    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubeFeed", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
+  /**
+   * 功能：写入脱敏处理摘要，并按需输出调试信息。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function log(message) {
     saveLog(message);
     if (debug && typeof console !== "undefined") {
-      console.log("[YouTubeFeedAds " + VERSION + "] " + endpoint + " " + message);
+      console.log("[YouTubeFeed " + VERSION + "] " + endpoint + " " + message);
     }
   }
 
+  /**
+   * 功能：抛出带稳定错误代码的处理异常。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function fail(code) {
     var error = new Error(code);
     error.ytNoAdsCode = code;
     throw error;
   }
 
+  /**
+   * 功能：按不区分大小写的方式读取 HTTP 请求头。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function header(headers, name) {
     var keys = Object.keys(headers || {});
     for (var i = 0; i < keys.length; i++) {
@@ -199,6 +284,10 @@
     return "";
   }
 
+  /**
+   * 功能：把 Loon 运行时正文安全转换为 Uint8Array。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function bytesOf(body) {
     if (body instanceof Uint8Array) return body;
     if (body instanceof ArrayBuffer) return new Uint8Array(body);
@@ -208,8 +297,12 @@
     return null;
   }
 
-  // Only tags and lengths need numeric decoding. Unknown 64-bit values are
-  // skipped as raw varints, avoiding JavaScript integer precision loss.
+
+
+  /**
+   * 功能：读取受限的 32 位 Protobuf 变长整数。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function read32(bytes, cursor) {
     var value = 0;
     var scale = 1;
@@ -224,6 +317,10 @@
     fail("invalid-varint");
   }
 
+  /**
+   * 功能：跳过并校验 64 位 Protobuf 变长整数。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function skip64(bytes, cursor) {
     for (var i = 0; i < 10; i++) {
       if (cursor.pos >= bytes.length) fail("truncated-varint");
@@ -234,6 +331,10 @@
     fail("invalid-varint");
   }
 
+  /**
+   * 功能：解析 Protobuf 字段边界并保留原始字节位置。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function parse(bytes, budget) {
     var cursor = { pos: 0 };
     var records = [];
@@ -254,8 +355,8 @@
         if (length > bytes.length - cursor.pos) fail("truncated-field");
         cursor.pos += length;
       } else if (wire === 5) cursor.pos += 4;
-      // Deprecated groups have no expected use here. Pass the entire original
-      // response through rather than guessing at a different message layout.
+
+
       else fail("unsupported-wire-type");
       if (cursor.pos > bytes.length) fail("truncated-field");
       records.push({ no: no, wire: wire, start: start, tagEnd: tagEnd,
@@ -264,6 +365,10 @@
     return records;
   }
 
+  /**
+   * 功能：编码 Protobuf 长度或整数值。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function encodeLength(value) {
     var out = [];
     do {
@@ -274,6 +379,10 @@
     return new Uint8Array(out);
   }
 
+  /**
+   * 功能：合并多个二进制片段并保持顺序。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function join(parts) {
     var length = 0;
     for (var i = 0; i < parts.length; i++) length += parts[i].length;
@@ -286,14 +395,18 @@
     return out;
   }
 
+  /**
+   * 功能：执行 replaceChild 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function replaceChild(bytes, record, body) {
     return join([bytes.subarray(record.start, record.tagEnd),
       encodeLength(body.length), body]);
   }
 
 
-  // Schema-directed edges only. Never try parsing arbitrary length-delimited
-  // strings/bytes as messages or delete an item because its text says "ad".
+
+
   var EDGES = {
     browse: {9:"browseUnion", 10:"continuationUnion"},
     next: {7:"nextUnion", 8:"continuationUnion"},
@@ -309,8 +422,8 @@
     itemSection: {1:"contentItem"}, contentItem: {153515154:"cardElement"}
   };
   var ADS = {sectionItem:{424701016:true,55514441:true}, secondaryItem:{424701016:true,73920376:true}, contentItem:{424701016:true,73920376:true}};
-  // Observed layout/model pairs are not a general "ad" substring heuristic.
-  // Command path ends in an explicit skip_ad_on_block map key in each sample.
+
+
   var EML_ADS = {
     "video_display_button_group_layout": {model:491441836, command:[19,8,10,4,169495254,138681778,2,138681066,3,449330433]},
     "full_width_portrait_image_layout": {model:478840678, command:[27,7,10,4,169495254,138681778,2,138681066,3,449330433]},
@@ -321,12 +434,25 @@
     "video_display_carousel_button_group_layout": {model:33561652, command:[14,8,10,4,169495254,138681778,2,138681066,3,449330433]},
     "banner_text_icon_buttoned_layout": {model:378585263, command:[5,3,4,169495254,138681778,2,138681066,3,449330433]}
   };
+  /**
+   * 功能：执行 child 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function child(bytes, no, budget) {
-    var records = parse(bytes, budget), targets = records.filter(function (r) {return r.no === no;});
+    var records = parse(bytes, budget), targets = records.filter(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no === no;});
     if (!targets.length) return null;
     if (targets.length !== 1 || targets[0].wire !== 2) fail("eml-single-message-mismatch");
     return bytes.subarray(targets[0].payloadStart, targets[0].end);
   }
+  /**
+   * 功能：执行 ascii 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function ascii(bytes) {
     if (!bytes || bytes.length > 160) return "";
     var text = "";
@@ -336,6 +462,10 @@
     }
     return text;
   }
+  /**
+   * 功能：执行 containsASCII 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function containsASCII(bytes, marker) {
     if (!bytes || bytes.length < marker.length) return false;
     var needle = [];
@@ -349,11 +479,20 @@
     }
     return false;
   }
+  /**
+   * 功能：执行 hasAdCommand 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function hasAdCommand(bytes, route, depth, budget) {
     var records = parse(bytes, budget);
     if (depth === route.length) {
       var marked = false;
-      records.forEach(function (r) {
+      records.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
         if (r.no !== 8) return;
         if (r.wire !== 2) fail("eml-command-schema-mismatch");
         var entry = bytes.subarray(r.payloadStart, r.end);
@@ -363,18 +502,37 @@
       return marked;
     }
     var found = false;
-    records.forEach(function (r) {
+    records.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
       if (r.no !== route[depth]) return;
       if (r.wire !== 2) fail("eml-command-schema-mismatch");
-      // Check every matched child, including later malformed siblings.
+
       if (hasAdCommand(bytes.subarray(r.payloadStart, r.end), route, depth + 1, budget)) found = true;
     });
     return found;
   }
+  /**
+   * 功能：执行 classifyElement 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function classifyElement(bytes, budget) {
     var element = child(bytes, 172660663, budget);
-    if (!element || parse(bytes, budget).some(function (r) {return r.no >= 1000000 && r.no !== 172660663;})) return {ad:false, divider:false};
-    if (parse(element, budget).some(function (r) {return r.no === 3;})) return {ad:false, divider:false};
+    if (!element || parse(bytes, budget).some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no >= 1000000 && r.no !== 172660663;})) return {ad:false, divider:false};
+    if (parse(element, budget).some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no === 3;})) return {ad:false, divider:false};
     var type = child(element, 1, budget);
     if (!type) return {ad:false, divider:false};
     var component = child(type, 168777401, budget);
@@ -391,7 +549,7 @@
     var model = child(component, 5, budget);
     if (!model) return {ad:false, divider:false};
     var modelFields = parse(model, budget);
-    // Unknown/mixed type or model variants cannot establish an ad identity.
+
     if (parse(type, budget).length !== 1 || parse(templateType, budget).length !== 1 || modelFields.length !== 1) return {ad:false, divider:false};
     var expected = mapping ? mapping.model : 347043917, field = modelFields[0];
     if (field.no !== expected) return {ad:false, divider:false};
@@ -399,10 +557,14 @@
     if (!mapping) return {ad:false, divider:true};
     return {ad:hasAdCommand(model.subarray(field.payloadStart, field.end), mapping.command, 0, budget), divider:false};
   }
-  // iOS watch-next can return a sponsored companion card as a standalone
-  // action rather than inside contents/secondaryResults. Remove only the
-  // sample-derived wrapper when its nested EML card has the verified
-  // template/model/skip_ad_on_block identity above.
+
+
+
+
+  /**
+   * 功能：执行 watchNextAdAction 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function watchNextAdAction(bytes, budget) {
     var action = child(bytes, 361588638, budget);
     if (!action) return false;
@@ -412,8 +574,12 @@
     if (!renderer) return false;
     return classifyElement(renderer, budget).ad;
   }
-  // Homepage identity is local to each Tab/list. Other browse pages are not home.
-  // Continuation tokens: sample-derived wrapper 80226972 -> browse_id (2).
+
+
+  /**
+   * 功能：执行 continuationBrowseId 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function continuationBrowseId(token, budget) {
     if (typeof token !== "string" || token.length > 16384) return "";
     try {
@@ -432,12 +598,26 @@
       return "";
     }
   }
+  /**
+   * 功能：执行 protoHomeContinuation 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function protoHomeContinuation(bytes, records, budget) {
     var ids = [];
-    records.forEach(function (r) {
+    records.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
       if (r.no !== 2 || r.wire !== 2) return;
       var continuation = bytes.subarray(r.payloadStart, r.end);
-      [52047593, 60487319].forEach(function (no) {
+      [52047593, 60487319].forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (no) {
         var data = child(continuation, no, budget);
         if (data) {
           var token = child(data, 1, budget);
@@ -445,8 +625,17 @@
         }
       });
     });
-    return ids.length > 0 && ids.every(function (id) {return id === "FEwhat_to_watch";});
+    return ids.length > 0 && ids.every(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (id) {return id === "FEwhat_to_watch";});
   }
+  /**
+   * 功能：执行 asciiToken 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function asciiToken(bytes) {
     if (!bytes || bytes.length > 16384) return "";
     var text = "";
@@ -456,13 +645,32 @@
     }
     return text;
   }
+  /**
+   * 功能：执行 shortsCell 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function shortsCell(bytes, budget) {
     var records = parse(bytes, budget);
-    if (records.some(function (r) {return r.no >= 1000000 && r.no !== 153515154;})) return false;
+    if (records.some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no >= 1000000 && r.no !== 153515154;})) return false;
     var renderer = child(bytes, 153515154, budget);
-    if (!renderer || parse(renderer, budget).some(function (r) {return r.no >= 1000000 && r.no !== 172660663;})) return false;
+    if (!renderer || parse(renderer, budget).some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no >= 1000000 && r.no !== 172660663;})) return false;
     var element = child(renderer, 172660663, budget);
-    if (!element || parse(element, budget).some(function (r) {return r.no === 3;})) return false;
+    if (!element || parse(element, budget).some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no === 3;})) return false;
     var type = child(element, 1, budget);
     if (!type || parse(type, budget).length !== 1) return false;
     var component = child(type, 168777401, budget);
@@ -474,20 +682,33 @@
     var fields = parse(model, budget);
     return fields.length === 1 && fields[0].no === 519005951 && fields[0].wire === 2;
   }
+  /**
+   * 功能：执行 shortsShelf 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function shortsShelf(bytes, budget) {
-    // Observed iOS Shelf -> content (5) -> HorizontalList (51431404) -> items (1).
+
     var content = child(bytes, 5, budget);
     if (!content || parse(content, budget).length !== 1) return false;
     var list = child(content, 51431404, budget);
     if (!list) return false;
     var records = parse(list, budget), count = 0, valid = true;
-    records.forEach(function (r) {
+    records.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
       if (r.no !== 1) return;
       count++;
       if (r.wire !== 2 || !shortsCell(list.subarray(r.payloadStart, r.end), budget)) valid = false;
     });
     return count > 0 && valid;
   }
+  /**
+   * 功能：清理已确认 Protobuf 结构中的广告字段或条目。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function cleanProto(bytes, kind, budget, depth, homeContext) {
     if (depth > 32) fail("protobuf-depth-limit");
     var records = parse(bytes, budget), edges = EDGES[kind] || {}, adFields = ADS[kind] || {};
@@ -497,18 +718,38 @@
       if (kind === "sectionList" && !homeContext) homeContext = protoHomeContinuation(bytes, records, budget);
     }
     var listCount = 0, keptListCount = 0, pendingAd = false, divider = false;
-    records.forEach(function (r) {
+    records.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
       if (adFields[r.no]) { if (r.wire !== 2) fail("feed-ad-schema-mismatch"); adSeen = true; }
     });
-    if (adSeen && records.some(function (r) {return r.no >= 1000000 && !adFields[r.no];})) fail("feed-mixed-renderer");
-    records.forEach(function (r) {
+    if (adSeen && records.some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no >= 1000000 && !adFields[r.no];})) fail("feed-mixed-renderer");
+    records.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
       if (adFields[r.no]) { removed++; drop = true; return; }
       if (kind === "next" && r.no === 15 && r.wire === 2 && watchNextAdAction(bytes.subarray(r.payloadStart, r.end), budget)) {
         removed++; eml++; return;
       }
       if (hideHomeShorts && endpoint === "browse" && homeContext && kind === "sectionItem" && r.no === 51845067) {
         if (r.wire !== 2) fail("shorts-shelf-schema-mismatch");
-        if (shortsShelf(bytes.subarray(r.payloadStart, r.end), budget) && !records.some(function (other) {return other.no >= 1000000 && other.no !== 51845067;})) {
+        if (shortsShelf(bytes.subarray(r.payloadStart, r.end), budget) && !records.some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (other) {return other.no >= 1000000 && other.no !== 51845067;})) {
           shorts++; drop = true; return;
         }
       }
@@ -524,7 +765,12 @@
           identity.ad = true;
           adaptive++;
         }
-        if (identity.ad && records.some(function (other) {return other.no >= 1000000 && other.no !== 153515154;})) fail("feed-mixed-renderer");
+        if (identity.ad && records.some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (other) {return other.no >= 1000000 && other.no !== 153515154;})) fail("feed-mixed-renderer");
         if (identity.ad) {removed++; eml++; drop = true; return;}
         opaque++;
         divider = identity.divider && records.length === 1;
@@ -536,14 +782,19 @@
       if ((kind === "sectionList" || kind === "secondaryList" || kind === "itemSection") && r.no === 1) {
         listCount++;
         if (result.drop) {pendingAd = result.removed > 0; return;}
-        // Remove one verified divider immediately following a deleted ad card.
+
         if (kind !== "itemSection" && pendingAd && result.divider) {dividers++; pendingAd = false; return;}
         pendingAd = false; keptListCount++;
         if (kind === "itemSection") divider = listCount === 1 && result.divider;
       }
       if (kind === "sectionItem" || kind === "secondaryItem") {
         if (result.drop) {
-          if (records.some(function (other) {return other.no >= 1000000 && other.no !== 50195462;})) fail("feed-mixed-renderer");
+          if (records.some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (other) {return other.no >= 1000000 && other.no !== 50195462;})) fail("feed-mixed-renderer");
           drop = true;
         }
         divider = result.divider && records.length === 1;
@@ -551,7 +802,12 @@
       parts.push(result.removed || result.shorts || result.dividers ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
     });
     if (kind === "itemSection") {
-      var safeMetadata = records.every(function (r) {return r.no === 1 || r.no === 4 || r.no === 8;});
+      var safeMetadata = records.every(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {return r.no === 1 || r.no === 4 || r.no === 8;});
       drop = removed > 0 && listCount > 0 && keptListCount === 0 && safeMetadata;
       divider = divider && listCount === 1 && safeMetadata;
     }
@@ -563,37 +819,83 @@
     "promotedSparklesTextSearchRenderer", "compactPromotedItemRenderer",
     "compactPromotedVideoRenderer", "gridPromotedVideoRenderer", "searchPyvRenderer",
     "carouselAdRenderer", "companionAdRenderer"];
+  /**
+   * 功能：执行 object 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function object(value) { return !!value && typeof value === "object" && !Array.isArray(value); }
+  /**
+   * 功能：执行 adCard 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function adCard(value, depth) {
     if (!object(value) || depth > 8) return false;
     var keys = Object.keys(value), marked = false;
-    keys.forEach(function (key) { if (AD_KEYS.indexOf(key) >= 0 && object(value[key])) marked = true; });
+    keys.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) { if (AD_KEYS.indexOf(key) >= 0 && object(value[key])) marked = true; });
     if (marked) {
-      // Retain malformed unions containing both an ad and a normal renderer.
-      if (keys.some(function (key) { return /(?:Renderer|ViewModel)$/.test(key) && AD_KEYS.indexOf(key) < 0; })) fail("feed-mixed-renderer");
+
+      if (keys.some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) { return /(?:Renderer|ViewModel)$/.test(key) && AD_KEYS.indexOf(key) < 0; })) fail("feed-mixed-renderer");
       return true;
     }
-    // A known card wrapper with an explicitly identified ad as its content.
+
     if (object(value.richItemRenderer) && adCard(value.richItemRenderer.content, depth + 1)) {
-      if (keys.some(function (key) {return key !== "richItemRenderer" && /(?:Renderer|ViewModel)$/.test(key);})) fail("feed-mixed-renderer");
+      if (keys.some(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) {return key !== "richItemRenderer" && /(?:Renderer|ViewModel)$/.test(key);})) fail("feed-mixed-renderer");
       return true;
     }
     return false;
   }
+  /**
+   * 功能：执行 jsonHome 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function jsonHome(value) {
     if (!object(value)) return false;
     if (value.targetId === "browse-feedFEwhat_to_watch") return true;
     var ids = [], browse = value.endpoint && value.endpoint.browseEndpoint;
     if (typeof value.tabIdentifier === "string") ids.push(value.tabIdentifier);
     if (browse && typeof browse.browseId === "string") ids.push(browse.browseId);
-    if (Array.isArray(value.continuations)) value.continuations.forEach(function (entry) {
+    if (Array.isArray(value.continuations)) value.continuations.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (entry) {
       if (!object(entry)) return;
-      ["nextContinuationData", "reloadContinuationData"].forEach(function (key) {
+      ["nextContinuationData", "reloadContinuationData"].forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) {
         if (object(entry[key])) ids.push(continuationBrowseId(entry[key].continuation, {fields:0}));
       });
     });
-    return ids.length > 0 && ids.every(function (id) {return id === "FEwhat_to_watch";});
+    return ids.length > 0 && ids.every(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (id) {return id === "FEwhat_to_watch";});
   }
+  /**
+   * 功能：执行 requestHome 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function requestHome() {
     if (!hideHomeShorts || endpoint !== "browse") return false;
     try {
@@ -609,20 +911,48 @@
       return continuationBrowseId(asciiToken(child(bytes, 7, budget)), budget) === "FEwhat_to_watch";
     } catch (_) {return false;}
   }
+  /**
+   * 功能：执行 jsonShortsCard 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function jsonShortsCard(value, depth) {
     if (!object(value) || depth > 8) return false;
-    var keys = Object.keys(value), rendererKeys = keys.filter(function (key) {return /(?:Renderer|ViewModel)$/.test(key);});
+    var keys = Object.keys(value), rendererKeys = keys.filter(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) {return /(?:Renderer|ViewModel)$/.test(key);});
     if (rendererKeys.length !== 1) return false;
     var key = rendererKeys[0], card = value[key];
     if (!object(card)) return false;
     if (key === "richSectionRenderer") return jsonShortsCard(card.content, depth + 1);
     if (key === "itemSectionRenderer") {
-      return Object.keys(card).every(function (k) {return ["contents", "trackingParams", "sectionIdentifier", "targetId"].indexOf(k) >= 0;}) &&
-        Array.isArray(card.contents) && card.contents.length > 0 && card.contents.every(function (item) {return jsonShortsCard(item, depth + 1);});
+      return Object.keys(card).every(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (k) {return ["contents", "trackingParams", "sectionIdentifier", "targetId"].indexOf(k) >= 0;}) &&
+        Array.isArray(card.contents) && card.contents.length > 0 && card.contents.every(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (item) {return jsonShortsCard(item, depth + 1);});
     }
+    /**
+     * 功能：执行 shortsItem 对应的内部处理步骤。
+     * 更新时间：2026-10-04T08:54:22+08:00
+     */
     function shortsItem(item, level) {
       if (!object(item) || level > 8) return false;
-      var names = Object.keys(item).filter(function (k) {return /(?:Renderer|ViewModel)$/.test(k);});
+      var names = Object.keys(item).filter(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (k) {return /(?:Renderer|ViewModel)$/.test(k);});
       if (names.length !== 1) return false;
       if (names[0] === "richItemRenderer" && object(item.richItemRenderer)) return shortsItem(item.richItemRenderer.content, level + 1);
       return (names[0] === "reelItemRenderer" || names[0] === "shortsLockupViewModel") && object(item[names[0]]);
@@ -631,23 +961,51 @@
     if (key === "reelShelfRenderer") items = card.items;
     else if (key === "richShelfRenderer" && card.icon && card.icon.iconType === "YOUTUBE_SHORTS_BRAND_24") items = card.contents;
     else if (key === "shelfRenderer" && card.content && object(card.content.horizontalListRenderer) && Object.keys(card.content).length === 1) items = card.content.horizontalListRenderer.items;
-    return Array.isArray(items) && items.length > 0 && items.every(function (item) {return shortsItem(item, 0);});
+    return Array.isArray(items) && items.length > 0 && items.every(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (item) {return shortsItem(item, 0);});
   }
+  /**
+   * 功能：清理已确认 JSON 结构中的广告字段或条目。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function cleanJSON(text) {
     var root = JSON.parse(text), nodes = 0, removed = 0, shorts = 0, opaque = 0;
     var enabled = hideHomeShorts && endpoint === "browse";
+    /**
+     * 功能：执行 walk 对应的内部处理步骤。
+     * 更新时间：2026-10-04T08:54:22+08:00
+     */
     function walk(value, depth, homeContext) {
       if (!value || typeof value !== "object") return;
       if (++nodes > MAX_JSON_NODES || depth > 64) fail("json-limit");
-      if (Array.isArray(value)) { value.forEach(function (v) {walk(v, depth + 1, homeContext);}); return; }
+      if (Array.isArray(value)) { value.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (v) {walk(v, depth + 1, homeContext);}); return; }
       if (enabled && jsonHome(value)) homeContext = true;
-      Object.keys(value).forEach(function (key) {
+      Object.keys(value).forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) {
         var child = value[key];
         if (key === "elementRenderer") opaque++;
-        // Only actual list fields get item removal; renderer-looking metadata
-        // elsewhere and titles stay untouched. Shorts require a home identity.
+
+
         if ((key === "contents" || key === "continuationItems" || key === "results" || key === "items") && Array.isArray(child)) {
-          value[key] = child.filter(function (entry) {
+          value[key] = child.filter(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (entry) {
             if (adCard(entry, 0)) { removed++; return false; }
             if (enabled && homeContext && jsonShortsCard(entry, 0)) {shorts++; return false;}
             return true;
@@ -660,6 +1018,10 @@
     walk(root, 0, requestHome());
     return {body:removed || shorts ? JSON.stringify(root) : text, removed:removed, shorts:shorts, opaque:opaque};
   }
+  /**
+   * 功能：根据当前 Loon 请求或响应执行对应处理流程。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function run() {
     var match = API.exec(typeof $request !== "undefined" ? $request.url || "" : "");
     if (!match || typeof $response === "undefined") return {};
@@ -694,6 +1056,10 @@
   var output = {};
   try { output = run(); }
   catch (error) {devFailure(error); log("pass: " + (error.ytNoAdsCode || "parse/schema check failed"));}
-  if (typeof $request !== "undefined" && typeof $response !== "undefined" && API.test($request.url || "")) devCapture("YouTubeFeedAds", "response", endpoint, VERSION, output);
+  if (typeof $request !== "undefined" && typeof $response !== "undefined" && API.test($request.url || "")) devCapture("YouTubeFeed", "response", endpoint, VERSION, output);
   $done(output);
+})();
+
+  }
+  else { $done({}); }
 })();

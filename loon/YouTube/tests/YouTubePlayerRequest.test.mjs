@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../YouTubePlayerRequest.js',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../YouTubePlayback.js',import.meta.url),'utf8');
 const plugin=fs.readFileSync(new URL('../YouTubeNoAds.plugin',import.meta.url),'utf8');
 const logger=fs.readFileSync(new URL('../YouTubeLogger.js',import.meta.url),'utf8');
 const u8=value=>Uint8Array.from(value);
@@ -29,7 +29,7 @@ function run(body,{endpoint='player',type='application/x-protobuf',enabled=true,
 
 test('plugin keeps the standalone player request cleaner always enabled without a settings switch',()=>{
   assert.ok(!plugin.includes('suppress_player_ads = switch'));
-  const line=plugin.split('\n').find(x=>x.startsWith('http-request')&&x.includes('YouTubePlayerRequest.js'));
+  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放器请求广告协商清理'));
   assert.ok(line&&!line.includes('enable='));
   assert.ok(line.includes('requires-body=true,binary-body-mode=true'));
   assert.ok(line.includes('{log_enabled}')&&line.includes('{capture_budget}'));
@@ -38,7 +38,7 @@ test('plugin keeps the standalone player request cleaner always enabled without 
   assert.ok(regex.test('https://www.youtube.com/youtubei/v1/get_watch'));
   assert.ok(!regex.test('https://youtubei.googleapis.com/youtubei/v1/player/ad_break'));
   assert.ok(!regex.test('https://rr5.googlevideo.com/videoplayback?ctier=L'));
-  assert.ok(logger.includes('"YouTubePlayerRequest"'));
+  assert.ok(logger.includes('"YouTubePlayback"'));
 });
 
 test('protobuf player strips exact ad negotiation fields and preserves siblings',()=>{
@@ -100,7 +100,7 @@ test('changed request writes a secret-free summary to the shared cache',()=>{
   run(body,{store,debug:true});
   const state=JSON.parse(store.get('ytads.logger.entries.v2'));
   assert.equal(state.entries.length,1);
-  assert.equal(state.entries[0].source,'YouTubePlayerRequest');
+  assert.equal(state.entries[0].source,'YouTubePlayback');
   assert.match(state.entries[0].message,/context_ad_signals=1 playback_ad_params=1 inline_no_ad=1/);
   assert.equal(JSON.stringify(state).includes('youtubei.googleapis.com'),false);
 });
@@ -110,7 +110,7 @@ test('development capture stores original and modified player requests in one ev
   const body=concat(msg(1,msg(9,u8([1]))),msg(4,msg(1,msg(12,u8([2])))));
   run(body,{store,raw:true});
   const state=JSON.parse(store.get('ytads.logger.entries.v2')),entry=state.entries[0];
-  assert.equal(entry.source,'YouTubePlayerRequest');
+  assert.equal(entry.source,'YouTubePlayback');
   assert.equal(entry.message,'development capture: changed=true');
   const payload=JSON.parse(Array.from({length:entry.captureRef.chunks},(_,i)=>store.get(entry.captureRef.prefix+i)).join(''));
   assert.equal(payload.request.body.encoding,'base64');

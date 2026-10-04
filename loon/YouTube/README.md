@@ -4,20 +4,15 @@
 
 | 文件 | 功能 | 匹配位置 |
 | --- | --- | --- |
-| `YouTubeFeedAds.js` | 清理已识别的首页、播放页推荐及搜索赞助卡片，可手动隐藏首页 Shorts 推荐区 | `/youtubei/v1/browse`、`next`、`search` 的 JSON 及部分 Protobuf 列表 |
-| `YouTubePlayerRequest.js` | 在请求广告媒体前清理播放器广告协商字段，不阻断广告或正片媒体 | `/youtubei/v1/player`、`get_watch` 的 JSON / Protobuf 请求 |
-| `YouTubePlaybackAds.js` | 在播放器进入广告状态前清理广告位及 pagead 追踪，可按开关允许后台播放 | `/youtubei/v1/player`、`get_watch` 的 JSON / Protobuf 响应 |
-| `YouTubeAdBreak.js` | 终止明确的片头/中插广告配置请求，不拦截视频媒体 | `/youtubei/v1/player/ad_break` 请求 |
-| `YouTubeShortsAds.js` | 删除明确带有 `adClientParams.isAd=true` 的 Shorts 播放条目 | `/youtubei/v1/reel/reel_watch_sequence` 的 JSON / Protobuf 响应 |
-| `YouTubeStreamAds.js` | 清理视频流中的广告预取提示（试验） | `googlevideo.com/videoplayback` 的 UMP 响应 |
-| `YouTubeOnesieConfig.js` | 仅为 YouTube iOS 维护 Onesie 配置密钥及有效期，缺失或过期时请求完整配置 | `/youtubei/v1/config`、`log_event` |
-| `YouTubeInitPlayback.js` | 在本机验证、解密、清理并重新签名 YouTube iOS 的 initplayback 播放器请求 | `googlevideo.com/initplayback` 请求 |
-| `YouTubeLogger.js` | 本地日志控制、开发请求抓包、.log / .json 导出 | 专用页面和手动开启的请求入口 |
+| `YouTubeFeed.js` | 清理已识别的首页、播放页推荐及搜索赞助卡片，可手动隐藏首页 Shorts 推荐区 | `/youtubei/v1/browse`、`next`、`search` 的 JSON 及部分 Protobuf 列表 |
+| `YouTubePlayback.js` | 集中处理播放器请求和响应、片头/中插配置、Shorts 播放广告、UMP 预取提示，并按开关允许后台播放 | `player`、`get_watch`、`player/ad_break`、`reel_watch_sequence`、`googlevideo.com/videoplayback` |
+| `YouTubeConfig.js` | 独立管理 Onesie 配置密钥，并验证、解密、清理和重新签名 `initplayback` 请求 | `config`、`log_event`、`googlevideo.com/initplayback` |
+| `YouTubeLogger.js` | 独立管理本地日志、开发抓包和唯一的完整 `.log` 导出页面 | 专用页面和各链路日志入口 |
 | `YouTubeNoAds.plugin` | 统一配置去广告、日志入口、参数与 MitM | 只需启用这一个插件 |
 
 主插件通过 Loon 的 `#!icon` 展示 YouTube 图标，`#!desc` 展示功能范围、默认关闭的试验/日志选项及使用条件，`#!homepage` 指向本说明。图标保存为 `assets/youtube.png`，来自 [YouTube 官方页面引用的 144×144 PNG](https://www.youtube.com/s/desktop/2b888666/img/favicon_144x144.png)（2026-10-02），随本仓库发布，不依赖其他人的图标仓库。插件信息字段见 [Loon 插件文档](https://nsloon.app/docs/Plugin/)。
 
-原合并文件 `YouTubeNoAds.js` 已移除。八份功能脚本的二进制解析和日志辅助函数各自保留，以便 Loon 直接执行，不需要再加载公共模块。新版 Onesie 配置和 `initplayback` 校验分别由 `YouTubeOnesieConfig.js`、`YouTubeInitPlayback.js` 负责；其他功能继续修改对应的独立文件。
+JavaScript 按职责整理为四份文件：信息流及首页 Shorts、播放广告及后台播放、配置协商、日志与导出。每份文件由内部路由根据 URL 和请求/响应阶段调用对应处理逻辑，Loon 仍可直接执行，不需要运行时模块导入。文件头及每个函数都使用中文 JSDoc 注释，包含功能说明和更新时间，便于后续维护。
 
 目标包括首页/推荐列表中的赞助卡片，以及 YouTube 插入的片头及中插广告。**当前实现能清理已识别 API 响应中的广告位，并在本机清理普通 Player 与新版 Onesie 播放器请求的广告协商。它不删除已经传输的媒体字节，本次 Onesie 改动也尚未在真实 Loon 设备上验证。不能保证最新 YouTube App 的所有贴片广告都消失。**
 
@@ -25,7 +20,7 @@
 
 网页端扩展通常在两层处理广告：网络过滤负责拦截广告请求，页面脚本再删除播放器响应中的广告元数据和页面里的广告组件。当前实现参考 [uBlock Origin 的 YouTube 过滤规则](https://github.com/uBlockOrigin/uAssets/blob/master/filters/filters.txt) 所覆盖的 `playerAds`、`adPlacements`、`adSlots`、`pageadViewthroughconversion` 和 Shorts `isAd` 标记，并参考 [AdGuard Scriptlets](https://github.com/AdguardTeam/Scriptlets) 的响应属性替换思路。对已实际出现片头广告的新版 App，另采用[公开网页模块](https://gist.github.com/oiiogong/3b2f171141b54027e5db9a543b09b194)中的精确 `/youtubei/v1/player/ad_break` 广告配置拦截方案；Loon 无法在原生 YouTube App 内运行 DOM/scriptlet，因此这里把相同目标转换为对 `/youtubei/v1/*` JSON、Protobuf 响应和广告配置请求的定点处理。
 
-Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maasea/sgmodule/tree/master/Script/Youtube) 及公开的 [Innertube 逆向 schema](https://github.com/davidzeng0/innertube) 交叉核对。仓库没有复制第三方压缩脚本、运行库或外部 Worker，也不在运行时请求这些项目；每项功能由本目录中对应的自有 JS 独立完成。浏览器方案中直接屏蔽媒体 URL 的做法没有移植到 App，以避免把广告媒体拦成黑屏或同时破坏正片。
+Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maasea/sgmodule/tree/master/Script/Youtube) 及公开的 [Innertube 逆向 schema](https://github.com/davidzeng0/innertube) 交叉核对。仓库没有复制第三方压缩脚本、运行库或外部 Worker，也不在运行时请求这些项目；各项功能由本目录四份自有 JS 按职责完成。浏览器方案中直接屏蔽媒体 URL 的做法没有移植到 App，以避免把广告媒体拦成黑屏或同时破坏正片。
 
 ## 实现范围
 
@@ -33,10 +28,10 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 - 播放器请求：Protobuf 只沿已确认的 `PlayerRequest.context（字段 1）→ ad_signals_info（字段 9）`、`playback_context（字段 4）→ content_playback_context（字段 1）` 路径处理。删除广告信号、VAST 参数字段 12 和强制广告参数字段 25，并把协议已公开的 `is_inline_playback_no_ad（字段 50）` 写为 true；`get_watch` 另沿顶层字段 2 进入 `PlayerRequest`。JSON 对应删除 `adSignalsInfo`、`adParams`、`forceAdParameters` 并设置 `isInlinePlaybackNoAd=true`。修改请求后移除旧的 `Content-Encoding`、`Content-Length`，让 Loon 发送重新生成的未压缩正文，其他请求头和未知 Protobuf 字段保持原样。
 - JSON：删除播放器对象中的 `adPlacements`、`adSlots`、`playerAds`、`adBreakHeartbeatParams`、`adParams`，删除 `playerConfig.adPlacementConfig`、`playerConfig.adSignalsConfig`，以及 `playbackTracking.pageadViewthroughconversion`。保留播放地址、视频信息、字幕及其他统计地址；不会全局删除任意对象中同名字段。
 - Protobuf：自行实现 wire format 读取，移除已识别 Player 消息的字段 7（`adPlacements`）、字段 68（`adSlots`），并在字段 9（`playbackTracking`）中删除字段 18（`pageadViewthroughconversion`）。`get_watch` 使用已知的字段路径 `1 → 2 → Player`。保留非广告字段的原始字节、顺序及未知内容，只在嵌套消息改变时重算外层长度。
-- Ad break：`YouTubeAdBreak.js` 只对精确的 `player/ad_break` 请求直接返回 HTTP 200 与合法的空 Protobuf，阻止客户端取得新的片头/中插广告配置。它不匹配 `googlevideo.com`，不返回 502，也不截断广告或正片媒体流；主插件固定启用该处理。
-- Onesie 配置：`YouTubeOnesieConfig.js` 只接受 User-Agent 明确为 `com.google.ios.youtube/...` 的请求，按固定 Protobuf 路径读取 `clientKey`、`encryptKey`、有效期和热配置开关。密钥只写入 Loon 本地缓存，不进入普通日志或控制台；YouTube Music、网页和未知客户端不读写该状态。没有可用配置时，`log_event` 请求会去掉热配置哈希头，使服务端返回完整配置；已有有效配置时保留该哈希。脚本会移除 Loon 解码正文后失效的 `Content-Encoding` 请求头。
-- Initplayback：`YouTubeInitPlayback.js` 先核对 `OnesieRequest 字段 3 → InnertubeRequest 字段 5` 的 `encryptedClientKey`。匹配后使用只保存在 Loon 本机的 `clientKey` 验证 `HMAC-SHA256(ciphertext || iv)`，再通过脚本内置的标准 AES-128-CTR 解密。若明文带 gzip 标记，先用 Loon 本机 `$utils.ungzip` 解压 `OnesieInnertubeRequest`。内层 URL、Header 和未知 Protobuf 字段保持原样；字段 3 的播放器正文同时支持 JSON 和 iOS 使用的二进制 PlayerRequest Protobuf，删除 `adSignalsInfo`、`adParams`、`forceAdParameters`，写入 `isInlinePlaybackNoAd=true`，随后按原压缩格式重新编码、使用原 IV 加密并生成新 HMAC。加密载荷外明确出现的 `enable_ad_placements_preroll（字段 13）` 会写为 false；缺省时保留缺省值。正文改变后移除旧的 `Content-Encoding` 和 `Content-Length`，交给 Loon 重新生成传输长度。HMAC、正文、字段、压缩或加解密任一检查失败均原样放行。仅在确认客户端密钥失配时清除旧缓存并返回一次 HTTP 200 空 Protobuf，使客户端重新取得配置。压缩正文处理要求 Loon Build 988 或更高版本；该处理不阻断 `videoplayback`、不修改媒体字节，也不把 URL 或密钥发送到外部 Worker。
-- Shorts：独立脚本只删除响应字段 2 的条目中符合 `command（1）→ reelWatchEndpoint（139608561）→ adClientParams（16）→ isAd（1）= true` 的完整条目。普通 Shorts、未知命令及结构不完整的条目保持原样。
+- Ad break：`YouTubePlayback.js` 只对精确的 `player/ad_break` 请求直接返回 HTTP 200 与合法的空 Protobuf，阻止客户端取得新的片头/中插广告配置。它不匹配 `googlevideo.com`，不返回 502，也不截断广告或正片媒体流；主插件固定启用该处理。
+- Onesie 配置：`YouTubeConfig.js` 只接受 User-Agent 明确为 `com.google.ios.youtube/...` 的请求，按固定 Protobuf 路径读取 `clientKey`、`encryptKey`、有效期和热配置开关。密钥只写入 Loon 本地缓存，不进入普通日志或控制台；YouTube Music、网页和未知客户端不读写该状态。没有可用配置时，`log_event` 请求会去掉热配置哈希头，使服务端返回完整配置；已有有效配置时保留该哈希。脚本会移除 Loon 解码正文后失效的 `Content-Encoding` 请求头。
+- Initplayback：`YouTubeConfig.js` 先核对 `OnesieRequest 字段 3 → InnertubeRequest 字段 5` 的 `encryptedClientKey`。匹配后使用只保存在 Loon 本机的 `clientKey` 验证 `HMAC-SHA256(ciphertext || iv)`，再通过脚本内置的标准 AES-128-CTR 解密。若明文带 gzip 标记，先用 Loon 本机 `$utils.ungzip` 解压 `OnesieInnertubeRequest`。内层 URL、Header 和未知 Protobuf 字段保持原样；字段 3 的播放器正文同时支持 JSON 和 iOS 使用的二进制 PlayerRequest Protobuf，删除 `adSignalsInfo`、`adParams`、`forceAdParameters`，写入 `isInlinePlaybackNoAd=true`，随后按原压缩格式重新编码、使用原 IV 加密并生成新 HMAC。加密载荷外明确出现的 `enable_ad_placements_preroll（字段 13）` 会写为 false；缺省时保留缺省值。正文改变后移除旧的 `Content-Encoding` 和 `Content-Length`，交给 Loon 重新生成传输长度。HMAC、正文、字段、压缩或加解密任一检查失败均原样放行。仅在确认客户端密钥失配时清除旧缓存并返回一次 HTTP 200 空 Protobuf，使客户端重新取得配置。压缩正文处理要求 Loon Build 988 或更高版本；该处理不阻断 `videoplayback`、不修改媒体字节，也不把 URL 或密钥发送到外部 Worker。
+- Shorts 播放广告：`YouTubePlayback.js` 只删除响应字段 2 的条目中符合 `command（1）→ reelWatchEndpoint（139608561）→ adClientParams（16）→ isAd（1）= true` 的完整条目。普通 Shorts、未知命令及结构不完整的条目保持原样。
 - 字段编号和 `get_watch` 路径来自已有逆向协议描述的核对，属于协议映射信息；未复制原脚本或其库实现。YouTube 未公开保证这些编号适用于所有客户端。脚本使用字段 2 的 playabilityStatus 及 wire type 作有限检查，不能证明所有未来协议变化都能识别。
 - 空响应、非 200、损坏数据、已检测到的结构不匹配、未知内容类型、API 上的非预期 UMP、未解压的 gzip 及超限响应原样通过。限制为 2 MiB 响应、30,000 个解析字段、20,000 个 JSON 对象节点和 64 层 JSON 深度。
 - 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与日志工具中的 UMP 检查回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节。关闭日志工具不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
@@ -44,23 +39,19 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 
 ### 后台播放开关
 
-主插件的“后台播放”默认关闭。开启后，`YouTubePlaybackAds.js` 在已识别的播放器响应中把后台播放能力设为允许：JSON 同时写入 `playabilityStatus.playableInBackground` 和 `backgroundPlayerRender.backgroundAbility.active`；Protobuf 保留兼容字段 4，并写入 `PlayabilityStatus 字段 11 → BackgroundSupportedRenderer 扩展 64657230 → BackgroundAbility.active（字段 1）`。已有未知字段、播放地址和其他播放状态保持原样；开关关闭时不会修改服务端能力。
+主插件的“后台播放”默认关闭。开启后，`YouTubePlayback.js` 在已识别的播放器响应中把后台播放能力设为允许：JSON 同时写入 `playabilityStatus.playableInBackground` 和 `backgroundPlayerRender.backgroundAbility.active`；Protobuf 保留兼容字段 4，并写入 `PlayabilityStatus 字段 11 → BackgroundSupportedRenderer 扩展 64657230 → BackgroundAbility.active（字段 1）`。已有未知字段、播放地址和其他播放状态保持原样；开关关闭时不会修改服务端能力。
 
 该开关用于普通视频切换 App 或锁屏后继续播放音频。它不修改画中画、会员身份、付费权益或媒体字节；直播、地区/年龄受限内容及 YouTube 客户端自身限制仍可能阻止后台播放。修改后需要在 Loon 更新主插件和脚本，并完全退出再打开 YouTube 才能让新响应生效。
 
 ## 安装与更新
 
-主插件的八个功能条目分别引用本仓库的对应文件：
+主插件按请求路径调用本仓库的四份 JavaScript：
 
 ```text
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeFeedAds.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayerRequest.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeAdBreak.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeShortsAds.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeOnesieConfig.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeInitPlayback.js
+https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeFeed.js
+https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayback.js
+https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeConfig.js
+https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js
 ```
 
 **本地新建或修改文件不会自动发布到该地址。发布前直接导入当前远程版配置，可能遇到脚本下载失败或仍取得旧文件。**
@@ -68,7 +59,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeInitPlay
 可选择以下一种方式：
 
 1. 发布本仓库的插件与 JS 后，在 Loon 更新插件，并重新下载对应脚本。需要设备能访问 `raw.githubusercontent.com`。
-2. 本地试用：把八份功能 JS 导入 Loon 的本地脚本资源，确认保存名称；把主插件各条目的远程 `script-path` 改为对应的本地资源名。不是填写 Mac 上的 `/Users/...` 路径。仍只需启用一个插件入口。
+2. 本地试用：把四份 JS 导入 Loon 的本地脚本资源，确认保存名称；把主插件各条目的远程 `script-path` 改为对应的本地资源名。不是填写 Mac 上的 `/Users/...` 路径。仍只需启用一个插件入口。
 
 更新时替换 `YouTubeNoAds.plugin`，不要保留另一份旧主插件。删除或禁用此前的 `YouTubeCtierAds.plugin` 及其他匹配 YouTube 的脚本，若曾复制过相关规则到主配置，也一并移除。
 
@@ -79,13 +70,13 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeInitPlay
 默认关闭日志工具。需要排查时只需在主插件开启“日志工具”，它会统一保存浏览、刷新、播放与 UMP 全链路原始数据；脚本控制台保持关闭，避免重复记录。日志前缀含脚本版本：
 
 ```text
-[YouTubePlaybackAds 2.1.0] player changed: removed=3 tracking_removed=1 background_modified=1 format=protobuf
-[YouTubePlayerRequest 1.0.0] player changed: context_ad_signals=1 playback_ad_params=1 inline_no_ad=1
-[YouTubeAdBreak 1.0.0] ad_break blocked: empty-protobuf status=200
-[YouTubeOnesieConfig 1.0.0] config updated: lifetime_seconds=600 hot_config=true
-[YouTubeInitPlayback 1.3.0] initplayback changed: authenticated=true encoding=gzip context_ad_signals=1 playback_ad_params=1 inline_no_ad=1
-[YouTubeShortsAds 1.0.0] reel_watch_sequence changed: removed=1 format=protobuf
-[YouTubePlaybackAds 2.1.0] get_watch pass: removed=0 tracking_removed=0 background_modified=0 format=protobuf
+[YouTubePlayback 2.1.0] player changed: removed=3 tracking_removed=1 background_modified=1 format=protobuf
+[YouTubePlayback 1.0.0] player changed: context_ad_signals=1 playback_ad_params=1 inline_no_ad=1
+[YouTubePlayback 1.0.0] ad_break blocked: empty-protobuf status=200
+[YouTubeConfig 1.0.0] config updated: lifetime_seconds=600 hot_config=true
+[YouTubeConfig 1.3.0] initplayback changed: authenticated=true encoding=gzip context_ad_signals=1 playback_ad_params=1 inline_no_ad=1
+[YouTubePlayback 1.0.0] reel_watch_sequence changed: removed=1 format=protobuf
+[YouTubePlayback 2.1.0] get_watch pass: removed=0 tracking_removed=0 background_modified=0 format=protobuf
 ```
 
 - `changed` 表示删除了已识别广告字段或修改了后台播放能力，不能单独证明某次视频不会出现广告。`removed` 是字段或条目出现次数，不一定等于屏幕广告数；`tracking_removed` 是删除的 pagead 追踪字段数；`background_modified` 是本次实际改写的播放状态数量。
@@ -98,7 +89,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeInitPlay
 
 首页推荐列表里标注“赞助商广告”的 Robinhood 卡片属于信息流广告。它由推荐接口提供卡片数据，即使卡片自动播放视频，也应从推荐列表中移除卡片。`application/vnd.yt-ump` 是媒体封装，单独处理媒体下载不能移除该列表项。
 
-`YouTubeFeedAds.js` 自行实现清理逻辑，不加载其他人的 JS。主插件默认启用信息流响应入口，匹配 `browse`、`next` 和 `search`。JSON 只在列表字段中删除具有明确广告 renderer 的整项，包括 `adSlotRenderer`、`inFeedAdLayoutRenderer`、`promotedVideoRenderer` 等，以及包在 `richItemRenderer.content` 中的广告卡片。正常视频、频道、购物内容、包含“广告”文字的普通标题和翻页 token 保留；Shorts 默认保留，可用下面的独立开关隐藏首页推荐区。广告与正常 renderer 同时出现在同一对象中时，整条响应保留，避免误删。
+`YouTubeFeed.js` 自行实现清理逻辑，不加载其他人的 JS。主插件默认启用信息流响应入口，匹配 `browse`、`next` 和 `search`。JSON 只在列表字段中删除具有明确广告 renderer 的整项，包括 `adSlotRenderer`、`inFeedAdLayoutRenderer`、`promotedVideoRenderer` 等，以及包在 `richItemRenderer.content` 中的广告卡片。正常视频、频道、购物内容、包含“广告”文字的普通标题和翻页 token 保留；Shorts 默认保留，可用下面的独立开关隐藏首页推荐区。广告与正常 renderer 同时出现在同一对象中时，整条响应保留，避免误删。
 
 “自适应信息流广告”固定开启，用于 YouTube 新增了尚未登记的 EML 布局时补充固定映射。它不会扫描整条响应：只有进入已经确认的信息流卡片正文后，且该卡片达到最小结构长度并出现网页过滤规则也使用的精确 `pagead` 标记，才移除该卡片并记录 `adaptive_removed`。
 
@@ -140,7 +131,7 @@ Protobuf 仅沿已核对的路径处理：BrowseResponse 字段 9 / 10 中的 Se
 
 使用步骤：
 
-1. 在 Loon 更新 `YouTube去广告` 主插件，并重新下载其引用的 `YouTubeFeedAds.js`，确保使用 1.2.0 或更高版本。
+1. 在 Loon 更新 `YouTube去广告` 主插件，并重新下载其引用的 `YouTubeFeed.js`，确保使用 1.2.0 或更高版本。
 2. 进入主插件设置，打开“隐藏首页 Shorts”。保持插件、脚本与 MitM 启用、证书完全信任；此功能不需要开启日志工具。
 3. 完全退出 YouTube 后重新打开，进入首页并下拉刷新。已缓存的旧首页需要刷新才能取得修改后的推荐列表。
 4. 如需恢复，关闭该开关，再退出 YouTube、重新打开并刷新首页。
@@ -157,7 +148,7 @@ JSON 支持 `reelShelfRenderer`、带 Shorts 图标的 `richShelfRenderer` 及�
 
 ### Shorts 播放广告清理
 
-Shorts 广告清理固定开启，由 `YouTubeShortsAds.js` 单独处理 `reel/reel_watch_sequence`。JSON 只删除明确满足 `command.reelWatchEndpoint.adClientParams.isAd === true` 的 `entries` 项；Protobuf 只沿已核对的字段链定位相同布尔标记并删除外层条目。它不会按标题、频道、时长或任意广告文本判断，也不影响首页“隐藏首页 Shorts”开关、底部 Shorts 入口或普通 Shorts。
+Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `reel/reel_watch_sequence`。JSON 只删除明确满足 `command.reelWatchEndpoint.adClientParams.isAd === true` 的 `entries` 项；Protobuf 只沿已核对的字段链定位相同布尔标记并删除外层条目。它不会按标题、频道、时长或任意广告文本判断，也不影响首页“隐藏首页 Shorts”开关、底部 Shorts 入口或普通 Shorts。
 
 该脚本与首页 Shorts 功能分开，是因为一个处理 Shorts 播放序列里的广告条目，另一个处理首页推荐区块。前者固定启用；普通 Shorts 和结构未知的命令始终保留。
 
@@ -172,15 +163,15 @@ Shorts 广告清理固定开启，由 `YouTubeShortsAds.js` 单独处理 `reel/r
 本次实际响应的离线回放日志（不是手机界面实测）：
 
 ```text
-[YouTubeFeedAds 1.1.0] browse changed: removed=1 format=protobuf opaque_elements=12 removed_eml=1 removed_dividers=1
-[YouTubeFeedAds 1.1.0] browse pass: removed=0 format=protobuf opaque_elements=0 removed_eml=0 removed_dividers=0
+[YouTubeFeed 1.1.0] browse changed: removed=1 format=protobuf opaque_elements=12 removed_eml=1 removed_dividers=1
+[YouTubeFeed 1.1.0] browse pass: removed=0 format=protobuf opaque_elements=0 removed_eml=0 removed_dividers=0
 ```
 
 `removed_eml` 是确认移除的 EML 广告内容数，`removed_dividers` 是移除的关联分隔项数。`opaque_elements` 统计已知路径上保留的 ElementRenderer（含普通视频和分隔项），不代表广告数量，也不代表统计了所有 EML 卡片。
 
 ## 主插件日志工具与开发记录
 
-只启用 `YouTubeNoAds.plugin`，不再使用独立的 `YouTubeLogger.plugin`。八份功能脚本共用一个记录索引，日志和原始样本统一导出；样本按块存储以避免把全部二进制反复写入索引，按来源分类的多套日志缓存不会重新引入。
+只启用 `YouTubeNoAds.plugin`，不再使用独立的 `YouTubeLogger.plugin`。四份 JS 共用一个记录索引，日志和原始样本统一导出；样本按块存储以避免把全部二进制反复写入索引，按来源分类的多套日志缓存不会重新引入。
 
 主插件参数：
 
@@ -199,7 +190,7 @@ Shorts 广告清理固定开启，由 `YouTubeShortsAds.js` 单独处理 `reel/r
 
 ### 能保留哪些开发数据
 
-- 请求阶段：完整 URL、方法、请求头、HTTP/2 trailers、请求正文。信息流和媒体抓包入口只读取并返回原请求；`player/get_watch` 由 `YouTubePlayerRequest.js` 在同一条开发事件中另存 `requestAfter`，用于比较广告协商清理前后的正文与头覆盖。
+- 请求阶段：完整 URL、方法、请求头、HTTP/2 trailers、请求正文。信息流和媒体抓包入口只读取并返回原请求；`player/get_watch` 由 `YouTubePlayback.js` 在同一条开发事件中另存 `requestAfter`，用于比较广告协商清理前后的正文与头覆盖。
 - 响应阶段：运行时可见的请求信息、原始响应状态/头/trailers/正文、修改后的正文或“沿用原正文”的引用。处理后的传输头由 Loon 重算，不能把原响应头当成最终网络头。
 - 时间、来源、版本、Loon 运行时版本（若提供）、处理摘要、删除计数、UMP 部分计数、异常名称/消息/堆栈（若发生）、耗时和运行参数。
 - 二进制正文以 Base64 保存，可还原为 Protobuf、Brotli 或 UMP 样本；文本保留运行时字符串。空正文与未提供正文分开记录，未提供的数据标明 `available:false`，不会伪造一个空样本。
@@ -210,7 +201,7 @@ Shorts 广告清理固定开启，由 `YouTubeShortsAds.js` 单独处理 `reel/r
 
 ### 完整日志操作
 
-1. 更新主插件和九份 JS。开发记录要求 `YouTubeFeedAds.js` 为 2.1.0、`YouTubePlayerRequest.js` 为 1.0.0、`YouTubePlaybackAds.js` 为 2.1.0、`YouTubeAdBreak.js` 为 1.0.0、`YouTubeShortsAds.js` 为 1.0.0、`YouTubeStreamAds.js` 为 1.5.0、`YouTubeOnesieConfig.js` 为 1.0.0、`YouTubeInitPlayback.js` 为 1.4.0、`YouTubeLogger.js` 为 1.9.0。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
+1. 更新主插件和四份 JS：`YouTubeFeed.js`、`YouTubePlayback.js`、`YouTubeConfig.js`、`YouTubeLogger.js`。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
 2. 主插件只需开启“日志工具”，选择容量，并把“UMP 模式”保持为 `inspect`。日志工具会自动保存原始数据并启用 UMP 响应读取，不再需要第二个开关。普通摘要级别不会过滤原始样本。
 3. Safari 输入 **`http://youtube-logs.invalid/`**，或手动运行主插件的“ YouTube 日志入口 ”后点通知。地址由 Loon 在本地直接响应，不需要额外 MitM。先导出需要保留的旧记录；需要干净样本时清空，再点“开始记录”。
 4. 重现一次广告和一次正常播放。在相近时间添加广告/正片标记，减少其他播放、预览或自动播放，以便比较样本。切换 App 添加标记会有时间误差，不把它当作精确的广告边界。
@@ -245,7 +236,7 @@ Shorts 广告清理固定开启，由 `YouTubeShortsAds.js` 单独处理 `reel/r
 
 ## UMP 广告预取提示清理试验
 
-UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消息。不是普通 Protobuf varint 连续流。`YouTubeStreamAds.js` 自写 UMP framing 读取与重组，不加载第三方运行代码。
+UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消息。不是普通 Protobuf varint 连续流。`YouTubePlayback.js` 自写 UMP framing 读取与重组，不加载第三方运行代码。
 
 当前能处理的是 Part 69 的 CuepointList：沿 `CuepointList.ssap_infos（字段 1）→ CuepointInfo.cuepoint（字段 1）`，只删除 `Cuepoint.type=1` 且 `event=6（PREFETCH）` 的条目。协议研究把 type 1 解释为广告，并记载 PREFETCH 会触发 `/player/ad_break` 广告配置预取。**这给出了可验证的预取提示清理目标，但不能证明删除提示就能避免实际广告插入。**
 
@@ -257,14 +248,14 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 1. 确认主插件和 JS 都更新为此版本。打开“日志工具”，将“UMP 模式”保持为 `inspect`。日志工具会自动启用 UMP 响应脚本，该模式只检查和记录，不修改响应。
 2. 主插件已包含 `*.googlevideo.com` MitM。若播放请求走 UDP/QUIC，可能无法命中脚本；只有观察到该现象时，才考虑在主配置中增加仅针对 `googlevideo.com` UDP/443 的回退规则。不要拒绝 TCP 播放连接。
-3. 完全退出 YouTube，重开并播放可能出现广告的视频。找 `YouTube 日志 UMP 响应处理` 记录，来源为 `YouTubeStreamAds`。
+3. 完全退出 YouTube，重开并播放可能出现广告的视频。找 `YouTube 日志 UMP 响应处理` 记录，来源为 `YouTubePlayback`。
 4. 先看是否记录到 `parts=...69:...` 和 `ad_prefetch` 大于零。如果没有，当前清理策略没有命中该广告，打开清理模式也不会移除其媒体。
 5. 只有命中明确预取提示时，再把模式改为 `clean_prefetch`，退出重开后测试。`removed_prefetch` 大于零只代表删除了提示，必须另外观察广告、正片和拖动进度是否正常。关闭“日志工具”即可停止 UMP 响应脚本；完整撤销媒体 MitM 还需从主插件 MitM 列表移除 `*.googlevideo.com`。
 
 示例日志是说明用的合成结果，不是用户设备上的实测：
 
 ```text
-[YouTubeStreamAds 1.5.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
+[YouTubePlayback 1.5.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
 ```
 
 这里的 `20:1` 表示类型 20 出现 1 次；`ad_prefetch` 是符合两个条件的元数据条目数。普通摘要不输出媒体内容、视频 ID、签名、token 或上下文原文；开启日志工具后，完整 `.log` 会保留运行时可见的原始数据。
@@ -273,7 +264,7 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 2026-10-02 导出的完整记录包含一份 39,447 字节的 `player` Protobuf 响应。旧响应脚本报告 `removed=0`，只改了后台播放字段；该响应的播放清单、追踪地址和视频信息均指向正片，没有旧版字段 7/68 广告位，也没有命中独立的 `/player/ad_break`。广告出现后捕获到两条 `POST /videoplayback` 请求同时带 `c=IOS`、`sabr=1`、`ctier=L`，之后同一时间段的正片请求不再带 `ctier=L`。这解释了直接阻断 `ctier=L` 时先黑屏等待、数秒后才进入正片的现象。
 
-同一份原始 `player` 请求中确认存在 `PlayerRequest.context.ad_signals_info（1 → 9）`，以及 `playback_context.content_playback_context（4 → 1）` 内包含 `output=xml_vast2` 的字段 12。新加入的 `YouTubePlayerRequest.js` 在服务端返回播放方案之前清理这些精确广告协商字段，并设置已公开 schema 中的 `is_inline_playback_no_ad（字段 50）`。这是根据真实请求和公开协议进行的定点处理，不阻断 `googlevideo` 媒体；是否覆盖账号、地区和未来客户端产生的全部片头/中插广告仍需实机结果确认。
+同一份原始 `player` 请求中确认存在 `PlayerRequest.context.ad_signals_info（1 → 9）`，以及 `playback_context.content_playback_context（4 → 1）` 内包含 `output=xml_vast2` 的字段 12。新加入的 `YouTubePlayback.js` 在服务端返回播放方案之前清理这些精确广告协商字段，并设置已公开 schema 中的 `is_inline_playback_no_ad（字段 50）`。这是根据真实请求和公开协议进行的定点处理，不阻断 `googlevideo` 媒体；是否覆盖账号、地区和未来客户端产生的全部片头/中插广告仍需实机结果确认。
 
 2026 年 7 月之后仍在维护的公开实现还覆盖 `youtubei/v1/log_event`、`youtubei/v1/config` 和 `googlevideo/initplayback`。其中 `initplayback` 属于新版加密 UMP/Onesie 播放链路；部分公开实现会把目标播放 URL 和客户端密钥转交外部 Worker 处理。本插件依据公开的 [Onesie 请求 schema 与示例](https://github.com/LuanRT/googlevideo/blob/main/examples/onesie-request/main.ts) 自行实现本地请求处理：缓存配置、按有效期更新、核对 `encryptedClientKey`，使用 AES-128-CTR 与 HMAC-SHA256 验证和改写内层 Player 请求，失配时清除旧状态并让客户端重新协商。没有加入 Worker 地址、重定向或额外网络请求，也不会自动上传播放地址或密钥。1.2.0 起使用脚本内置的标准 AES-128-CTR，避免依赖不同 Loon 运行时对 CTR 的具体实现。
 
@@ -298,14 +289,9 @@ Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据�
 `tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 240 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
-node --check loon/YouTube/YouTubeFeedAds.js
-node --check loon/YouTube/YouTubePlayerRequest.js
-node --check loon/YouTube/YouTubePlaybackAds.js
-node --check loon/YouTube/YouTubeAdBreak.js
-node --check loon/YouTube/YouTubeShortsAds.js
-node --check loon/YouTube/YouTubeStreamAds.js
-node --check loon/YouTube/YouTubeOnesieConfig.js
-node --check loon/YouTube/YouTubeInitPlayback.js
+node --check loon/YouTube/YouTubeFeed.js
+node --check loon/YouTube/YouTubePlayback.js
+node --check loon/YouTube/YouTubeConfig.js
 node --check loon/YouTube/YouTubeLogger.js
 node --test loon/YouTube/tests/*.test.mjs
 ```

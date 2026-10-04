@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const source = fs.readFileSync(new URL('../YouTubeShortsAds.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../YouTubePlayback.js', import.meta.url), 'utf8');
 const plugin = fs.readFileSync(new URL('../YouTubeNoAds.plugin', import.meta.url), 'utf8');
 const base = 'https://youtubei.googleapis.com/youtubei/v1/reel/reel_watch_sequence';
 const u8 = value => Uint8Array.from(value);
@@ -27,7 +27,7 @@ function run(body,{url=base,type='application/x-protobuf',status=200,enabled=tru
 function passed(r){assert.deepEqual(Object.keys(r.output),[]);}
 
 test('plugin keeps Shorts playback ad cleaning enabled without a settings switch',()=>{
-  const line=plugin.split('\n').find(x=>x.startsWith('http-response')&&x.includes('YouTubeShortsAds.js'));
+  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube Shorts 播放广告清理'));
   assert.ok(line);
   assert.ok(!plugin.includes('remove_shorts_ads = switch'));
   assert.ok(!line.includes('enable='));
@@ -72,6 +72,6 @@ test('ambiguous, malformed and disabled responses pass through whole',()=>{
 test('logs contain counts only and can be disabled',()=>{
   const r=run(concat(entry(true,1),entry(false,2)),{debug:true});
   assert.ok(r.logs.some(line=>line.includes('removed=1 entries=2 format=protobuf')));
-  assert.ok(r.logs.every(line=>line.startsWith('[YouTubeShortsAds 1.0.0]')));
+  assert.ok(r.logs.every(line=>line.startsWith('[YouTubePlayback 1.0.0]')));
   assert.equal(run(entry(true,1),{debug:false}).logs.length,0);
 });

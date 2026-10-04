@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const source = fs.readFileSync(new URL('../YouTubePlaybackAds.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../YouTubePlayback.js', import.meta.url), 'utf8');
 const plugin = fs.readFileSync(new URL('../YouTubeNoAds.plugin', import.meta.url), 'utf8');
 const prefix = 'https://youtubei.googleapis.com/youtubei/v1/';
 const u8 = value => Uint8Array.from(value);
@@ -55,12 +55,15 @@ function passed(result) {
   assert.deepEqual(Object.keys(result.output), [], 'must return no changes');
 }
 
-test('plugin routes playback and stream responses to distinct standalone scripts', () => {
+test('plugin routes playback and stream responses through the merged playback file', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
   assert.equal(allEntries.length, 5);
-  const entries = allEntries.filter(line => !line.includes('YouTubeFeedAds.js') && !line.includes('YouTubeShortsAds.js') && !line.includes('YouTubeOnesieConfig.js'));
+  const entries = [
+    allEntries.find(line => line.includes('tag=YouTube 播放广告位清理与后台播放')),
+    allEntries.find(line => line.includes('tag=YouTube 日志 UMP 响应处理'))
+  ];
   assert.equal(entries.length, 2);
-  assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
+  assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayback.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
   assert.ok(entries[0].includes('argument=[{log_enabled},{log_level},{capture_budget},{background_playback}]'));
   const regex = new RegExp(entries[0].split(' ')[1], 'i');
@@ -77,8 +80,8 @@ test('plugin routes playback and stream responses to distinct standalone scripts
   assert.ok(!active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={log_enabled}'));
   assert.ok(entries[1].includes('argument=[{ump_mode},{log_enabled},{log_level},{capture_budget}]'));
-  assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js'));
-  assert.ok(!source.includes('function processUMP('));
+  assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayback.js'));
+  assert.ok(source.includes('function processUMP('));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
   assert.ok(active.includes('DOMAIN-SUFFIX,googlevideo.com'));
   assert.ok(!active.includes('reject(502)'));
@@ -257,7 +260,7 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
   assert.ok(result.logs.some(line => line.includes('background_modified=0')));
-  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlaybackAds 2.1.0]')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlayback 2.1.0]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));

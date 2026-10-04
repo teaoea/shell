@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const source = fs.readFileSync(new URL('../YouTubeStreamAds.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../YouTubePlayback.js', import.meta.url), 'utf8');
 const context = { module: { exports: {} }, Uint8Array, ArrayBuffer };
 vm.runInNewContext(source, context);
 const { processUMP, readUMPInt, encodeUMPInt } = context.module.exports;
@@ -122,7 +122,7 @@ function runtime(body, mode = 'clean_prefetch', capture = true, type = 'applicat
   }, { timeout: 1000 });
   assert.equal(calls, 1);
   assert.ok(!logs.join('\n').includes('PRIVATE_SIG'));
-  assert.ok(logs.every(line => line.startsWith('[YouTubeStreamAds 1.5.0]')));
+  assert.ok(logs.every(line => line.startsWith('[YouTubePlayback 1.5.0]')));
   return { output, logs };
 }
 
@@ -145,13 +145,12 @@ test('UMP resource limits pass the whole original response through', () => {
   assert.deepEqual(Object.keys(runtime(new Uint8Array(20002)).output), []);
 });
 
-test('standalone stream script leaves playback APIs and unrelated hosts untouched', () => {
-  assert.ok(!source.includes('function cleanPlayer('));
-  assert.ok(!source.includes('function cleanJSON('));
+test('merged playback dispatcher leaves unrelated hosts untouched', () => {
+  assert.ok(source.includes('function cleanPlayer('));
+  assert.ok(source.includes('function cleanJSON('));
   const input = shortPart(69, adPrefetch);
-  for (const url of ['https://youtubei.googleapis.com/youtubei/v1/player',
-    'https://youtubei-att.googleapis.com/youtubei/v1/get_watch',
-    'https://rr5.googlevideo.com.evil.test/videoplayback?ctier=L']) {
+  for (const url of ['https://rr5.googlevideo.com.evil.test/videoplayback?ctier=L',
+    'https://example.com/youtubei/v1/player']) {
     const result = runtime(input, 'clean_prefetch', true, 'application/vnd.yt-ump', url);
     assert.deepEqual(Object.keys(result.output), []);
     assert.equal(result.logs.length, 0);

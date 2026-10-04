@@ -1,14 +1,27 @@
-/* YouTubeLogger 1.9.0 — shared diagnostic cache and one complete full-chain .log export.
- * No network calls, filesystem assumptions, third-party code, or automatic uploads.
- * Enabled manually in the main plugin; no separate Logger plugin.
+/**
+ * 文件：YouTubeLogger.js
+ * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
+ * 版本：2.0.0
+ * 更新时间：2026-10-04T08:54:22+08:00
+ * 运行环境：Loon JavaScript
+ */
+
+
+
+
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
  */
 (function () {
   "use strict";
   var CONFIG = "ytads.logger.config.v1";
   var CACHE = "ytads.logger.entries.v2";
-  var SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback", "YouTubeLogger"];
+  var ACTIVE_SOURCES = ["YouTubeFeed", "YouTubePlayback", "YouTubeConfig", "YouTubeLogger"];
+  var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
+  var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "1.9.0";
+  var VERSION = "2.0.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -19,19 +32,35 @@
 
   var devMessages = [];
   var devException = null;
+  /**
+   * 功能：保存运行异常的结构化信息，供完整日志导出。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devFailure(error) {
     if (!devFlag(args.capture_raw)) return;
     try { devException = {name:String(error.name || "Error"), message:String(error.message || ""), stack:typeof error.stack === "string" ? error.stack : null, code:error.ytNoAdsCode || null}; } catch (_) {}
   }
   var devStarted = Date.now();
 
+  /**
+   * 功能：判断开发日志参数是否明确开启。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devFlag(value) { return value === true || value === "true"; }
+  /**
+   * 功能：读取并校验当前日志记录会话配置。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devConfig() {
     if (!devFlag(args.log_enabled) || typeof $persistentStore === "undefined") return null;
     var raw = $persistentStore.read("ytads.logger.config.v1");
     var c = raw && raw.length <= 2048 ? JSON.parse(raw) : null;
     return c && c.enabled === true && typeof c.session === "string" && /^[a-z0-9-]{1,80}$/.test(c.session) ? c : null;
   }
+  /**
+   * 功能：计算字符串序列化为 UTF-8 后的字节数。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devUTF8Size(text) {
     var size = 0;
     for (var i = 0; i < text.length; i++) {
@@ -43,6 +72,10 @@
     }
     return size;
   }
+  /**
+   * 功能：把二进制数据编码为 Base64 文本。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devBase64(bytes) {
     var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     var parts = [], text = "";
@@ -55,6 +88,10 @@
     parts.push(text);
     return parts.join("");
   }
+  /**
+   * 功能：把运行时正文转换为可导出的文本或二进制结构。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devBody(body) {
     if (body === undefined || body === null) return {available:false, reason:"not-provided-by-runtime"};
     if (typeof body === "string") {
@@ -70,6 +107,10 @@
     if (bytes.length > 8388608) throw new Error("capture-body-limit");
     return {available:true, encoding:"base64", bytes:bytes.length, data:devBase64(bytes)};
   }
+  /**
+   * 功能：在日志容量或存储异常时暂停继续写入。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devHalt(c, reason) {
     if (c) {
       c.enabled = false;
@@ -79,6 +120,10 @@
     }
     if (typeof console !== "undefined") console.log("[YouTubeLogger] recording-stopped: " + reason);
   }
+  /**
+   * 功能：把摘要与原始样本追加到统一日志缓存。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devAppend(entry, payload) {
     var written = [], c = null;
     try {
@@ -120,20 +165,37 @@
       if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {
-      written.forEach(function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} });
+      written.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} });
       try { devHalt(c, "storage-or-serialization-failed"); } catch (_) {}
       return false;
     }
   }
+  /**
+   * 功能：计算日志分块的一致性校验值。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devChecksum(text) {
     var hash = 2166136261;
     for (var i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
     return "fnv1a32-utf16:" + ("00000000" + (hash >>> 0).toString(16)).slice(-8);
   }
+  /**
+   * 功能：生成请求与响应之间的本地关联标识。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devCorrelation(method, url) {
-    // A grouping hint, never a claim of a unique request/response pairing.
+
     return devChecksum(method + " " + url);
   }
+  /**
+   * 功能：记录请求或响应处理前后的完整开发样本。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function devCapture(source, phase, endpoint, version, output) {
     if (!devFlag(args.capture_raw)) return;
     var c = null;
@@ -163,29 +225,55 @@
     }
   }
 
+  /**
+   * 功能：从 Loon 持久化存储安全读取数据。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function read(key) {
     var raw = $persistentStore.read(key);
     if (!raw) return null;
     if (typeof raw !== "string" || raw.length > 131072) throw new Error("invalid-store");
     return JSON.parse(raw);
   }
+  /**
+   * 功能：读取当前日志工具配置。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function config() {
     var c = read(CONFIG);
     if (!c || typeof c.session !== "string" || !/^[a-z0-9-]{1,80}$/.test(c.session)) return null;
     return c;
   }
+  /**
+   * 功能：向 Loon 持久化存储安全写入数据。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function write(value, key) {
     if ($persistentStore.write(JSON.stringify(value), key) !== true) throw new Error("write-failed");
   }
+  /**
+   * 功能：执行 shared 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function shared(c) {
     var state = read(CACHE);
     if (state) return state;
-    // Preserve this session's old per-source logs once during an upgrade.
+
     var entries = [];
-    SOURCES.forEach(function (source) {
+    SOURCES.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (source) {
       var old = read("ytads.logger." + source + ".v1");
       if (!old || old.session !== c.session || !Array.isArray(old.entries)) return;
-      old.entries.slice(-300).forEach(function (r) {
+      old.entries.slice(-300).forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
         if (!r || typeof r.message !== "string") return;
         var level = r.message.indexOf("changed:") === 0 ? "info" :
           r.message === "pass: parse/schema check failed" ? "error" :
@@ -193,24 +281,43 @@
         entries.push({source:source, level:level, time:r.time, version:r.version, endpoint:r.endpoint, message:r.message});
       });
     });
-    entries.sort(function (a,b) { return String(a.time).localeCompare(String(b.time)); });
+    entries.sort(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (a,b) { return String(a.time).localeCompare(String(b.time)); });
     var serialized = JSON.stringify({session:c.session, entries:entries.slice(-LIMIT), captureBytes:0});
     if (devUTF8Size(serialized) > 131072) {
       devHalt(c, "legacy-migration-limit");
-      // Keep old evidence readable/exportable without deleting any record.
+
       return {session:c.session, entries:entries, captureBytes:0, migrationDeferred:true};
     }
     if ($persistentStore.write(serialized, CACHE) !== true) throw new Error("write-failed");
-    SOURCES.forEach(function (source) { $persistentStore.write(undefined, "ytads.logger." + source + ".v1"); });
+    SOURCES.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (source) { $persistentStore.write(undefined, "ytads.logger." + source + ".v1"); });
     return JSON.parse(serialized);
   }
+  /**
+   * 功能：执行 records 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function records(c) {
     var rows = [];
     if (!c) return rows;
     var state = shared(c);
     if (!state || state.session !== c.session || !Array.isArray(state.entries)) return rows;
-    state.entries.slice(-LIMIT).forEach(function (r) {
-        // Read only the owned schema; never dump arbitrary store contents.
+    state.entries.slice(-LIMIT).forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
+
         if (!r || SOURCES.indexOf(r.source) === -1 || !Object.prototype.hasOwnProperty.call(ranks, r.level) || typeof r.time !== "string" || !/^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(r.time) ||
             typeof r.version !== "string" || !/^\d+\.\d+\.\d+$/.test(r.version) ||
             !/^(player|get_watch|browse|next|search|reel_watch_sequence|log_event|config|initplayback|ad_break|ump|unknown)$/.test(r.endpoint) ||
@@ -226,18 +333,41 @@
         } else if (r.captureRef) row.captureError = "invalid-capture-reference";
         rows.push(row);
     });
-    rows.sort(function (a, b) { return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; });
+    rows.sort(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (a, b) { return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; });
     return rows;
   }
+  /**
+   * 功能：构造日志页面使用的本地 HTTP 响应。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function response(status, body, type, extra) {
     var headers = {"Content-Type":type || "text/html; charset=utf-8", "Cache-Control":"no-store",
       "X-Content-Type-Options":"nosniff", "Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"};
-    Object.keys(extra || {}).forEach(function (key) { headers[key] = extra[key]; });
+    Object.keys(extra || {}).forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (key) { headers[key] = extra[key]; });
     return {response:{status:status, headers:headers, body:body}};
   }
+  /**
+   * 功能：执行 developmentExport 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function developmentExport(c, rows) {
     var issues = [];
-    var events = rows.map(function (row) {
+    var events = rows.map(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (row) {
       var event = {summary:row, capture:null};
       if (!row.captureRef) {
         if (row.captureError) { event.captureError = row.captureError; issues.push({time:row.time, source:row.source, reason:row.captureError}); }
@@ -274,26 +404,50 @@
           "Loon storage has no atomic append here; concurrent writers may lose index entries.",
           "Script timeouts, TLS failures and requests bypassing MitM are not observed."]}, events:events};
   }
+  /**
+   * 功能：执行 exportPage 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function exportPage() {
-    // Read small owned chunks, then assemble one complete text log in the browser.
-    // The manifest and chunks are local transport details, not separate log files.
+
+
     var script = '(' + browserExport.toString() + ')();';
     return response(200, '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 导出</title><p id="status">正在读取本地记录，请保持 Loon 开启…</p><a id="save" hidden>保存日志文件</a><p>文件生成后点击保存；Safari 也可通过分享菜单存储到“文件”。</p><script>' + script + '</script></html>', "text/html; charset=utf-8", {"Content-Security-Policy":"default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"});
   }
+  /**
+   * 功能：在日志页面中读取分块并生成单个完整日志文件。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   async function browserExport() {
     var status = document.getElementById("status"), save = document.getElementById("save");
     try {
+      /**
+       * 功能：执行 get 对应的内部处理步骤。
+       * 更新时间：2026-10-04T08:54:22+08:00
+       */
       async function get(path) {
         var r = await fetch(path, {cache:"no-store"});
         if (!r.ok) throw new Error("本地读取失败（" + r.status + "），请暂停记录后重新导出。");
         return await r.json();
       }
+      /**
+       * 功能：执行 checksum 对应的内部处理步骤。
+       * 更新时间：2026-10-04T08:54:22+08:00
+       */
       function checksum(text) {
         var hash = 2166136261;
         for (var i = 0; i < text.length; i++) {hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619);}
         return "fnv1a32-utf16:" + ("00000000" + (hash >>> 0).toString(16)).slice(-8);
       }
+      /**
+       * 功能：执行 value 对应的内部处理步骤。
+       * 更新时间：2026-10-04T08:54:22+08:00
+       */
       function value(v) { if (v === null) return "null"; if (v === undefined) return "unavailable"; return typeof v === "string" ? v.replace(/\r/g,"\\r").replace(/\n/g,"\\n") : String(v); }
+      /**
+       * 功能：执行 structure 对应的内部处理步骤。
+       * 更新时间：2026-10-04T08:54:22+08:00
+       */
       function structure(label, v, lines, depth) {
         var indent = new Array(depth + 1).join("  ");
         if (v === null || v === undefined || typeof v !== "object") { lines.push(indent + label + ": " + value(v)); return; }
@@ -301,6 +455,10 @@
         var keys=Object.keys(v).sort(); lines.push(indent+label+": object("+keys.length+")");
         for(var k=0;k<keys.length;k++) structure(keys[k],v[keys[k]],lines,depth+1);
       }
+      /**
+       * 功能：执行 body 对应的内部处理步骤。
+       * 更新时间：2026-10-04T08:54:22+08:00
+       */
       function body(label,v,lines) {
         lines.push(label+":");
         if(v&&v.reference){lines.push("  Reference: "+value(v.reference));return;}
@@ -308,6 +466,10 @@
         lines.push("  Available: true");lines.push("  Encoding: "+value(v.encoding));lines.push("  Bytes: "+value(v.bytes));
         if(Object.prototype.hasOwnProperty.call(v,"data")){var encoding=v.encoding==="base64"?"BASE64":"UTF-8 TEXT";lines.push("  ----- BEGIN "+encoding+" -----");lines.push(String(v.data));lines.push("  ----- END "+encoding+" -----");}
       }
+      /**
+       * 功能：执行 exchange 对应的内部处理步骤。
+       * 更新时间：2026-10-04T08:54:22+08:00
+       */
       function exchange(label,v,lines){
         lines.push(label+":");if(!v){lines.push("  unavailable");return;}
         var names=["url","method","status","synthetic","changed","transportHeadersRecomputedByLoon"];
@@ -316,6 +478,10 @@
         if(Object.prototype.hasOwnProperty.call(v,"h2_trailers"))structure("h2_trailers",v.h2_trailers,lines,1);
         if(Object.prototype.hasOwnProperty.call(v,"body"))body("  body",v.body,lines);
       }
+      /**
+       * 功能：执行 eventText 对应的内部处理步骤。
+       * 更新时间：2026-10-04T08:54:22+08:00
+       */
       function eventText(index,row,capture,captureError){
         var lines=["","================================================================================","EVENT "+(index+1),"================================================================================","Time: "+row.time,"Level: "+String(row.level).toUpperCase(),"Source: "+row.source,"Version: "+row.version,"Endpoint: "+row.endpoint,"Phase: "+value(row.phase),"Summary: "+row.message];
         if(captureError)lines.push("Capture-Error: "+captureError);if(!capture){lines.push("Capture: unavailable");return lines.join("\n")+"\n";}
@@ -356,7 +522,15 @@
       save.hidden = true;
     }
   }
+  /**
+   * 功能：执行 exportRows 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function exportRows(c) { return records(c); }
+  /**
+   * 功能：生成本地日志管理页面。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function page(c, rows) {
     return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 日志</title>' +
       '<style>body{font:17px system-ui;margin:32px auto;padding:0 24px;max-width:620px;line-height:1.7}button,a{font:inherit}button{margin:6px 0;padding:8px 16px}a{display:block;margin:22px 0}</style>' +
@@ -374,6 +548,10 @@
       '<p>开发抓包记录不受摘要级别过滤。日志无法读取 Loon 的连接、证书或脚本超时记录。抓包可能增加播放等待，复现后应关闭。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form></html>';
   }
+  /**
+   * 功能：根据当前 Loon 请求或响应执行对应处理流程。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
   function run() {
     if (args.log_enabled !== true && args.log_enabled !== "true") {
       if (typeof $request !== "undefined") {
@@ -387,8 +565,8 @@
       var media = MEDIA_CAPTURE.exec($request.url || "");
       if (api || media) {
         var apiName = api ? api[1].toLowerCase() : media[1].toLowerCase();
-        var source = apiName === "reel/reel_watch_sequence" ? "YouTubeShortsAds" : /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeedAds" :
-          /^(log_event|config|initplayback)$/i.test(apiName) ? "YouTubeLogger" : api ? "YouTubePlaybackAds" : "YouTubeStreamAds";
+        var source = /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeed" :
+          /^(log_event|config|initplayback)$/i.test(apiName) ? "YouTubeConfig" : api || apiName === "videoplayback" ? "YouTubePlayback" : "YouTubeLogger";
         var endpoint = apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName === "videoplayback" ? "ump" : apiName;
         devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {});
         return {};
@@ -414,18 +592,28 @@
         return response(303, "", "text/plain; charset=utf-8", {Location:BASE});
       }
       if (path === "/clear") {
-        // Rotate session first so any old or in-flight entries are invisible.
+
         c = {enabled:false, session:Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12)};
         write(c, CONFIG);
         var previous = null;
         try { previous = read(CACHE); } catch (_) {}
-        if (previous && Array.isArray(previous.entries)) previous.entries.slice(0, LIMIT).forEach(function (r) {
+        if (previous && Array.isArray(previous.entries)) previous.entries.slice(0, LIMIT).forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (r) {
           var ref = r && r.captureRef;
           if (!ref || typeof ref.prefix !== "string" || !/^ytads\.capture\.[a-z0-9-]+\.[a-z0-9-]+\.$/.test(ref.prefix) || !Number.isInteger(ref.chunks) || ref.chunks < 1 || ref.chunks > 256) return;
           for (var i = 0; i < ref.chunks; i++) $persistentStore.write(undefined, ref.prefix + i);
         });
         write({session:c.session, entries:[], captureBytes:0}, CACHE);
-        SOURCES.forEach(function (source) { $persistentStore.write(undefined, "ytads.logger." + source + ".v1"); });
+        SOURCES.forEach(
+/**
+ * 功能：封装局部作用域或执行当前回调步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function (source) { $persistentStore.write(undefined, "ytads.logger." + source + ".v1"); });
       } else {
         if (!c) c = {session:Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12)};
         c.enabled = path === "/start";
@@ -457,7 +645,7 @@
     if (path !== "/" && path !== "/download.log") return response(404, "Not found", "text/plain; charset=utf-8");
     var rows = records(c);
     if (path === "/") return response(200, page(c, rows));
-    // Keep old bookmarks working while exposing one canonical export interface.
+
     return response(303, "", "text/plain; charset=utf-8", {Location:BASE + "export"});
   }
   var output;
