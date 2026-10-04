@@ -55,12 +55,12 @@ function passed(result) {
   assert.deepEqual(Object.keys(result.output), [], 'must return no changes');
 }
 
-test('plugin routes playback and stream responses through the merged playback file', () => {
+test('plugin cleans API playback while media logging does not buffer streams', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
   assert.equal(allEntries.length, 5);
   const entries = [
     allEntries.find(line => line.includes('tag=YouTube 播放广告位清理与后台播放')),
-    allEntries.find(line => line.includes('tag=YouTube 日志 UMP 响应处理'))
+    allEntries.find(line => line.includes('tag=YouTube 日志媒体响应记录'))
   ];
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayback.js'));
@@ -79,8 +79,10 @@ test('plugin routes playback and stream responses through the merged playback fi
   assert.ok(active.includes('background_playback = switch,false,'));
   assert.ok(!active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={log_enabled}'));
-  assert.ok(entries[1].includes('argument=[{ump_mode},{log_enabled},{log_level},{capture_budget}]'));
-  assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayback.js'));
+  assert.ok(entries[1].includes('YouTubeLogger.js,requires-body=false'));
+  assert.ok(!plugin.includes('ump_mode ='));
+  assert.ok(entries[1].includes('argument=[{log_enabled},{log_level},{capture_budget}]'));
+  assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js'));
   assert.ok(source.includes('function processUMP('));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
   assert.ok(active.includes('DOMAIN-SUFFIX,googlevideo.com'));

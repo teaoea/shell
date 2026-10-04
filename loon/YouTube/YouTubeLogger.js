@@ -1,7 +1,7 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：2.0.0
+ * 版本：2.2.0
  * 更新时间：2026-10-04T08:54:22+08:00
  * 运行环境：Loon JavaScript
  */
@@ -133,7 +133,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.1.0";
+  var VERSION = "2.2.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -306,10 +306,10 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
     return devChecksum(method + " " + url);
   }
   /**
-   * 功能：记录请求或响应处理前后的完整开发样本。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：记录脱敏诊断样本；仅响应头模式不读取请求或媒体正文。
+   * 更新时间：2026-10-04T15:35:00+08:00
    */
-  function devCapture(source, phase, endpoint, version, output) {
+  function devCapture(source, phase, endpoint, version, output, headersOnly) {
     if (!devFlag(args.capture_raw)) return;
     var c = null;
     try {
@@ -317,15 +317,15 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       if (!c || typeof $request === "undefined") return;
       var now = new Date().toISOString();
       var id = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 14);
-      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:devBody($request.body)};
+      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:devBody(headersOnly ? undefined : $request.body)};
       var payload = {schema:1, id:id, time:now, source:source, version:version, phase:phase, endpoint:endpoint,
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
-        processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{development_capture:devFlag(args.capture_raw), ump_mode:args.ump_mode === "clean_prefetch" ? "clean_prefetch" : "inspect", background_playback:devFlag(args.background_playback), log_level:args.log_level || "info"}}};
+        processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, bodyBuffering:!headersOnly, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
+          arguments:{development_capture:devFlag(args.capture_raw), background_playback:devFlag(args.background_playback), log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
-        payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
+        payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody(headersOnly ? undefined : $response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
         payload.responseAfter = {changed:!!changed, status:output && output.status !== undefined ? output.status : $response.status,
           headerOverrides:output && output.headers || null, transportHeadersRecomputedByLoon:true,
@@ -657,7 +657,7 @@ function (row) {
       '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，脱敏记录另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
-      '<p>日志工具在主插件手动开启，请先选择容量和 UMP 模式，再开始记录。它会同时读取 UMP 响应；唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
+      '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。媒体事件仅记录响应头，不等待媒体正文；唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
       '<p>在主插件选择日志保存级别：debug 为全部排查摘要；info 为修改结果及异常；warn 为警告及错误；error 为未预期错误。调整级别只影响新记录。</p>' +
       '<p>开发抓包记录不受摘要级别过滤。日志无法读取 Loon 的连接、证书或脚本超时记录。抓包可能增加播放等待，复现后应关闭。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form></html>';
@@ -682,7 +682,8 @@ function (row) {
         var source = /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeed" :
           /^(log_event|config|initplayback)$/i.test(apiName) ? "YouTubeConfig" : api || apiName === "videoplayback" ? "YouTubePlayback" : "YouTubeLogger";
         var endpoint = apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName === "videoplayback" ? "ump" : apiName;
-        devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {});
+        if (media) devMessages.push("media: headers_only=true body_buffering=false");
+        devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {}, !!media || typeof $response === "undefined");
         return {};
       }
     }

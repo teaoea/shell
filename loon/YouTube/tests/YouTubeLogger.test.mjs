@@ -58,11 +58,11 @@ test('main plugin exposes exactly three switches and keeps function-specific scr
   assert.ok(!plugin.includes('capture_raw = switch'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
   const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
-  assert.equal(loggerLines.length, 3);
+  assert.equal(loggerLines.length, 4);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeConfig.js')).length, 3);
-  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubePlayback.js')).length, 5);
+  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubePlayback.js')).length, 4);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeFeed.js')).length, 1);
-  assert.ok(loggerLines.find(x => x.includes('日志请求记录')).includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(loggerLines.find(x => x.includes('日志请求记录')).includes('requires-body=false'));
   assert.ok(plugin.includes('DOMAIN-SUFFIX,googlevideo.com'));
   const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('youtube-logs'));
   const regex = new RegExp(line.split(' ')[1]);
@@ -306,4 +306,28 @@ test('export ignores stale sessions and malformed records and sorts timestamps',
   assert.equal(manifest.rows.length,2);
   assert.ok(manifest.rows[0].time.includes('01:00:00')&&manifest.rows[1].time.includes('02:00:00'));
   assert.ok(!JSON.stringify(manifest.rows).includes('bad\\nline'));
+});
+
+test('media request and response logging never access streaming bodies', () => {
+  const store = new Map();
+  request(store, '/start', 'POST');
+  const req = {url:'https://rr5.googlevideo.com/videoplayback?sig=PRIVATE', method:'POST', headers:{'Content-Encoding':'br'}};
+  const res = {status:200, headers:{'Content-Type':'application/vnd.yt-ump','Content-Length':'2129022'}};
+  Object.defineProperty(req, 'body', {get(){throw new Error('must not read streaming request');}});
+  Object.defineProperty(res, 'body', {get(){throw new Error('must not read streaming response');}});
+  for (const extra of [{$request:req}, {$request:req,$response:res}]) {
+    const result = execute(logger, store, extra);
+    assert.deepEqual(Object.keys(result.output), []);
+  }
+  const rows = events(store);
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.capture.processing.bodyBuffering, false);
+    assert.equal(row.capture.processing.exception, null);
+    assert.ok(row.capture.processing.messages.includes('media: headers_only=true body_buffering=false'));
+    assert.equal(row.capture.request.body.available, false);
+  }
+  assert.equal(rows[1].capture.responseBefore.headers['Content-Length'], '2129022');
+  assert.equal(rows[1].capture.responseBefore.body.available, false);
+  assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
 });

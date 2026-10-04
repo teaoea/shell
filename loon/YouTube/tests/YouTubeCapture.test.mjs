@@ -42,10 +42,10 @@ function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":
     $response:{status:200,headers:{'Content-Type':'application/json'},body},...extra
   });
 }
-test('the single log switch enables full-chain capture and its request rule reads bodies',()=>{
+test('the single log switch enables full-chain capture without buffering request bodies',()=>{
   assert.ok(!plugin.includes('capture_raw = switch'));
   const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 日志请求记录'));
-  assert.ok(line.includes('enable={log_enabled}')&&line.includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(line.includes('enable={log_enabled}')&&line.includes('requires-body=false'));
   const regex=new RegExp(line.split(' ')[1]);
   assert.ok(!regex.test(api)&&regex.test(media));
   const playerLine=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放器请求广告协商清理'));
@@ -81,7 +81,8 @@ test('request capture removes credentials and query values without changing outg
   assert.equal(capture.phase,'request');
   assert.equal(capture.request.url,media.split('?')[0]);
   assert.equal(capture.request.headers.Authorization,undefined);
-  assert.equal(capture.request.body.data,undefined);assert.equal(capture.request.body.bytes,Buffer.byteLength(body));
+  assert.equal(capture.request.body.data,undefined);assert.equal(capture.request.body.available,false);
+  assert.equal(capture.processing.bodyBuffering,false);
   assert.equal(capture.correlation.exactPairing,false);
   assert.equal(capture.processing.executionScript,'YouTubeLogger');
 });
