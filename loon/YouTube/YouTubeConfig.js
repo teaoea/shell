@@ -321,7 +321,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.4.0";
+  var VERSION = "1.5.0";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -332,6 +332,7 @@ function (key) {
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.onesie_enabled !== false && args.onesie_enabled !== "false";
   var refreshMismatch = args.onesie_refresh_on_mismatch !== false && args.onesie_refresh_on_mismatch !== "false";
+  var classicFallback = args.onesie_classic_fallback !== false && args.onesie_classic_fallback !== "false";
   var debug = flag(args.script_debug);
   var API = /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$/i;
 
@@ -582,6 +583,11 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
    */
   function rewrittenHeaders(headers){var result={},keys=Object.keys(headers||{});for(var i=0;i<keys.length;i++){var lower=keys[i].toLowerCase();if(lower!=="content-encoding"&&lower!=="content-length")result[keys[i]]=headers[keys[i]];}return result;}
   /**
+   * 功能：返回空的 initplayback 响应，促使 YouTube 回退到已清理的普通播放器链路。
+   * 更新时间：2026-10-04T10:26:00+08:00
+   */
+  function classicPlaybackResponse(){return{response:{status:200,headers:{"Content-Type":"application/x-protobuf","Cache-Control":"no-store"},body:new Uint8Array(0)}};}
+  /**
    * 功能：执行 utf8Size 对应的内部处理步骤。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
@@ -620,14 +626,18 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
       else if (!state) record("pass: active config absent", "info", output);
       else if (base64(key) === state.encryptKey) {
         var cleaned = cleanEncryptedRequest($request.body, state);
-        if (cleaned) {
+        if (classicFallback) {
+          clearState();
+          output = classicPlaybackResponse();
+          record("fallback: authenticated=true classic_player=true inner=" + (cleaned ? cleaned.format : "unchanged") + " context_ad_signals=" + (cleaned ? cleaned.counts.contextAdSignals : 0) + " playback_ad_params=" + (cleaned ? cleaned.counts.playbackAdParams : 0) + " inline_no_ad=" + (cleaned ? cleaned.counts.inlineNoAd : 0), "info", output);
+        } else if (cleaned) {
           output = {headers:rewrittenHeaders($request.headers),body:cleaned.body};
           record("changed: authenticated=true encoding=" + cleaned.encoding + " inner=" + cleaned.format + " context_ad_signals=" + cleaned.counts.contextAdSignals + " playback_ad_params=" + cleaned.counts.playbackAdParams + " inline_no_ad=" + cleaned.counts.inlineNoAd, "info", output);
         } else record("matched: local config active; inner player request unchanged", "debug", output);
       }
       else {
         clearState();
-        if (refreshMismatch) output = {response:{status:200,headers:{"Content-Type":"application/x-protobuf","Cache-Control":"no-store"},body:new Uint8Array(0)}};
+        if (refreshMismatch) output = classicPlaybackResponse();
         record("mismatch: config cleared refresh=" + refreshMismatch, "warn", output);
       }
     } catch (error) { record("pass: " + (error && error.message || "parse-failed"), "warn", output); output = {}; }

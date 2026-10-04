@@ -107,7 +107,7 @@ const utilsApi={gzip:data=>new Uint8Array(zlib.gzipSync(data)),ungzip:data=>new 
 test('plugin routes the YouTube-only Onesie lifecycle through the merged configuration file', () => {
   assert.ok(!plugin.includes('onesie_enabled = switch'));
   const configLines = plugin.split('\n').filter(line => line.includes('YouTubeConfig.js'));
-  const initLine = plugin.split('\n').find(line => line.includes('tag=YouTube initplayback 广告协商清理'));
+  const initLine = plugin.split('\n').find(line => line.includes('googlevideo\\.com\\/initplayback'));
   assert.equal(configLines.length, 3);
   assert.ok(initLine && !initLine.includes('enable=') && initLine.includes('requires-body=true'));
   assert.ok(configLines.every(line => !line.includes('music\\.')));
@@ -163,12 +163,25 @@ test('matching initplayback key passes through; mismatch clears state and trigge
   assert.equal(stale.has(stateKey), false);
 });
 
+test('authenticated initplayback defaults to an empty local response and clears Onesie state for classic-player fallback', () => {
+  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+  const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+  const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast'}}};
+  const body=makeEncryptedInit(clientKey,encryptKey,player);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{script_debug:true},body);
+  assert.equal(result.output.response.status,200);
+  assert.equal(result.output.response.headers['Content-Type'],'application/x-protobuf');
+  assert.equal(result.output.response.body.length,0);
+  assert.equal(store.has(stateKey),false);
+  assert.ok(result.logs.some(line=>line.includes('classic_player=true')));
+});
+
 test('matching initplayback request is authenticated, cleaned, re-encrypted and signed locally without a runtime crypto API', () => {
   const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast',forceAdParameters:'forced'}}};
   const body=makeEncryptedInit(clientKey,encryptKey,player);
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_classic_fallback:false},body);
   assert.ok(result.output.body instanceof Uint8Array);
   assert.equal(result.output.headers['Content-Length'],undefined);
   assert.equal(result.output.headers['Content-Encoding'],undefined);
@@ -186,7 +199,7 @@ test('gzip-compressed inner request is decompressed, cleaned and recompressed be
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast'}}};
   const body=makeEncryptedInit(clientKey,encryptKey,player,{gzip:true});
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body,undefined,utilsApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_classic_fallback:false},body,undefined,utilsApi);
   const cleaned=decryptPlayer(result.output.body,clientKey,{gzip:true});
   assert.equal(cleaned.player.context.adSignalsInfo,undefined);
   assert.equal(cleaned.player.playbackContext.contentPlaybackContext.adParams,undefined);
@@ -198,7 +211,7 @@ test('binary protobuf player body in iOS initplayback is cleaned without changin
   const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
   const store=new Map([[logConfigKey,JSON.stringify({enabled:true,session:'protobuf-session'})]]);configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const body=makeEncryptedInit(clientKey,encryptKey,protobufPlayer(),{protobuf:true,gzip:true});
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{capture_raw:true},body,undefined,utilsApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{capture_raw:true,onesie_classic_fallback:false},body,undefined,utilsApi);
   assert.ok(result.output.body instanceof Uint8Array);
   const decrypted=decryptPlayer(result.output.body,clientKey,{gzip:true});
   const player=field(decrypted.plain,3),context=field(player,1),playback=field(player,4),content=field(playback,1);
@@ -227,7 +240,7 @@ test('unknown protobuf groups in the decrypted request are preserved byte-for-by
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
   const group=concat(varint(20*8+3),scalar(1,7),varint(20*8+4));
   const body=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{value:'remove'}}},{unknownGroup:true});
-  const result=initPlayback(store,[...encryptKey],youtubeUA,{},body,cryptoApi);
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{onesie_classic_fallback:false},body,cryptoApi);
   const plain=decryptPlayer(result.output.body,clientKey).plain;
   assert.notEqual(Buffer.from(plain).indexOf(Buffer.from(group)),-1);
 });

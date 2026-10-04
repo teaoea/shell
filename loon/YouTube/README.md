@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `YouTubeFeed.js` | 清理已识别的首页、播放页推荐及搜索赞助卡片，可手动隐藏首页 Shorts 推荐区 | `/youtubei/v1/browse`、`next`、`search` 的 JSON 及部分 Protobuf 列表 |
 | `YouTubePlayback.js` | 集中处理播放器请求和响应、片头/中插配置、Shorts 播放广告、UMP 预取提示，并按开关允许后台播放 | `player`、`get_watch`、`player/ad_break`、`reel_watch_sequence`、`googlevideo.com/videoplayback` |
-| `YouTubeConfig.js` | 独立管理 Onesie 配置密钥，并验证、解密、清理和重新签名 `initplayback` 请求 | `config`、`log_event`、`googlevideo.com/initplayback` |
+| `YouTubeConfig.js` | 独立管理 Onesie 配置密钥，验证 `initplayback` 请求，并让新版广告流回退到已清理的普通播放器链路 | `config`、`log_event`、`googlevideo.com/initplayback` |
 | `YouTubeLogger.js` | 独立管理本地日志、开发抓包和唯一的完整 `.log` 导出页面 | 专用页面和各链路日志入口 |
 | `YouTubeNoAds.plugin` | 统一配置去广告、日志入口、参数与 MitM | 只需启用这一个插件 |
 
@@ -14,7 +14,7 @@
 
 JavaScript 按职责整理为四份文件：信息流及首页 Shorts、播放广告及后台播放、配置协商、日志与导出。每份文件由内部路由根据 URL 和请求/响应阶段调用对应处理逻辑，Loon 仍可直接执行，不需要运行时模块导入。文件头及每个函数都使用中文 JSDoc 注释，包含功能说明和更新时间，便于后续维护。
 
-目标包括首页/推荐列表中的赞助卡片，以及 YouTube 插入的片头及中插广告。**当前实现能清理已识别 API 响应中的广告位，并在本机清理普通 Player 与新版 Onesie 播放器请求的广告协商。它不删除已经传输的媒体字节，本次 Onesie 改动也尚未在真实 Loon 设备上验证。不能保证最新 YouTube App 的所有贴片广告都消失。**
+目标包括首页/推荐列表中的赞助卡片，以及 YouTube 插入的片头及中插广告。**当前实现能清理已识别 API 响应中的广告位，并在本机清理普通 Player 的广告协商。对已确认仍返回片头广告媒体的新版 Onesie 链路，脚本返回合法的空 `initplayback` 响应，促使 App 回退到普通播放器。它不删除已经传输的媒体字节，本次回退改动尚未在真实 Loon 设备上验证，不能保证最新 YouTube App 的所有贴片广告都消失。**
 
 ### 从网页过滤方案迁移到 iOS API
 
@@ -30,11 +30,11 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 - Protobuf：自行实现 wire format 读取，移除已识别 Player 消息的字段 7（`adPlacements`）、字段 68（`adSlots`），并在字段 9（`playbackTracking`）中删除字段 18（`pageadViewthroughconversion`）。`get_watch` 使用已知的字段路径 `1 → 2 → Player`。保留非广告字段的原始字节、顺序及未知内容，只在嵌套消息改变时重算外层长度。
 - Ad break：`YouTubePlayback.js` 只对精确的 `player/ad_break` 请求直接返回 HTTP 200 与合法的空 Protobuf，阻止客户端取得新的片头/中插广告配置。它不匹配 `googlevideo.com`，不返回 502，也不截断广告或正片媒体流；主插件固定启用该处理。
 - Onesie 配置：`YouTubeConfig.js` 只接受 User-Agent 明确为 `com.google.ios.youtube/...` 的请求，按固定 Protobuf 路径读取 `clientKey`、`encryptKey`、有效期和热配置开关。密钥只写入 Loon 本地缓存，不进入普通日志或控制台；YouTube Music、网页和未知客户端不读写该状态。没有可用配置时，`log_event` 请求会去掉热配置哈希头，使服务端返回完整配置；已有有效配置时保留该哈希。脚本会移除 Loon 解码正文后失效的 `Content-Encoding` 请求头。
-- Initplayback：`YouTubeConfig.js` 先核对 `OnesieRequest 字段 3 → InnertubeRequest 字段 5` 的 `encryptedClientKey`。匹配后使用只保存在 Loon 本机的 `clientKey` 验证 `HMAC-SHA256(ciphertext || iv)`，再通过脚本内置的标准 AES-128-CTR 解密。若明文带 gzip 标记，先用 Loon 本机 `$utils.ungzip` 解压 `OnesieInnertubeRequest`。内层 URL、Header 和未知 Protobuf 字段保持原样；字段 3 的播放器正文同时支持 JSON 和 iOS 使用的二进制 PlayerRequest Protobuf，删除 `adSignalsInfo`、`adParams`、`forceAdParameters`，写入 `isInlinePlaybackNoAd=true`，随后按原压缩格式重新编码、使用原 IV 加密并生成新 HMAC。加密载荷外明确出现的 `enable_ad_placements_preroll（字段 13）` 会写为 false；缺省时保留缺省值。正文改变后移除旧的 `Content-Encoding` 和 `Content-Length`，交给 Loon 重新生成传输长度。HMAC、正文、字段、压缩或加解密任一检查失败均原样放行。仅在确认客户端密钥失配时清除旧缓存并返回一次 HTTP 200 空 Protobuf，使客户端重新取得配置。压缩正文处理要求 Loon Build 988 或更高版本；该处理不阻断 `videoplayback`、不修改媒体字节，也不把 URL 或密钥发送到外部 Worker。
+- Initplayback：`YouTubeConfig.js` 先核对 `OnesieRequest 字段 3 → InnertubeRequest 字段 5` 的 `encryptedClientKey`。匹配后使用只保存在 Loon 本机的 `clientKey` 验证 `HMAC-SHA256(ciphertext || iv)`，再通过脚本内置的标准 AES-128-CTR 解密；若明文带 gzip 标记，使用 Loon 本机 `$utils.ungzip` 解压。只有 HMAC、正文和协议结构全部通过检查，才返回 HTTP 200 空 Protobuf并清除本轮 Onesie 状态，使 App 回退到已清理的普通 Player 播放方案。密钥失配时也使用相同回退并刷新配置；HMAC、正文、字段、压缩或加解密检查失败时原样放行。该处理不截断 `videoplayback` 媒体，不向外部 Worker发送 URL、密钥、Cookie 或正文。压缩正文处理要求 Loon Build 988 或更高版本。
 - Shorts 播放广告：`YouTubePlayback.js` 只删除响应字段 2 的条目中符合 `command（1）→ reelWatchEndpoint（139608561）→ adClientParams（16）→ isAd（1）= true` 的完整条目。普通 Shorts、未知命令及结构不完整的条目保持原样。
 - 字段编号和 `get_watch` 路径来自已有逆向协议描述的核对，属于协议映射信息；未复制原脚本或其库实现。YouTube 未公开保证这些编号适用于所有客户端。脚本使用字段 2 的 playabilityStatus 及 wire type 作有限检查，不能证明所有未来协议变化都能识别。
 - 空响应、非 200、损坏数据、已检测到的结构不匹配、未知内容类型、API 上的非预期 UMP、未解压的 gzip 及超限响应原样通过。限制为 2 MiB 响应、30,000 个解析字段、20,000 个 JSON 对象节点和 64 层 JSON 深度。
-- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与日志工具中的 UMP 检查回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节。关闭日志工具不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
+- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与日志工具中的 UMP 检查回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节；认证通过的 `initplayback` 会在请求阶段得到空 Protobuf 响应以触发普通播放器回退。关闭日志工具不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
 - 无字幕翻译、按钮隐藏、画中画或会员相关修改。后台播放仅在独立开关开启时修改明确的播放能力字段，不伪造会员状态。
 
 ### 后台播放开关
@@ -268,7 +268,7 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 
 2026 年 7 月之后仍在维护的公开实现还覆盖 `youtubei/v1/log_event`、`youtubei/v1/config` 和 `googlevideo/initplayback`。其中 `initplayback` 属于新版加密 UMP/Onesie 播放链路；部分公开实现会把目标播放 URL 和客户端密钥转交外部 Worker 处理。本插件依据公开的 [Onesie 请求 schema 与示例](https://github.com/LuanRT/googlevideo/blob/main/examples/onesie-request/main.ts) 自行实现本地请求处理：缓存配置、按有效期更新、核对 `encryptedClientKey`，使用 AES-128-CTR 与 HMAC-SHA256 验证和改写内层 Player 请求，失配时清除旧状态并让客户端重新协商。没有加入 Worker 地址、重定向或额外网络请求，也不会自动上传播放地址或密钥。1.2.0 起使用脚本内置的标准 AES-128-CTR，避免依赖不同 Loon 运行时对 CTR 的具体实现。
 
-本地脚本现在具备请求侧 HMAC 校验、AES-CTR 解密、广告协商清理、重新加密和签名逻辑；它仍不解密或重建返回的 UMP 媒体流，也不删除广告媒体片段。因此，`changed: authenticated=true` 只证明内层 Player 请求已在发送前完成改写，实际广告是否消失仍取决于服务端是否接受这些请求标志。失配回退不是按 `ctier=L` 阻断媒体，但仍可能让客户端多做一次协商；若出现等待，可关闭“新版播放链路去广告”。
+本地脚本具备请求侧 HMAC 校验、AES-CTR 解密、广告协商清理、重新加密和签名逻辑。2026-10-04 的实机样本证明，即使内层请求已经成功清理并重签，服务端仍可通过普通 UMP MEDIA_HEADER/MEDIA 分片返回另一视频标识的片头广告。直接删除这些分片会造成黑屏或等待，因此 1.5.0 在完整认证后改为返回空 `initplayback` 响应，使客户端回退到已清理的普通 Player 链路；不按 `ctier=L` 猜测媒体，也不修改签名。本地协议测试已覆盖该响应，真实设备是否无缝回退仍需验证。
 
 2026-10-03 的实机导出进一步确认，`YouTubeInitPlayback 1.1.0` 命中了十条 `initplayback` 请求，但每条都记录 `pass: unsupported-wire`，没有产生 `requestAfter`，所以该版本实际上没有改写任何一条 Onesie 请求。1.1.1 为解密后的内层 Protobuf 增加 wire type 3/4 group 的配对读取；未知 group 连同起止标记按原字节保留，只允许修改独立的 JSON 正文字段。group 不闭合、结束字段不匹配、出现协议无效 wire type 或任何后续校验失败时仍整条原样放行。本地测试能证明这一结构可被安全保留，但片头广告是否消失仍需更新后的实机结果确认。
 
@@ -286,7 +286,7 @@ Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据�
 
 ## 本地验证
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 240 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 243 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、认证后普通播放器回退、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeed.js

@@ -154,6 +154,25 @@ test('sample-derived watch-next standalone sponsored action is removed without t
  assert.ok(result.logs.join('').includes('removed=1'));
  assert.ok(result.logs.join('').includes('removed_eml=1'));
 });
+test('sample-derived watch-next sponsored overlay with an exact pagead marker is removed',()=>{
+ const sponsored=msg(14,msg(62960614,cat(msg(2,text('SAFE')),msg(3,text('https://www.googleadservices.com/pagead/aclk?sa=L')),
+  msg(18,text('yt-ads-web-view-id')))));
+ const metadata=cat(msg(47,[1]),msg(777,text('shared templates')));
+ const result=run(cat(sponsored,metadata),{endpoint:'next',type:'application/x-protobuf'});
+ assert.deepEqual(Buffer.from(result.output.body),Buffer.from(metadata));
+ assert.ok(result.logs.join('').includes('removed=1'));
+ assert.ok(result.logs.join('').includes('removed_eml=1'));
+});
+test('watch-next overlay cleaning requires the verified wrapper and an exact ad URL marker',()=>{
+ const normal=msg(14,msg(62960614,text('normal player overlay')));
+ const weak=msg(14,msg(62960614,text('banner_text_icon_buttoned_layout pagead')));
+ const outside=msg(14,cat(msg(62960614,text('normal player overlay')),msg(3,text('https://www.googleadservices.com/pagead/aclk'))));
+ const wrongExtension=msg(14,msg(62960615,text('https://www.googleadservices.com/pagead/aclk')));
+ const wrongField=msg(13,msg(62960614,text('https://www.googleadservices.com/pagead/aclk')));
+ for(const body of [normal,weak,outside,wrongExtension,wrongField]) {
+  assert.equal(Object.keys(run(body,{endpoint:'next',type:'application/x-protobuf'}).output).length,0);
+ }
+});
 test('watch-next standalone action stays intact unless wrapper and structural EML ad identity both match',()=>{
  const normal=nested([15,361588638,2],element('video_lockup_with_attachment',{command:false}));
  const wrongWrapper=nested([15,361588639,2],element('banner_text_icon_buttoned_layout'));

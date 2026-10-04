@@ -29,7 +29,7 @@
  */
 (function () {
   "use strict";
-  var VERSION = "2.1.0";
+  var VERSION = "2.2.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -575,6 +575,19 @@ function (r) {return r.no === 3;})) return {ad:false, divider:false};
     return classifyElement(renderer, budget).ad;
   }
 
+  /**
+   * 功能：识别 next 响应中带 Google pagead 点击地址的播放页赞助覆盖层。
+   * 更新时间：2026-10-04T10:18:00+08:00
+   */
+  function watchNextAdOverlay(bytes, budget) {
+    var records = parse(bytes, budget);
+    if (records.length !== 1 || records[0].no !== 62960614 || records[0].wire !== 2) return false;
+    var overlay = bytes.subarray(records[0].payloadStart, records[0].end);
+    return containsASCII(overlay, "googleadservices.com/pagead/") ||
+      containsASCII(overlay, "youtube.com/pagead/") ||
+      containsASCII(overlay, "yt-ads-web-view-id");
+  }
+
 
   /**
    * 功能：执行 continuationBrowseId 对应的内部处理步骤。
@@ -740,6 +753,9 @@ function (r) {return r.no >= 1000000 && !adFields[r.no];})) fail("feed-mixed-ren
 function (r) {
       if (adFields[r.no]) { removed++; drop = true; return; }
       if (kind === "next" && r.no === 15 && r.wire === 2 && watchNextAdAction(bytes.subarray(r.payloadStart, r.end), budget)) {
+        removed++; eml++; return;
+      }
+      if (kind === "next" && r.no === 14 && r.wire === 2 && watchNextAdOverlay(bytes.subarray(r.payloadStart, r.end), budget)) {
         removed++; eml++; return;
       }
       if (hideHomeShorts && endpoint === "browse" && homeContext && kind === "sectionItem" && r.no === 51845067) {
