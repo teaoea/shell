@@ -321,7 +321,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.5.0";
+  var VERSION = "1.6.0";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -621,24 +621,25 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
   var output = {};
   if (enabled && typeof $request !== "undefined" && typeof $response === "undefined" && API.test($request.url || "") && isYouTubeApp()) {
     try {
-      var state = readState(), key = encryptedClientKey($request.body);
-      if (!key || !key.length) record("pass: encrypted client key absent", "debug", output);
-      else if (!state) record("pass: active config absent", "info", output);
-      else if (base64(key) === state.encryptKey) {
+      if (classicFallback) {
+        output = classicPlaybackResponse();
+        record("fallback: immediate=true classic_player=true", "info", output);
+      } else {
+        var state = readState(), key = encryptedClientKey($request.body);
+        if (!key || !key.length) record("pass: encrypted client key absent", "debug", output);
+        else if (!state) record("pass: active config absent", "info", output);
+        else if (base64(key) === state.encryptKey) {
         var cleaned = cleanEncryptedRequest($request.body, state);
-        if (classicFallback) {
-          clearState();
-          output = classicPlaybackResponse();
-          record("fallback: authenticated=true classic_player=true inner=" + (cleaned ? cleaned.format : "unchanged") + " context_ad_signals=" + (cleaned ? cleaned.counts.contextAdSignals : 0) + " playback_ad_params=" + (cleaned ? cleaned.counts.playbackAdParams : 0) + " inline_no_ad=" + (cleaned ? cleaned.counts.inlineNoAd : 0), "info", output);
-        } else if (cleaned) {
+        if (cleaned) {
           output = {headers:rewrittenHeaders($request.headers),body:cleaned.body};
           record("changed: authenticated=true encoding=" + cleaned.encoding + " inner=" + cleaned.format + " context_ad_signals=" + cleaned.counts.contextAdSignals + " playback_ad_params=" + cleaned.counts.playbackAdParams + " inline_no_ad=" + cleaned.counts.inlineNoAd, "info", output);
         } else record("matched: local config active; inner player request unchanged", "debug", output);
-      }
-      else {
-        clearState();
-        if (refreshMismatch) output = classicPlaybackResponse();
-        record("mismatch: config cleared refresh=" + refreshMismatch, "warn", output);
+        }
+        else {
+          clearState();
+          if (refreshMismatch) output = classicPlaybackResponse();
+          record("mismatch: config cleared refresh=" + refreshMismatch, "warn", output);
+        }
       }
     } catch (error) { record("pass: " + (error && error.message || "parse-failed"), "warn", output); output = {}; }
   }

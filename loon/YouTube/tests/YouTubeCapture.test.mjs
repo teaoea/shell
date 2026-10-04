@@ -56,7 +56,7 @@ test('the single log switch enables full-chain capture and its request rule read
   const init=plugin.split('\n').find(x=>x.includes('googlevideo\\.com\\/initplayback'));
   const onesieRegex=new RegExp(onesie.split(' ')[1]),initRegex=new RegExp(init.split(' ')[1]);
   assert.ok(!onesie.includes('enable=')&&onesie.includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(!init.includes('enable=')&&init.includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(!init.includes('enable=')&&init.includes('requires-body=false')&&!init.includes('binary-body-mode=true'));
   assert.ok(initRegex.test('https://rr5.googlevideo.com/initplayback?ack=1&oad=5500'));
   assert.ok(onesieRegex.test('https://youtubei.googleapis.com/youtubei/v1/log_event'));
   assert.ok(!initRegex.test('https://rr5.googlevideo.com/videoplayback?ack=1'));
