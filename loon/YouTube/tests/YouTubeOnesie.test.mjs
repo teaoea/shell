@@ -78,21 +78,29 @@ const fields = bytes => {
   while(cursor.pos<bytes.length){const start=cursor.pos,tag=readVarint(bytes,cursor),no=Math.floor(tag/8),wire=tag&7;let dataStart=cursor.pos,dataEnd=cursor.pos,value;if(wire===0){value=readVarint(bytes,cursor);dataEnd=cursor.pos;}else if(wire===2){const length=readVarint(bytes,cursor);dataStart=cursor.pos;cursor.pos+=length;dataEnd=cursor.pos;}else if(wire===3){skip(no,wire);dataEnd=cursor.pos;}else throw new Error('unsupported-wire');result.push({no,wire,start,end:cursor.pos,dataStart,dataEnd,value});}return result;
 };
 const field = (bytes,no,wire=2) => { const item=fields(bytes).find(entry=>entry.no===no&&entry.wire===wire); return item && bytes.subarray(item.dataStart,item.dataEnd); };
-const makeEncryptedInit = (clientKey,encryptKey,player,{tamper=false,preroll=true,unknownGroup=false,gzip=false}={}) => {
+const makeEncryptedInit = (clientKey,encryptKey,player,{tamper=false,preroll=true,unknownGroup=false,gzip=false,protobuf=false}={}) => {
   const iv=Uint8Array.from({length:16},(_,i)=>i+1);
   const group=unknownGroup?concat(varint(20*8+3),scalar(1,7),varint(20*8+4)):new Uint8Array(0);
-  const plain=concat(message(1,new TextEncoder().encode('https://youtubei.googleapis.com/youtubei/v1/player')),group,message(3,new TextEncoder().encode(JSON.stringify(player))));
+  const encoded=protobuf?player:new TextEncoder().encode(JSON.stringify(player));
+  const plain=concat(message(1,new TextEncoder().encode('https://youtubei.googleapis.com/youtubei/v1/player')),group,message(3,encoded));
   const encrypted=aesCtr(clientKey.subarray(0,16),iv,gzip?zlib.gzipSync(plain):plain);
   const mac=hmac(clientKey.subarray(16),encrypted,iv); if(tamper)mac[0]^=255;
   const envelope=concat(message(2,encrypted),message(5,encryptKey),message(6,iv),message(7,mac),scalar(13,preroll?1:0));
   return message(3,envelope);
 };
+const protobufPlayer = () => concat(
+  message(1,concat(message(9,Uint8Array.from([8,1])),message(90,Uint8Array.from([1,2,3])))),
+  message(4,message(1,concat(message(12,new TextEncoder().encode('vast')),message(25,new TextEncoder().encode('forced')),scalar(50,0),message(61,Uint8Array.from([4,5]))))),
+  message(99,Uint8Array.from([7,8,9]))
+);
 const decryptPlayer = (body,clientKey,{gzip=false}={}) => {
   const envelope=field(body,3),encrypted=field(envelope,2),iv=field(envelope,6),mac=field(envelope,7);
   assert.deepEqual(mac,hmac(clientKey.subarray(16),encrypted,iv));
   const decrypted=cryptoApi.aes.decrypt(encrypted,{key:clientKey.subarray(0,16),iv});
   const plain=gzip?new Uint8Array(zlib.gunzipSync(decrypted)):decrypted;
-  return {plain,player:JSON.parse(new TextDecoder().decode(field(plain,3))),preroll:fields(envelope).find(entry=>entry.no===13)?.value};
+  const playerBody=field(plain,3); let player;
+  try { player=JSON.parse(new TextDecoder().decode(playerBody)); } catch (_) {}
+  return {plain,playerBody,player,preroll:fields(envelope).find(entry=>entry.no===13)?.value};
 };
 const utilsApi={gzip:data=>new Uint8Array(zlib.gzipSync(data)),ungzip:data=>new Uint8Array(zlib.gunzipSync(data))};
 
@@ -184,6 +192,25 @@ test('gzip-compressed inner request is decompressed, cleaned and recompressed be
   assert.equal(cleaned.player.playbackContext.contentPlaybackContext.adParams,undefined);
   assert.equal(cleaned.player.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd,true);
   assert.equal(cleaned.preroll,0);
+});
+
+test('binary protobuf player body in iOS initplayback is cleaned without changing unknown fields', () => {
+  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+  const store=new Map([[logConfigKey,JSON.stringify({enabled:true,session:'protobuf-session'})]]);configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+  const body=makeEncryptedInit(clientKey,encryptKey,protobufPlayer(),{protobuf:true,gzip:true});
+  const result=initPlayback(store,[...encryptKey],youtubeUA,{capture_raw:true},body,undefined,utilsApi);
+  assert.ok(result.output.body instanceof Uint8Array);
+  const decrypted=decryptPlayer(result.output.body,clientKey,{gzip:true});
+  const player=field(decrypted.plain,3),context=field(player,1),playback=field(player,4),content=field(playback,1);
+  assert.equal(fields(context).some(entry=>entry.no===9),false);
+  assert.ok(field(context,90));
+  assert.equal(fields(content).some(entry=>entry.no===12||entry.no===25),false);
+  assert.equal(fields(content).find(entry=>entry.no===50)?.value,1);
+  assert.ok(field(content,61));
+  assert.ok(field(player,99));
+  assert.equal(decrypted.preroll,0);
+  const entries=JSON.parse(store.get(logCacheKey)).entries;
+  assert.match(entries.at(-1).message,/inner=protobuf/);
 });
 
 test('initplayback crypto authentication failure passes through without changing the request', () => {
