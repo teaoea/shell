@@ -13,6 +13,7 @@
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var ranks = {debug:0, info:1, warn:2, error:3};
   var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
 

@@ -17,6 +17,7 @@
   var MAX_BODY = 2097152;
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.suppress_player_ads !== false && args.suppress_player_ads !== "false";
   var debug = args.script_debug === true || args.script_debug === "true";
 

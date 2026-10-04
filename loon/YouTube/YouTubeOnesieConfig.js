@@ -19,6 +19,7 @@
   var MAX_BODY = 2097152;
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = flag(args.script_debug);
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(config|log_event)(?:\?[^#]*)?$/i;
 

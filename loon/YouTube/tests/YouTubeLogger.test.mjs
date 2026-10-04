@@ -47,17 +47,21 @@ function events(store) {
   return state.entries.map(summary=>{if(!summary.captureRef)return {summary,capture:null};const text=Array.from({length:summary.captureRef.chunks},(_,i)=>store.get(summary.captureRef.prefix+i)).join('');return {summary,capture:JSON.parse(text)};});
 }
 
-test('main plugin contains ad rules, function-specific Onesie scripts and one disabled logger entry; no separate plugin', () => {
+test('main plugin exposes exactly three switches and keeps function-specific scripts in one plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
   assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 5);
   assert.ok(plugin.includes('log_enabled = switch,false'));
-  assert.ok(plugin.includes('script_debug = switch,false'));
+  assert.ok(plugin.includes('background_playback = switch,false'));
+  assert.ok(plugin.includes('hide_home_shorts = switch,false'));
+  assert.deepEqual(plugin.split('\n').filter(x=>/ = switch,/.test(x)).map(x=>x.split(' = ')[0]),['background_playback','hide_home_shorts','log_enabled']);
+  assert.ok(!plugin.includes('script_debug = switch'));
+  assert.ok(!plugin.includes('capture_raw = switch'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
   const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
   assert.equal(loggerLines.length, 3);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeOnesieConfig.js')).length, 2);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeInitPlayback.js')).length, 1);
-  assert.ok(loggerLines.find(x => x.includes('开发请求抓包')).includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(loggerLines.find(x => x.includes('日志请求记录')).includes('requires-body=true,binary-body-mode=true'));
   assert.ok(plugin.includes('DOMAIN-SUFFIX,googlevideo.com'));
   const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('youtube-logs'));
   const regex = new RegExp(line.split(' ')[1]);
@@ -177,7 +181,7 @@ test('each save level includes its own severity and higher levels only', () => {
     ];
     for (const response of scenarios) execute(playback, store, {
       $request:{url:'https://youtubei.googleapis.com/youtubei/v1/player'}, $response:response,
-      $argument:{script_debug:false,log_enabled:true,log_level:minimum}
+      $argument:{script_debug:false,log_enabled:true,log_level:minimum,capture_raw:false}
     });
     const levels = JSON.parse(store.get(cacheKey)).entries.map(r => r.level);
     const all = ['debug','info','warn','error'];

@@ -11,7 +11,8 @@
   var VERSION = "1.5.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
-  var debug = args.script_debug !== false && args.script_debug !== "false";
+  if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
+  var debug = args.script_debug === true || args.script_debug === "true";
   var endpoint = "unknown";
   var MAX_UMP_BYTES = 8 * 1024 * 1024;
   var MAX_UMP_PARTS = 10000;

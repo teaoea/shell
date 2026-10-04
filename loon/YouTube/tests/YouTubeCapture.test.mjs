@@ -42,21 +42,21 @@ function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":
     $response:{status:200,headers:{'Content-Type':'application/json'},body},...extra
   });
 }
-test('capture is opt-in, main plugin reads request bodies only for its opt-in request rule',()=>{
-  assert.ok(plugin.includes('capture_raw = switch,false'));
-  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 开发请求抓包'));
-  assert.ok(line.includes('enable={capture_raw}')&&line.includes('requires-body=true,binary-body-mode=true'));
+test('the single log switch enables full-chain capture and its request rule reads bodies',()=>{
+  assert.ok(!plugin.includes('capture_raw = switch'));
+  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 日志请求记录'));
+  assert.ok(line.includes('enable={log_enabled}')&&line.includes('requires-body=true,binary-body-mode=true'));
   const regex=new RegExp(line.split(' ')[1]);
   assert.ok(!regex.test(api)&&regex.test(media));
   const playerLine=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放器请求广告协商清理'));
-  assert.ok(playerLine.includes('{capture_raw}')&&playerLine.includes('{capture_budget}'));
+  assert.ok(playerLine.includes('{log_enabled}')&&playerLine.includes('{capture_budget}'));
   assert.ok(new RegExp(playerLine.split(' ')[1]).test(api));
   assert.ok(!regex.test('https://youtubei.googleapis.com.evil/youtubei/v1/player'));
   const onesie=plugin.split('\n').find(x=>x.includes('tag=YouTube Onesie 配置刷新'));
   const init=plugin.split('\n').find(x=>x.includes('tag=YouTube initplayback 广告协商清理'));
   const onesieRegex=new RegExp(onesie.split(' ')[1]),initRegex=new RegExp(init.split(' ')[1]);
-  assert.ok(onesie.includes('enable={onesie_enabled}')&&onesie.includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(init.includes('enable={onesie_enabled}')&&init.includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(!onesie.includes('enable=')&&onesie.includes('requires-body=true,binary-body-mode=true'));
+  assert.ok(!init.includes('enable=')&&init.includes('requires-body=true,binary-body-mode=true'));
   assert.ok(initRegex.test('https://rr5.googlevideo.com/initplayback?ack=1&oad=5500'));
   assert.ok(onesieRegex.test('https://youtubei.googleapis.com/youtubei/v1/log_event'));
   assert.ok(!initRegex.test('https://rr5.googlevideo.com/videoplayback?ack=1'));
@@ -64,6 +64,9 @@ test('capture is opt-in, main plugin reads request bodies only for its opt-in re
   player(store,undefined,{$argument:{script_debug:false,log_enabled:true,log_level:'debug',capture_raw:false}});
   assert.equal(exportData(store).events[0].capture,null);
   assert.ok(!exportData(store).events[0].summary.captureRef);
+  const unifiedStore=started();
+  player(unifiedStore,undefined,{$argument:{log_enabled:true,log_level:'debug',capture_budget:'32'}});
+  assert.ok(exportData(unifiedStore).events[0].capture,'log_enabled must imply complete capture when the removed capture_raw switch is absent');
   const previous=store.get(indexKey);
   const disabled=run('YouTubeLogger',store,{$request:{url:api,method:'POST',body:new Uint8Array([1,2])},$argument:{log_enabled:false,capture_raw:true}});
   assert.equal(Object.keys(disabled.result).length,0);

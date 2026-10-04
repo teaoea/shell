@@ -17,10 +17,10 @@ function run({url=base,enabled=true,response=false,store=new Map(),raw=false,deb
  vm.runInNewContext(source,context,{timeout:1000}); assert.equal(calls,1); return {output,logs,store};
 }
 
-test('plugin gives ad-break configuration its own default-enabled request script',()=>{
- assert.ok(plugin.includes('block_ad_break = switch,true'));
+test('plugin keeps ad-break configuration blocking enabled without a settings switch',()=>{
+ assert.ok(!plugin.includes('block_ad_break = switch'));
  const line=plugin.split('\n').find(x=>x.startsWith('http-request')&&x.includes('YouTubeAdBreak.js'));
- assert.ok(line&&line.includes('enable={block_ad_break}'));
+ assert.ok(line&&!line.includes('enable='));
  const regex=new RegExp(line.split(' ')[1],'i');
  assert.ok(regex.test(base+'?prettyPrint=false'));
  assert.ok(regex.test('https://www.youtube.com/youtubei/v1/player/ad_break'));

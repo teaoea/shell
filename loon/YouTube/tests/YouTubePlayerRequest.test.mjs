@@ -27,12 +27,12 @@ function run(body,{endpoint='player',type='application/x-protobuf',enabled=true,
   return {output,logs,store};
 }
 
-test('plugin enables the standalone player request cleaner by default',()=>{
-  assert.ok(plugin.includes('suppress_player_ads = switch,true'));
+test('plugin keeps the standalone player request cleaner always enabled without a settings switch',()=>{
+  assert.ok(!plugin.includes('suppress_player_ads = switch'));
   const line=plugin.split('\n').find(x=>x.startsWith('http-request')&&x.includes('YouTubePlayerRequest.js'));
-  assert.ok(line&&line.includes('enable={suppress_player_ads}'));
+  assert.ok(line&&!line.includes('enable='));
   assert.ok(line.includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(line.includes('{capture_raw}')&&line.includes('{capture_budget}'));
+  assert.ok(line.includes('{log_enabled}')&&line.includes('{capture_budget}'));
   const regex=new RegExp(line.split(' ')[1],'i');
   assert.ok(regex.test('https://youtubei.googleapis.com/youtubei/v1/player?id=x'));
   assert.ok(regex.test('https://www.youtube.com/youtubei/v1/get_watch'));

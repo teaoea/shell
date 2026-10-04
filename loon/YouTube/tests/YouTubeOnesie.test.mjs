@@ -105,11 +105,11 @@ const decryptPlayer = (body,clientKey,{gzip=false}={}) => {
 const utilsApi={gzip:data=>new Uint8Array(zlib.gzipSync(data)),ungzip:data=>new Uint8Array(zlib.gunzipSync(data))};
 
 test('plugin routes the YouTube-only Onesie lifecycle to two function-specific scripts', () => {
-  assert.ok(plugin.includes('onesie_enabled = switch,true'));
+  assert.ok(!plugin.includes('onesie_enabled = switch'));
   const configLines = plugin.split('\n').filter(line => line.includes('YouTubeOnesieConfig.js'));
   const initLine = plugin.split('\n').find(line => line.includes('YouTubeInitPlayback.js'));
   assert.equal(configLines.length, 2);
-  assert.ok(initLine && initLine.includes('enable={onesie_enabled}') && initLine.includes('requires-body=true'));
+  assert.ok(initLine && !initLine.includes('enable=') && initLine.includes('requires-body=true'));
   assert.ok(configLines.every(line => !line.includes('music\\.')));
   assert.ok(!initLine.includes('workers.dev'));
 });

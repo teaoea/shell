@@ -26,11 +26,11 @@ function run(body,{url=base,type='application/x-protobuf',status=200,enabled=tru
 }
 function passed(r){assert.deepEqual(Object.keys(r.output),[]);}
 
-test('plugin gives Shorts playback ads an independent script and enabled switch',()=>{
+test('plugin keeps Shorts playback ad cleaning enabled without a settings switch',()=>{
   const line=plugin.split('\n').find(x=>x.startsWith('http-response')&&x.includes('YouTubeShortsAds.js'));
   assert.ok(line);
-  assert.ok(plugin.includes('remove_shorts_ads = switch,true'));
-  assert.ok(line.includes('enable={remove_shorts_ads}'));
+  assert.ok(!plugin.includes('remove_shorts_ads = switch'));
+  assert.ok(!line.includes('enable='));
   const regex=new RegExp(line.split(' ')[1],'i');
   assert.ok(regex.test(base+'?prettyPrint=false'));
   assert.ok(!regex.test('https://youtubei.googleapis.com/youtubei/v1/browse'));

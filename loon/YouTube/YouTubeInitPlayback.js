@@ -18,6 +18,7 @@
   var MAX_BODY = 2097152;
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.onesie_enabled !== false && args.onesie_enabled !== "false";
   var refreshMismatch = args.onesie_refresh_on_mismatch !== false && args.onesie_refresh_on_mismatch !== "false";
   var debug = flag(args.script_debug);

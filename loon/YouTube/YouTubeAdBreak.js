@@ -13,6 +13,7 @@
   var CACHE = "ytads.logger.entries.v2";
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$/i;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.block_ad_break !== false && args.block_ad_break !== "false";
   var debug = args.script_debug === true || args.script_debug === "true";
 

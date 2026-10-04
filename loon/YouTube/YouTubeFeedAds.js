@@ -14,6 +14,7 @@
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = args.script_debug === true || args.script_debug === "true";
   var hideHomeShorts = args.hide_home_shorts === true || args.hide_home_shorts === "true";
   var adaptiveFeedAds = args.adaptive_feed_ads !== false && args.adaptive_feed_ads !== "false";

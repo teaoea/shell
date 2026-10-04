@@ -62,7 +62,7 @@ test('plugin routes playback and stream responses to distinct standalone scripts
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlaybackAds.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(entries[0].includes('argument=[{script_debug},{log_enabled},{log_level},{capture_raw},{capture_budget},{background_playback}]'));
+  assert.ok(entries[0].includes('argument=[{log_enabled},{log_level},{capture_budget},{background_playback}]'));
   const regex = new RegExp(entries[0].split(' ')[1], 'i');
   for (const host of ['youtubei.googleapis.com', 'youtubei-att.googleapis.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube.com']) {
     assert.ok(regex.test(`https://${host}/youtubei/v1/player?key=redacted`));
@@ -75,8 +75,8 @@ test('plugin routes playback and stream responses to distinct standalone scripts
   assert.ok(active.split('[Mitm]')[1].includes('*.googlevideo.com'));
   assert.ok(active.includes('background_playback = switch,false,'));
   assert.ok(!active.includes('ump_enabled = switch,false,'));
-  assert.ok(entries[1].includes('enable={capture_raw}'));
-  assert.ok(entries[1].includes('argument=[{script_debug},{ump_mode},{log_enabled},{log_level},{capture_raw},{capture_budget}]'));
+  assert.ok(entries[1].includes('enable={log_enabled}'));
+  assert.ok(entries[1].includes('argument=[{ump_mode},{log_enabled},{log_level},{capture_budget}]'));
   assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeStreamAds.js'));
   assert.ok(!source.includes('function processUMP('));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
