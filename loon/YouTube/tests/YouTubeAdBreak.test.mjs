@@ -19,12 +19,13 @@ function run({url=base,enabled=true,response=false,store=new Map(),raw=false,deb
 
 test('plugin keeps ad-break configuration blocking enabled without a settings switch',()=>{
  assert.ok(!plugin.includes('block_ad_break = switch'));
- const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 片头与中插广告配置拦截'));
+ const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放请求与广告配置处理'));
  assert.ok(line&&!line.includes('enable='));
  const regex=new RegExp(line.split(' ')[1],'i');
  assert.ok(regex.test(base+'?prettyPrint=false'));
  assert.ok(regex.test('https://www.youtube.com/youtubei/v1/player/ad_break'));
- assert.ok(!regex.test('https://youtubei.googleapis.com/youtubei/v1/player'));
+ assert.ok(regex.test('https://youtubei.googleapis.com/youtubei/v1/player'));
+ assert.ok(!regex.test(base+'/extra'));
  assert.ok(!regex.test('https://rr5.googlevideo.com/videoplayback?ctier=L'));
 });
 

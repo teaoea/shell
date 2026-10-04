@@ -27,7 +27,7 @@ function run(body,{url=base,type='application/x-protobuf',status=200,enabled=tru
 function passed(r){assert.deepEqual(Object.keys(r.output),[]);}
 
 test('plugin keeps Shorts playback ad cleaning enabled without a settings switch',()=>{
-  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube Shorts 播放广告清理'));
+  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放响应与后台播放'));
   assert.ok(line);
   assert.ok(!plugin.includes('remove_shorts_ads = switch'));
   assert.ok(!line.includes('enable='));

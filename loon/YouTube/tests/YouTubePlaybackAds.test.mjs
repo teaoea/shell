@@ -57,9 +57,9 @@ function passed(result) {
 
 test('plugin cleans API playback while media logging does not buffer streams', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
-  assert.equal(allEntries.length, 5);
+  assert.equal(allEntries.length, 4);
   const entries = [
-    allEntries.find(line => line.includes('tag=YouTube 播放广告位清理与后台播放')),
+    allEntries.find(line => line.includes('tag=YouTube 播放响应与后台播放')),
     allEntries.find(line => line.includes('tag=YouTube 日志媒体响应记录'))
   ];
   assert.equal(entries.length, 2);

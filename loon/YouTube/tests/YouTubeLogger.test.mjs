@@ -49,7 +49,7 @@ function events(store) {
 
 test('main plugin exposes exactly three switches and keeps function-specific scripts in one plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
-  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 5);
+  assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 4);
   assert.ok(plugin.includes('log_enabled = switch,false'));
   assert.ok(plugin.includes('background_playback = switch,false'));
   assert.ok(plugin.includes('hide_home_shorts = switch,false'));
@@ -58,17 +58,17 @@ test('main plugin exposes exactly three switches and keeps function-specific scr
   assert.ok(!plugin.includes('capture_raw = switch'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
   const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
-  assert.equal(loggerLines.length, 4);
-  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeConfig.js')).length, 3);
-  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubePlayback.js')).length, 4);
+  assert.equal(loggerLines.length, 2);
+  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeConfig.js')).length, 2);
+  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubePlayback.js')).length, 2);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeFeed.js')).length, 1);
-  assert.ok(loggerLines.find(x => x.includes('日志请求记录')).includes('requires-body=false'));
+  assert.ok(loggerLines.find(x => x.includes('日志记录与导出')).includes('requires-body=false'));
   assert.ok(plugin.includes('DOMAIN-SUFFIX,googlevideo.com'));
-  const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('youtube-logs'));
+  const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('tag=YouTube 日志记录与导出'));
   const regex = new RegExp(line.split(' ')[1]);
   assert.ok(regex.test(base + '/download.log'));
   assert.ok(!regex.test('http://youtube-logs.invalid.evil/'));
-  assert.ok(plugin.includes('generic script-path='));
+  assert.ok(!plugin.includes('generic script-path='));
   assert.ok(!logger.includes('$httpClient') && !logger.includes('$persistentStore.remove'));
 });
 

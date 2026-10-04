@@ -108,7 +108,7 @@ test('plugin routes the YouTube-only Onesie lifecycle through the merged configu
   assert.ok(!plugin.includes('onesie_enabled = switch'));
   const configLines = plugin.split('\n').filter(line => line.includes('YouTubeConfig.js'));
   const initLine = plugin.split('\n').find(line => line.includes('googlevideo\\.com\\/initplayback'));
-  assert.equal(configLines.length, 3);
+  assert.equal(configLines.length, 2);
   assert.ok(initLine && !initLine.includes('enable=') && initLine.includes('requires-body=true') && initLine.includes('binary-body-mode=true'));
   assert.ok(configLines.every(line => !line.includes('music\\.')));
   assert.ok(!initLine.includes('workers.dev'));

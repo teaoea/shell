@@ -44,15 +44,15 @@ function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":
 }
 test('the single log switch enables full-chain capture without buffering request bodies',()=>{
   assert.ok(!plugin.includes('capture_raw = switch'));
-  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 日志请求记录'));
+  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 日志记录与导出'));
   assert.ok(line.includes('enable={log_enabled}')&&line.includes('requires-body=false'));
   const regex=new RegExp(line.split(' ')[1]);
   assert.ok(!regex.test(api)&&regex.test(media));
-  const playerLine=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放器请求广告协商清理'));
+  const playerLine=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放请求与广告配置处理'));
   assert.ok(playerLine.includes('{log_enabled}')&&playerLine.includes('{capture_budget}'));
   assert.ok(new RegExp(playerLine.split(' ')[1]).test(api));
   assert.ok(!regex.test('https://youtubei.googleapis.com.evil/youtubei/v1/player'));
-  const onesie=plugin.split('\n').find(x=>x.includes('tag=YouTube Onesie 配置刷新'));
+  const onesie=plugin.split('\n').find(x=>x.includes('tag=YouTube 配置与片头广告请求处理'));
   const init=plugin.split('\n').find(x=>x.includes('googlevideo\\.com\\/initplayback'));
   const onesieRegex=new RegExp(onesie.split(' ')[1]),initRegex=new RegExp(init.split(' ')[1]);
   assert.ok(!onesie.includes('enable=')&&onesie.includes('requires-body=true,binary-body-mode=true'));

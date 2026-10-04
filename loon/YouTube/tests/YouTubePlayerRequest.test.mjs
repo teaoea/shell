@@ -29,14 +29,14 @@ function run(body,{endpoint='player',type='application/x-protobuf',enabled=true,
 
 test('plugin keeps the standalone player request cleaner always enabled without a settings switch',()=>{
   assert.ok(!plugin.includes('suppress_player_ads = switch'));
-  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放器请求广告协商清理'));
+  const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 播放请求与广告配置处理'));
   assert.ok(line&&!line.includes('enable='));
   assert.ok(line.includes('requires-body=true,binary-body-mode=true'));
   assert.ok(line.includes('{log_enabled}')&&line.includes('{capture_budget}'));
   const regex=new RegExp(line.split(' ')[1],'i');
   assert.ok(regex.test('https://youtubei.googleapis.com/youtubei/v1/player?id=x'));
   assert.ok(regex.test('https://www.youtube.com/youtubei/v1/get_watch'));
-  assert.ok(!regex.test('https://youtubei.googleapis.com/youtubei/v1/player/ad_break'));
+  assert.ok(regex.test('https://youtubei.googleapis.com/youtubei/v1/player/ad_break'));
   assert.ok(!regex.test('https://rr5.googlevideo.com/videoplayback?ctier=L'));
   assert.ok(logger.includes('"YouTubePlayback"'));
 });
