@@ -90,7 +90,7 @@ test('modern playback logger captures initplayback requests and config responses
     ['YouTubeConfig','initplayback','request'],['YouTubeConfig','config','response']
   ]);
   const data = events(store);
-  assert.equal(data[0].capture.request.url, init);
+  assert.equal(data[0].capture.request.url, init.split('?')[0]);
   assert.equal(data[1].capture.responseBefore.body.bytes, 2);
 });
 test('shared exports retain function-specific Onesie summaries', () => {

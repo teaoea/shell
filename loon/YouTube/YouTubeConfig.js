@@ -6,6 +6,118 @@
  * 运行环境：Loon JavaScript
  */
 /**
+ * 功能：首次使用脱敏版日志时清除旧缓存中未脱敏的正文块，保留无身份信息的事件摘要。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ * @returns {void} 删除失败时抛出异常，阻止本次日志写入。
+ */
+function ytDiagnosticPurgeLegacy() {
+  if (typeof $persistentStore === 'undefined') return;
+  var key='ytads.logger.privacy.v1';
+  if ($persistentStore.read(key)==='structure-only-v1') return;
+  var raw=$persistentStore.read('ytads.logger.entries.v2'),state=raw?JSON.parse(raw):null;
+  if(state&&Array.isArray(state.entries)) {
+    for(var n=0;n<state.entries.length;n++) {
+      var entry=state.entries[n],ref=entry&&entry.captureRef;
+      if(!ref)continue;
+      if(typeof ref.prefix!=='string'||!/^ytads\.capture\.[a-z0-9-]+\.[a-z0-9-]+\.$/.test(ref.prefix)||!Number.isInteger(ref.chunks)||ref.chunks<1||ref.chunks>256)throw Error('privacy-invalid-reference');
+      for(var i=0;i<ref.chunks;i++)if($persistentStore.write(undefined,ref.prefix+i)!==true)throw Error('privacy-delete-failed');
+      delete entry.captureRef;entry.message='legacy capture removed for privacy';
+    }
+    state.captureBytes=0;
+    if($persistentStore.write(JSON.stringify(state),'ytads.logger.entries.v2')!==true)throw Error('privacy-index-failed');
+  }
+  if($persistentStore.write('structure-only-v1',key)!==true)throw Error('privacy-marker-failed');
+}
+/**
+ * 功能：在日志落盘前移除身份信息，只保留协议字段、长度和广告结构标记；未知正文不保存原文。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ * @param {Object} payload 原始诊断事件。
+ * @returns {Object} 可安全持久化的结构诊断事件。
+ */
+function ytDiagnosticSanitize(payload) {
+  if (!payload) return payload;
+  var markers = /(?:[a-z_]+\.eml-fe\|[0-9a-f]{16}|skip_ad_on_block|googleadservices\.com\/pagead\/|youtube\.com\/pagead\/|yt-ads-web-view-id|FEwhat_to_watch|FEsubscriptions|FEshorts)/g;
+  /**
+   * 功能：只提取用于广告分类的固定标记，模板哈希归零。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function labels(text) { return (String(text).match(markers) || []).map(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function (s) { return s.replace(/\|[0-9a-f]{16}$/, '|0000000000000000'); }); }
+  /**
+   * 功能：移除 URL 的全部查询参数和片段，阻止签名、令牌、IP 及账号标识写入。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function url(text) { var m=/^(https?:\/\/[^/?#]+)(\/[^?#]*)?/.exec(String(text||''));return m?m[1]+(m[2]||'/'):'[removed]'; }
+  /**
+   * 功能：仅保留 MIME、压缩方式和长度等无身份信息的传输头。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function headers(value) { var out={};Object.keys(value||{}).forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(k){if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(String(value[k])))out[k]=value[k];});return out; }
+  /**
+   * 功能：读取 Base64 到临时内存；原始字节不会写入日志。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function decode(text) { var alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[],v=0,bits=0;for(var i=0;i<text.length&&text[i]!=='=';i++){var n=alphabet.indexOf(text[i]);if(n<0)throw Error('base64');v=(v<<6)|n;bits+=6;if(bits>=8){bits-=8;out.push((v>>>bits)&255);}}return new Uint8Array(out); }
+  var fields=0;
+  /**
+   * 功能：导出 Protobuf 字段树；仅保存字段号、线型、长度、布尔值和固定广告标记。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function proto(b,depth) {
+    if(depth>32||fields>30000)return {bytes:b.length,omitted:true};
+    var i=0,out=[];
+    /**
+     * 功能：读取结构分析使用的变长整数，限制最大编码长度。
+     * 更新时间：2026-10-04T14:45:25+08:00
+     */
+    function integer(){var n=0,f=1;for(var c=0;c<10&&i<b.length;c++){var x=b[i++];n+=(x&127)*f;if(x<128)return n;f*=128;}throw Error('varint');}
+    while(i<b.length){if(++fields>30000)throw Error('limit');var tag=integer(),no=Math.floor(tag/8),wire=tag%8;if(!no)throw Error('tag');var item={field:no,wire:wire};
+      if(wire===0){var n=integer();item.value=n===0||n===1?n:'[removed]';}
+      else if(wire===1||wire===5){var size=wire===1?8:4;i+=size;item.bytes=size;}
+      else if(wire===2){var len=integer();if(!Number.isSafeInteger(len)||len<0||len>b.length-i)throw Error('length');var child=b.subarray(i,i+len);i+=len;item.bytes=len;try{item.fields=proto(child,depth+1);}catch(_){var text='';for(var j=0;j<child.length;j++)text+=child[j]>=32&&child[j]<127?String.fromCharCode(child[j]):' ';item.markers=labels(text);}}
+      else throw Error('wire');if(i>b.length)throw Error('truncated');out.push(item);
+    }return out;
+  }
+  /**
+   * 功能：导出 JSON 结构，清除字符串内容及非布尔数值，并过滤身份键名。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function json(value,depth){if(depth>32)return '[omitted]';if(typeof value==='string')return {chars:value.length,markers:labels(value)};if(typeof value==='number')return value===0||value===1?value:'[removed]';if(Array.isArray(value))return value.map(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(v){return json(v,depth+1);});if(value&&typeof value==='object'){var out={};Object.keys(value).forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptkey|trackingparams|clicktracking/i.test(k)&&/^[a-zA-Z_][a-zA-Z0-9_]{0,80}$/.test(k))out[k]=json(value[k],depth+1);});return out;}return value;}
+  /**
+   * 功能：替换正文为不可重放的脱敏结构诊断；请求、配置及媒体正文不保存。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(request||/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  ['request','requestAfter','responseBefore','responseAfter'].forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(key){var v=payload[key];if(!v)return;var out={};['status','method','synthetic','changed','transportHeadersRecomputedByLoon'].forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.headers)out.headers=headers(v.headers);if(v.headerOverrides)out.headerOverrides=headers(v.headerOverrides);out.body=body(v.body,key==='request'||key==='requestAfter');payload[key]=out;});
+  if(payload.processing&&payload.processing.exception)payload.processing.exception={code:'processing-failed'};
+  payload.privacy='structure-only-v1';return payload;
+}
+
+
+/**
  * 功能：封装局部作用域或执行当前回调步骤。
  * 更新时间：2026-10-04T08:54:22+08:00
  */
@@ -243,10 +355,11 @@ function (key) {
   function append(entry, payload) {
     var c = logConfig(), written = []; if (!c) return false;
     try {
+      ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read(LOG_CACHE), old = raw ? JSON.parse(raw) : null;
       var state = old && old.session === c.session && Array.isArray(old.entries) ? old : {session:c.session,entries:[],captureBytes:0};
       if (state.entries.length >= 600) return false;
-      var serialized = payload ? JSON.stringify(payload) : null, size = serialized ? utf8Size(serialized) : 0;
+      var serialized = payload ? JSON.stringify(ytDiagnosticSanitize(payload)) : null, size = serialized ? utf8Size(serialized) : 0;
       var budget = [16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) * 1048576 : 33554432;
       if ((state.captureBytes || 0) + size > budget || size > 33554432) return false;
       if (serialized) {
@@ -611,7 +724,7 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
    * 功能：执行 append 对应的内部处理步骤。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
-  function append(entry,payload){var c=logConfig(),written=[];if(!c)return false;try{var raw=$persistentStore.read(LOG_CACHE),old=raw?JSON.parse(raw):null,state=old&&old.session===c.session&&Array.isArray(old.entries)?old:{session:c.session,entries:[],captureBytes:0};if(state.entries.length>=600)return false;var serialized=payload?JSON.stringify(payload):null,size=serialized?utf8Size(serialized):0,budget=[16,32,64].indexOf(Number(args.capture_budget))>=0?Number(args.capture_budget)*1048576:33554432;if((state.captureBytes||0)+size>budget||size>33554432)return false;if(serialized){var chunks=[];for(var start=0;start<serialized.length;start+=131072)chunks.push(serialized.slice(start,start+131072));if(chunks.length>256)return false;var prefix="ytads.capture."+c.session+"."+payload.id+".";entry.captureRef={prefix:prefix,chunks:chunks.length,chars:serialized.length,storedBytes:size,checksum:checksum(serialized)};for(var i=0;i<chunks.length;i++){var key=prefix+i;if($persistentStore.write(chunks[i],key)!==true)fail("capture-write-failed");written.push(key);}}var next={session:c.session,entries:state.entries.concat([entry]),captureBytes:(state.captureBytes||0)+size},index=JSON.stringify(next);if(utf8Size(index)>131072||$persistentStore.write(index,LOG_CACHE)!==true)fail("index-write-failed");return true;}catch(_){for(var j=0;j<written.length;j++)try{$persistentStore.write(undefined,written[j]);}catch(_){}return false;}}
+  function append(entry,payload){var c=logConfig(),written=[];if(!c)return false;try{ytDiagnosticPurgeLegacy();var raw=$persistentStore.read(LOG_CACHE),old=raw?JSON.parse(raw):null,state=old&&old.session===c.session&&Array.isArray(old.entries)?old:{session:c.session,entries:[],captureBytes:0};if(state.entries.length>=600)return false;var serialized=payload?JSON.stringify(ytDiagnosticSanitize(payload)):null,size=serialized?utf8Size(serialized):0,budget=[16,32,64].indexOf(Number(args.capture_budget))>=0?Number(args.capture_budget)*1048576:33554432;if((state.captureBytes||0)+size>budget||size>33554432)return false;if(serialized){var chunks=[];for(var start=0;start<serialized.length;start+=131072)chunks.push(serialized.slice(start,start+131072));if(chunks.length>256)return false;var prefix="ytads.capture."+c.session+"."+payload.id+".";entry.captureRef={prefix:prefix,chunks:chunks.length,chars:serialized.length,storedBytes:size,checksum:checksum(serialized)};for(var i=0;i<chunks.length;i++){var key=prefix+i;if($persistentStore.write(chunks[i],key)!==true)fail("capture-write-failed");written.push(key);}}var next={session:c.session,entries:state.entries.concat([entry]),captureBytes:(state.captureBytes||0)+size},index=JSON.stringify(next);if(utf8Size(index)>131072||$persistentStore.write(index,LOG_CACHE)!==true)fail("index-write-failed");return true;}catch(_){for(var j=0;j<written.length;j++)try{$persistentStore.write(undefined,written[j]);}catch(_){}return false;}}
   /**
    * 功能：记录当前配置或请求处理结果。
    * 更新时间：2026-10-04T08:54:22+08:00

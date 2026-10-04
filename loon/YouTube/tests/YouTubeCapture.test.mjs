@@ -72,48 +72,48 @@ test('the single log switch enables full-chain capture and its request rule read
   assert.equal(Object.keys(disabled.result).length,0);
   assert.equal(store.get(indexKey),previous);
 });
-test('request capture preserves URL, headers and body without changing outgoing request',()=>{
+test('request capture removes credentials and query values without changing outgoing request',()=>{
   const store=started();
   const body=new Uint8Array([0,255,17,128]);
   const r=run('YouTubeLogger',store,{$request:{url:media,method:'POST',headers:{Authorization:'Bearer SECRET','Content-Encoding':'br'},body}});
   assert.equal(Object.keys(r.result).length,0);
   const capture=exportData(store).events[0].capture;
   assert.equal(capture.phase,'request');
-  assert.equal(capture.request.url,media);
-  assert.equal(capture.request.headers.Authorization,'Bearer SECRET');
-  assert.deepEqual(Buffer.from(capture.request.body.data,'base64'),Buffer.from(body));
+  assert.equal(capture.request.url,media.split('?')[0]);
+  assert.equal(capture.request.headers.Authorization,undefined);
+  assert.equal(capture.request.body.data,undefined);assert.equal(capture.request.body.bytes,Buffer.byteLength(body));
   assert.equal(capture.correlation.exactPairing,false);
   assert.equal(capture.processing.executionScript,'YouTubeLogger');
 });
-test('response event preserves before/after text plus processing result independently of severity filter',()=>{
+test('response event preserves before/after redacted structure independently of severity filter',()=>{
   const store=started();
   const r=player(store);
   const data=exportData(store);
   assert.equal(data.events.length,1);
   const c=data.events[0].capture;
   assert.equal(c.runtime,'test-device test-os test-build');
-  assert.ok(c.request.url.includes('SIGNED'));
+  assert.ok(!c.request.url.includes('SIGNED'));
   assert.equal(c.request.body.available,false);
-  assert.equal(c.responseBefore.body.encoding,'utf8-text');
-  assert.deepEqual(JSON.parse(c.responseBefore.body.data).adSlots,[]);
-  assert.equal(c.responseAfter.body.data,r.result.body);
-  assert.equal(JSON.parse(c.responseAfter.body.data).adSlots,undefined);
+  assert.equal(c.responseBefore.body.reason,'privacy-structure-only');
+  assert.deepEqual(c.responseBefore.body.structure.adSlots,[]);
+  assert.ok(c.responseAfter.body.structure);
+  assert.equal(c.responseAfter.body.structure.adSlots,undefined);
   assert.ok(c.processing.messages[0].startsWith('changed:'));
   assert.equal(c.responseAfter.transportHeadersRecomputedByLoon,true);
   assert.equal(data.completeness.allReferencedSamplesReadable,true);
 });
-test('UMP response preserves exact raw binary, output reference and all headers',()=>{
+test('UMP response records length, part summaries and output reference without raw media',()=>{
   const store=started();
   const body=new Uint8Array([21,5,0,255,128,32,10]);
   const r=run('YouTubePlayback',store,{$request:{url:media,method:'POST',headers:{}},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump','Alt-Svc':'h3=":443"'},body}});
   assert.equal(Object.keys(r.result).length,0);
   const c=exportData(store).events[0].capture;
-  assert.deepEqual(Buffer.from(c.responseBefore.body.data,'base64'),Buffer.from(body));
-  assert.equal(c.responseBefore.headers['Alt-Svc'],'h3=":443"');
+  assert.equal(c.responseBefore.body.data,undefined);assert.equal(c.responseBefore.body.bytes,Buffer.byteLength(body));
+  assert.equal(c.responseBefore.headers['Alt-Svc'],undefined);
   assert.equal(c.responseAfter.body.reference,'responseBefore.body');
   assert.ok(c.processing.messages[0].includes('parts=21:1'));
 });
-test('modified UMP exports original and cleaned binary as independently recoverable samples',()=>{
+test('modified UMP records before/after lengths while media processing stays byte exact',()=>{
   const store=started();
   const original=new Uint8Array([69,8,10,6,10,4,8,1,16,6]);
   const r=run('YouTubePlayback',store,{
@@ -121,25 +121,25 @@ test('modified UMP exports original and cleaned binary as independently recovera
     $argument:{log_enabled:true,capture_raw:true,ump_mode:'clean_prefetch'}
   });
   const c=exportData(store).events[0].capture;
-  assert.deepEqual(Buffer.from(c.responseBefore.body.data,'base64'),Buffer.from(original));
-  assert.deepEqual(Buffer.from(c.responseAfter.body.data,'base64'),Buffer.from(r.result.body));
+  assert.equal(c.responseBefore.body.data,undefined);assert.equal(c.responseBefore.body.bytes,original.length);
+  assert.equal(c.responseAfter.body.data,undefined);assert.equal(c.responseAfter.body.bytes,r.result.body.length);
   assert.deepEqual(Array.from(original),[69,8,10,6,10,4,8,1,16,6]);
 });
-test('binary view offsets, empty binary bodies and UTF-8 text round-trip',()=>{
+test('redacted diagnostics record binary view lengths and Unicode string lengths',()=>{
   for (const body of [new DataView(new Uint8Array([9,0,255,8]).buffer,1,2),new Uint8Array(),'{"playabilityStatus":{},"title":"广告😀"}']) {
     const store=started();player(store,body);
     const c=exportData(store).events[0].capture.responseBefore.body;
-    if (typeof body === 'string') {assert.equal(c.data,body);assert.equal(c.bytes,Buffer.byteLength(body));}
-    else {assert.deepEqual(Buffer.from(c.data,'base64'),Buffer.from(body.buffer,body.byteOffset,body.byteLength));assert.equal(c.bytes,body.byteLength);}
+    if (typeof body === 'string') {assert.equal(c.data,undefined);assert.equal(c.bytes,Buffer.byteLength(body));}
+    else {assert.equal(c.data,undefined);assert.equal(c.bytes,body.byteLength);}
   }
 });
 test('large samples span storage chunks and missing chunks are reported without discarding other events',()=>{
   const store=started();
-  const body=new Uint8Array(220000).fill(255);
+  const body=JSON.stringify({playabilityStatus:{},rows:Array.from({length:7000},()=>({value:'PRIVATE'}))});
   player(store,body);player(store);
   const index=JSON.parse(store.get(indexKey));
   assert.ok(index.entries[0].captureRef.chunks>=2);
-  assert.equal(exportData(store).events[0].capture.responseBefore.body.bytes,body.length);
+  assert.equal(exportData(store).events[0].capture.responseBefore.body.bytes,Buffer.byteLength(body));
   store.delete(index.entries[0].captureRef.prefix+1);
   const data=exportData(store);
   assert.equal(data.completeness.allReferencedSamplesReadable,false);
@@ -152,12 +152,12 @@ test('checksum detects modified storage even when sample length is unchanged',()
   const ref=JSON.parse(store.get(indexKey)).entries[0].captureRef;
   assert.match(ref.checksum,/^fnv1a32-utf16:[0-9a-f]{8}$/);
   const key=ref.prefix+'0';
-  store.set(key,store.get(key).replace('ORIGINAL','ORIGINAQ'));
+  store.set(key,store.get(key).replace('privacy-structure-only','privacy-structure-onlX'));
   const data=exportData(store);
   assert.equal(data.completeness.allReferencedSamplesReadable,false);
   assert.equal(data.events[0].captureError,'capture-unavailable-or-corrupt');
 });
-test('chunk boundaries never split UTF-16 surrogate pairs and Unicode sample restores exactly',()=>{
+test('Unicode sample records character length without preserving original text',()=>{
   const store=started();
   const original='{"playabilityStatus":{},"title":"'+'😀'.repeat(100000)+'"}';
   player(store,original);
@@ -167,7 +167,7 @@ test('chunk boundaries never split UTF-16 surrogate pairs and Unicode sample res
     const last=chunk.charCodeAt(chunk.length-1);
     assert.ok(!(last>=0xd800&&last<=0xdbff));
   }
-  assert.equal(exportData(store).events[0].capture.responseBefore.body.data,original);
+  assert.equal(exportData(store).events[0].capture.responseBefore.body.data,undefined);assert.equal(exportData(store).events[0].capture.responseBefore.body.structure.title.chars,200000);
 });
 test('ad/content markers preserve user observations and require active recording',()=>{
   const store=started();
@@ -221,12 +221,12 @@ test('clear deletes referenced sample chunks while preserving unrelated storage'
   assert.equal(store.get('other-app'),'keep');
   assert.equal(exportData(store).events.length,0);
 });
-test('raw capture keeps exception details in development export without leaking into console',()=>{
+test('diagnostics remove exception details that may reveal original text',()=>{
   const store=started();
   const r=player(store,'{"playabilityStatus":{},"SECRET":"broken');
   const c=exportData(store).events[0].capture;
-  assert.equal(c.processing.exception.name,'SyntaxError');
-  assert.ok(c.responseBefore.body.data.includes('SECRET'));
+  assert.equal(c.processing.exception.code,'processing-failed');
+  assert.ok(!JSON.stringify(c).includes('SECRET'));
   assert.ok(!r.logs.join('\n').includes('SECRET'));
 });
 test('missing runtime body is explicit; legacy JSON routes are gone; unmatched requests stay untouched',()=>{
@@ -252,9 +252,9 @@ test('feed request and before/after response samples share the one full-chain ca
   player(store);page(store,'mark-ad','POST');
   const all=exportData(store);assert.equal(all.events.length,4);
   assert.equal(all.events[0].capture.source,'YouTubeFeed');assert.equal(all.events[0].capture.endpoint,'browse');
-  assert.equal(all.events[1].capture.responseBefore.body.data,body);
+  assert.equal(all.events[1].capture.responseBefore.body.structure.contents.length,2);
   assert.equal(all.events[1].capture.responseAfter.changed,true);
-  assert.equal(JSON.parse(all.events[1].capture.responseAfter.body.data).contents.length,1);
+  assert.equal(all.events[1].capture.responseAfter.body.structure.contents.length,1);
   assert.equal(all.events[2].capture.source,'YouTubePlayback');
   assert.equal([...store.keys()].filter(k=>k==='ytads.logger.entries.v2').length,1);
   assert.ok(![...store.keys()].some(k=>k==='ytads.logger.YouTubeFeed.v1'));
@@ -262,7 +262,7 @@ test('feed request and before/after response samples share the one full-chain ca
 
 test('large export reads bounded chunks and browser assembles exactly one complete full-chain log file',async()=>{
   const store=started();
-  const original='{"playabilityStatus":{},"data":"'+'x'.repeat(4500000)+'"}';
+  const original=JSON.stringify({playabilityStatus:{},data:Array.from({length:15000},()=>({value:'PRIVATE'}))});
   player(store,original);page(store,'pause','POST');
   assert.equal(page(store,'download.json').status,404,'JSON log interface is removed');
   const html=page(store,'export');assert.equal(html.status,200);
@@ -276,7 +276,7 @@ test('large export reads bounded chunks and browser assembles exactly one comple
   },{timeout:5000});
   assert.equal(save.hidden,false);assert.ok(save.download.endsWith('.log'));
   const exported=await savedBlob.text();assert.match(exported,/YouTube full diagnostic log/);assert.match(exported,/EVENT 1/);
-  assert.ok(exported.includes(original));assert.match(exported,/Reference: responseBefore\.body/);assert.match(exported,/All-Referenced-Samples-Readable: true/);
+  assert.ok(!exported.includes('PRIVATE'));assert.match(exported,/Structure:/);assert.match(exported,/Reference: responseBefore\.body/);assert.match(exported,/All-Referenced-Samples-Readable: true/);
   assert.ok(Math.max(...sizes)<1048576,'no large response generated by chunk route');
   assert.equal(page(store,'download.log').status,303,'old log bookmark redirects to the sole exporter');
 });
@@ -300,7 +300,7 @@ test('chunk exports require paused same-session records and reject missing, inva
 test('browser export refuses checksum-corrupt bytes instead of offering an incomplete file',async()=>{
  const store=started();player(store);page(store,'pause','POST');
  const manifest=JSON.parse(page(store,'export-manifest.json').body),ref=manifest.rows[0].captureRef;
- store.set(ref.prefix+'0',store.get(ref.prefix+'0').replace('ORIGINAL','TAMPERED'));
+ store.set(ref.prefix+'0',store.get(ref.prefix+'0').replace('privacy-structure-only','privacy-structure-onlX'));
  const html=page(store,'export'),script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
  const status={textContent:''},save={hidden:true};let blob;
  await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:x=>{blob=x;}},async fetch(path){const r=page(store,path.slice(1));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}},{timeout:5000});
@@ -316,5 +316,52 @@ test('single browser export includes browse, refresh, player and binary media sa
  const status={textContent:''},save={hidden:true};let blob;
  await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:x=>{blob=x;return 'blob:local';}},async fetch(path){const r=page(store,path.slice(1));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}},{timeout:5000});
  assert.equal(save.hidden,false);assert.ok(save.download.startsWith('YouTube-')&&save.download.endsWith('.log'));
- const exported=await blob.text();assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/Source: YouTubeFeed/);assert.match(exported,/Source: YouTubeConfig/);assert.match(exported,/Endpoint: config/);assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/Encoding: base64/);assert.match(exported,/FQMBAgM=/);assert.match(exported,/Response-After:/);
+ const exported=await blob.text();assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/Source: YouTubeFeed/);assert.match(exported,/Source: YouTubeConfig/);assert.match(exported,/Endpoint: config/);assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/privacy-structure-only/);assert.ok(!exported.includes('FQMBAgM='));assert.match(exported,/Response-After:/);
+});
+
+test('privacy removes secrets from headers, URL, JSON, malformed bodies and exceptions before persistence',()=>{
+ const store=started(),secret='NEVER-SAVE-ACCOUNT-TOKEN';
+ const body=JSON.stringify({playabilityStatus:{},adSlots:[],authorization:secret,visitorData:secret,videoDetails:{title:secret},nested:{cookie:secret,username:secret}});
+ player(store,body,{$request:{url:api+'&token='+secret,method:'POST',headers:{Authorization:secret,Cookie:secret,'X-Goog-Visitor-Id':secret,'Content-Type':'application/json'},body:secret}});
+ player(store,'{"playabilityStatus":{},"bad":"'+secret);
+ for(const [key,value] of store)if(key.startsWith('ytads.capture.')||key===indexKey)assert.ok(!value.includes(secret));
+ const c=exportData(store).events[0].capture;
+ assert.deepEqual(Object.keys(c.request.headers),['Content-Type']);assert.equal(c.request.url,api.split('?')[0]);
+ assert.equal(c.request.body.data,undefined);assert.equal(c.responseBefore.body.structure.authorization,undefined);
+ assert.equal(c.responseBefore.body.structure.videoDetails.title.markers.length,0);
+});
+test('privacy protobuf retains field paths and ad markers without retaining signed URLs or opaque binary secrets',()=>{
+ const store=started(),secret='NEVER-SAVE-PROTO-TOKEN';
+ const varint=n=>{const a=[];while(n>=128){a.push(n%128+128);n=Math.floor(n/128);}return [...a,n];};
+ const text=new TextEncoder().encode('https://www.googleadservices.com/pagead/aclk?token='+secret);
+ const body=Uint8Array.from([...varint(99*8+2),...varint(text.length),...text]);
+ player(store,body,{$response:{status:200,headers:{'Content-Type':'application/x-protobuf'},body}});
+ const c=exportData(store).events[0].capture.responseBefore.body;
+ assert.equal(c.structure[0].field,99);assert.equal(c.structure[0].bytes,text.length);
+ assert.ok(c.structure[0].markers.includes('googleadservices.com/pagead/'));
+ assert.ok(![...store.values()].join('').includes(secret));assert.equal(c.data,undefined);
+});
+test('privacy removes raw config and media payloads even if they contain unrecognized binary credentials',()=>{
+ const store=started(),secret=new TextEncoder().encode('NEVER-SAVE-ENCRYPTION-KEY');
+ for(const endpoint of ['config','log_event','initplayback'])run('YouTubeLogger',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/'+endpoint,method:'POST',headers:{Cookie:'PRIVATE'},body:secret},$response:{status:200,headers:{'Content-Type':'application/x-protobuf'},body:secret}});
+ run('YouTubePlayback',store,{$request:{url:media},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:secret}});
+ const rows=exportData(store).events;assert.ok(rows.length>=3);
+ for(const row of rows){assert.equal(row.capture.responseBefore.body.data,undefined);assert.equal(row.capture.responseBefore.body.structure,undefined);}
+ assert.ok(![...store.values()].join('').includes(Buffer.from(secret).toString('base64')));
+});
+test('privacy migration deletes old raw chunks and keeps summaries and unrelated data',()=>{
+ const store=started();store.delete('ytads.logger.privacy.v1');
+ const config=JSON.parse(store.get(configKey)),prefix='ytads.capture.'+config.session+'.old-private.';
+ store.set(prefix+'0','OLD-PRIVATE-RAW-DATA');store.set('other-app','KEEP');
+ store.set(indexKey,JSON.stringify({session:config.session,captureBytes:20,entries:[{source:'YouTubeFeed',version:'2.2.0',endpoint:'browse',time:'2026-10-04T00:00:00.000Z',level:'info',message:'old',captureRef:{prefix,chunks:1}}]}));
+ page(store,'');assert.equal(store.has(prefix+'0'),false);assert.equal(store.get('other-app'),'KEEP');
+ const state=JSON.parse(store.get(indexKey));assert.equal(state.entries[0].captureRef,undefined);assert.equal(state.captureBytes,0);
+});
+test('privacy deletion failure blocks new capture without changing playback processing',()=>{
+ const store=started();store.delete('ytads.logger.privacy.v1');
+ const config=JSON.parse(store.get(configKey)),prefix='ytads.capture.'+config.session+'.old-private.';
+ store.set(prefix+'0','OLD-PRIVATE');store.set(indexKey,JSON.stringify({session:config.session,entries:[{captureRef:{prefix,chunks:1}}]}));
+ const before=store.get(indexKey);
+ const result=run('YouTubePlayback',store,{$request:{url:api},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"playabilityStatus":{},"adSlots":[]}'}},prefix+'0');
+ assert.equal(JSON.parse(result.result.body).adSlots,undefined);assert.equal(store.get(indexKey),before);assert.equal(store.has('ytads.logger.privacy.v1'),false);
 });

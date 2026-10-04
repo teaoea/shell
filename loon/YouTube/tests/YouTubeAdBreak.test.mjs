@@ -59,8 +59,8 @@ test('development capture records the exact request and synthetic result in the 
  assert.equal(entry.source,'YouTubePlayback');
  const chunks=Array.from({length:entry.captureRef.chunks},(_,i)=>store.get(entry.captureRef.prefix+i)).join('');
  const payload=JSON.parse(chunks);
- assert.equal(payload.request.url,base);
- assert.equal(payload.request.body.encoding,'base64');
+ assert.equal(payload.request.url,base.split('?')[0]);
+ assert.equal(payload.request.body.reason,'privacy-structure-only');
  assert.equal(payload.responseAfter.synthetic,true);
  assert.equal(payload.responseAfter.status,200);
  assert.equal(payload.responseAfter.body.bytes,0);

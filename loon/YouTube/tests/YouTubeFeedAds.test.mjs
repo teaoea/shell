@@ -352,3 +352,18 @@ for(const name of ['full_width_square_image_carousel_layout','carousel_footered_
   assert.deepEqual(Buffer.from(run(before,{type:'application/x-protobuf'}).output.body),Buffer.from(after));
  });
 }
+
+for (const name of ['full_width_square_image_layout','video_display_button_group_layout','carousel_footered_layout']) test(`deferred browse update removes ${name} without changing position metadata or normal items`,()=>{
+ const keep=msg(1,element('video_lockup_with_attachment',{command:false})),card=msg(1,element(name));
+ const wrap=items=>nested([10,49399797,32,1],cat(...items.map(x=>msg(1,x)),msg(4,text('POSITION-KEEP'))));
+ const input=cat(wrap([keep,card,keep]),msg(777,text('REGISTRY-KEEP')));
+ const expected=cat(wrap([keep,keep]),msg(777,text('REGISTRY-KEEP')));
+ const result=run(input,{type:'application/x-protobuf'});
+ assert.deepEqual(Buffer.from(result.output.body),Buffer.from(expected));
+});
+test('malformed deferred update discards all edits and unknown deferred fields remain byte exact',()=>{
+ const input=nested([10,49399797,32,1],cat(msg(1,section(element('carousel_footered_layout'))),[18,4,1]));
+ assert.equal(Object.keys(run(input,{type:'application/x-protobuf'}).output).length,0);
+ const unknown=nested([10,49399797,32,99],section(element('carousel_footered_layout')));
+ assert.equal(Object.keys(run(unknown,{type:'application/x-protobuf'}).output).length,0);
+});

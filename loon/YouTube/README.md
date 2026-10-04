@@ -34,7 +34,7 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 - Shorts 播放广告：`YouTubePlayback.js` 只删除响应字段 2 的条目中符合 `command（1）→ reelWatchEndpoint（139608561）→ adClientParams（16）→ isAd（1）= true` 的完整条目。普通 Shorts、未知命令及结构不完整的条目保持原样。
 - 字段编号和 `get_watch` 路径来自已有逆向协议描述的核对，属于协议映射信息；未复制原脚本或其库实现。YouTube 未公开保证这些编号适用于所有客户端。脚本使用字段 2 的 playabilityStatus 及 wire type 作有限检查，不能证明所有未来协议变化都能识别。
 - 空响应、非 200、损坏数据、已检测到的结构不匹配、未知内容类型、API 上的非预期 UMP、未解压的 gzip 及超限响应原样通过。限制为 2 MiB 响应、30,000 个解析字段、20,000 个 JSON 对象节点和 64 层 JSON 深度。
-- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与日志工具中的 UMP 检查回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节；认证通过的 `initplayback` 会在请求阶段得到空 Protobuf 响应以触发普通播放器回退。关闭日志工具不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
+- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与日志工具中的 UMP 检查回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节；精确命中 YouTube App 的 `initplayback` 会在请求阶段得到空 Protobuf 响应以触发普通播放器回退。关闭日志工具不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
 - 无字幕翻译、按钮隐藏、画中画或会员相关修改。后台播放仅在独立开关开启时修改明确的播放能力字段，不伪造会员状态。
 
 ### 后台播放开关
@@ -67,7 +67,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.j
 
 ## 查看结果
 
-默认关闭日志工具。需要排查时只需在主插件开启“日志工具”，它会统一保存浏览、刷新、播放与 UMP 全链路原始数据；脚本控制台保持关闭，避免重复记录。日志前缀含脚本版本：
+默认关闭日志工具。需要排查时只需在主插件开启“日志工具”，它会统一保存浏览、刷新、播放与 UMP 全链路脱敏结构；脚本控制台保持关闭，避免重复记录。日志前缀含脚本版本：
 
 ```text
 [YouTubePlayback 2.1.0] player changed: removed=3 tracking_removed=1 background_modified=1 format=protobuf
@@ -83,7 +83,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.j
 - `pass: removed=0` 表示没有可清理的已识别广告字段，也可能没有识别到已知 Player 结构。
 - `pass: ...` 错误或格式原因表示整个响应未修改。
 - 没有日志时，先确认新 JS 已下载且“日志工具”已开启，再查看是否出现匹配路径的请求。不要求每次播放必然访问 `youtubei.googleapis.com`。
-- “日志工具”开启后，唯一导出的 `.log` 包含完整 URL、请求头、文本正文和 Base64 二进制。Loon 自带的请求记录也可能包含敏感内容，分享前请检查。
+- “日志工具”开启后，唯一导出的 `.log` 保存脱敏结构；凭据、签名及原始正文不写入日志缓存。Loon 自带的请求记录独立于本插件。
 
 ## 信息流赞助卡片清理
 
@@ -171,7 +171,7 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 
 ## 主插件日志工具与开发记录
 
-只启用 `YouTubeNoAds.plugin`，不再使用独立的 `YouTubeLogger.plugin`。四份 JS 共用一个记录索引，日志和原始样本统一导出；样本按块存储以避免把全部二进制反复写入索引，按来源分类的多套日志缓存不会重新引入。
+只启用 `YouTubeNoAds.plugin`，不再使用独立的 `YouTubeLogger.plugin`。四份 JS 共用一个记录索引，日志和脱敏结构统一导出；结构诊断按块存储以避免把全部数据反复写入索引，按来源分类的多套日志缓存不会重新引入。
 
 主插件参数：
 
@@ -179,35 +179,39 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 | --- | --- | --- |
 | 后台播放 | 关闭 | 开启后在已识别的播放器响应中允许普通视频后台继续播放；关闭时保留服务端原值 |
 | 隐藏首页 Shorts | 关闭 | 只隐藏首页推荐流的 Shorts 区块 |
-| 日志工具 | 关闭 | 开启后保存浏览、刷新、播放和 UMP 全链路原始数据，并可标记、暂停和导出一个完整 `.log` |
+| 日志工具 | 关闭 | 开启后保存浏览、刷新、播放和 UMP 全链路脱敏结构，并可标记、暂停和导出一个完整 `.log` |
 | 日志保存级别 | info | 只控制普通摘要的最低严重程度 |
-| 日志容量 MB | 32 | 可选 16 / 32 / 64 MiB，限制原始样本序列化总容量 |
+| 日志容量 MB | 32 | 可选 16 / 32 / 64 MiB，限制脱敏记录序列化总容量 |
 | UMP 模式 | inspect | 日志工具开启时，`inspect` 只读取和记录；`clean_prefetch` 还会清理明确的广告预取提示 |
 
 插件界面只保留三个开关：后台播放、隐藏首页 Shorts、日志工具。播放器请求、片头/中插配置、新版 initplayback、Shorts 广告及自适应信息流广告清理均固定启用，不再显示重复开关。日志保存级别、容量和 UMP 模式是选择项，不是功能开关。
 
-普通摘要级别从低到高为 `debug → info → warn → error`：`debug` 保存全部处理摘要和 UMP 计数；`info` 保存实际清理结果、警告和错误；`warn` 保存状态/结构/大小异常和错误；`error` 保存未预期解析或运行错误。级别只影响新摘要，不删除历史记录。“日志工具”同时保存每次匹配脚本收到的原始数据及其处理结果，避免过滤掉未修改样本；不会为同一响应再重复写一份普通摘要。
+普通摘要级别从低到高为 `debug → info → warn → error`：`debug` 保存全部处理摘要和 UMP 计数；`info` 保存实际清理结果、警告和错误；`warn` 保存状态/结构/大小异常和错误；`error` 保存未预期解析或运行错误。级别只影响新摘要，不删除历史记录。“日志工具”同时保存每次匹配脚本收到的脱敏结构及其处理结果，避免过滤掉未修改样本；不会为同一响应再重复写一份普通摘要。
+
+2026-10-04T06:31:09Z 导出确认，广告通过 browse 延迟更新容器 `10 → 49399797 → 32 → 1 → 1 → 1 → 153515154` 下发。2.3.0 加入该路径，使用既有 EML 模板/模型和命令识别清理完整广告条目，保留更新位置元数据及未知字段。四份原先未修改的含 pagead 响应重放后广告标记均清零；此处为日志样本重放结果，更新后的实机界面仍需验证。
 
 ### 能保留哪些开发数据
 
-- 请求阶段：完整 URL、方法、请求头、HTTP/2 trailers、请求正文。信息流和媒体抓包入口只读取并返回原请求；`player/get_watch` 由 `YouTubePlayback.js` 在同一条开发事件中另存 `requestAfter`，用于比较广告协商清理前后的正文与头覆盖。
-- 响应阶段：运行时可见的请求信息、原始响应状态/头/trailers/正文、修改后的正文或“沿用原正文”的引用。处理后的传输头由 Loon 重算，不能把原响应头当成最终网络头。
-- 时间、来源、版本、Loon 运行时版本（若提供）、处理摘要、删除计数、UMP 部分计数、异常名称/消息/堆栈（若发生）、耗时和运行参数。
-- 二进制正文以 Base64 保存，可还原为 Protobuf、Brotli 或 UMP 样本；文本保留运行时字符串。空正文与未提供正文分开记录，未提供的数据标明 `available:false`，不会伪造一个空样本。
-- 原始样本带长度与 FNV-1a UTF-16 校验值，导出时检查块、长度和校验。校验是存储一致性检查，不是密码学完整性保证。丢失/损坏样本单独标记，不丢弃其他可读记录。
-- 页面可添加“正在播放广告”或“正在播放正片”的人工标记，用时间比较两个状态。标记是用户观察，不代表脚本已识别广告。
+日志在写入缓存前脱敏；单一 `.log` 保留浏览、刷新、播放的事件时间、脚本版本、接口路径、状态、耗时、删除计数、UMP 类型计数和人工标记。
 
-**完整 `.log` 会包含播放签名、请求头和正文，可能含 Cookie、Authorization 或账号相关数据。数据只在本机保存，插件没有自动上传；分享前应检查敏感内容。**“日志工具”关闭期间没有保存的正文无法事后补回。
+- URL 仅保留主机和路径，全部查询参数及片段移除。请求/响应头仅允许 Content-Type、Content-Length、Content-Encoding、Accept-Encoding；Authorization、Cookie、Set-Cookie、访客及账号头、HTTP/2 trailers 不保存。
+- Protobuf 响应保留字段号、wire type、长度、嵌套路径及布尔值。字符串只保留已知广告标记、模板名称和首页身份标记，模板哈希归零；未知叶节点不保存原始字节。非布尔数值不保存原值。
+- JSON 响应保留合法字段名及层级，身份相关键移除；字符串只保留长度和固定广告标记。标题、账号、视频 ID、正文中的签名 URL 不保存原文。
+- 请求正文、config/log_event/initplayback 正文及 UMP 媒体正文仅记录长度和移除原因。配置密钥仍供协议处理在功能缓存中使用，不进入日志缓存或导出。
+- 异常只保留固定错误代码，不保存可能包含正文的异常消息和堆栈。脱敏失败或未知协议只留下省略标记，不回退到保存原文。
+- 脱敏数据继续分块保存并校验长度和校验值。它能用于定位结构漏点，不能恢复为可重放的原始网络包；`Available:false` 配合 `Reason:privacy-structure-only` 表示主动脱敏，结构可见于 `Structure`。
+
+首次使用新版日志时会清除旧索引引用的原始正文块，保留事件摘要和其他脚本数据；清除失败则停止本次日志写入。公开存储接口无法枚举未索引孤块，已经下载到“文件”的旧日志也不会被自动删除。升级期间应刷新主插件及全部四份 JS，避免旧缓存脚本继续写入原文。
 
 ### 完整日志操作
 
 1. 更新主插件和四份 JS：`YouTubeFeed.js`、`YouTubePlayback.js`、`YouTubeConfig.js`、`YouTubeLogger.js`。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
-2. 主插件只需开启“日志工具”，选择容量，并把“UMP 模式”保持为 `inspect`。日志工具会自动保存原始数据并启用 UMP 响应读取，不再需要第二个开关。普通摘要级别不会过滤原始样本。
+2. 主插件只需开启“日志工具”，选择容量，并把“UMP 模式”保持为 `inspect`。日志工具会自动保存脱敏结构并启用 UMP 响应读取，不再需要第二个开关。普通摘要级别不会过滤结构诊断事件。
 3. Safari 输入 **`http://youtube-logs.invalid/`**，或手动运行主插件的“ YouTube 日志入口 ”后点通知。地址由 Loon 在本地直接响应，不需要额外 MitM。先导出需要保留的旧记录；需要干净样本时清空，再点“开始记录”。
 4. 重现一次广告和一次正常播放。在相近时间添加广告/正片标记，减少其他播放、预览或自动播放，以便比较样本。切换 App 添加标记会有时间误差，不把它当作精确的广告边界。
 5. 回到页面暂停记录，只点击 **“导出完整日志文件 .log（浏览、刷新、播放全链路）”**。等待显示文件已生成，再点击“保存日志文件”，通过 Safari 保存到“文件”。这是唯一的用户日志出口。
-6. 查看文件头的 `Stopped-Reason`，每个 `EVENT` 的 `Capture-Error`、各正文的 `Available/Reason`，以及末尾 `All-Referenced-Samples-Readable`。未修改响应的正文会用 `Reference` 指向原响应；修改响应会同时保存修改前后正文。
-7. 全部停止新增时关闭“日志工具”；已有样本保留。页面清空会删除本项目索引、已索引原始样本和旧日志缓存，保留其他脚本数据。
+6. 查看文件头的 `Stopped-Reason`，每个 `EVENT` 的 `Capture-Error`、各正文的 `Available/Reason`，以及末尾 `All-Referenced-Samples-Readable`。未修改响应的正文会用 `Reference` 指向原响应；修改响应会同时保存修改前后脱敏结构。
+7. 全部停止新增时关闭“日志工具”；已有样本保留。页面清空会删除本项目索引、已索引诊断数据和旧日志缓存，保留其他脚本数据。
 
 旧摘要没有保存过正文，不能恢复成原始二进制，需要用新模式重新录制。两次抓包都需先检查完整性，不把一次 `200 OK` 当成所有数据都已捕获。
 
@@ -217,17 +221,17 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 
 唯一导出包含所有已匹配来源：`browse/next/search` 浏览与刷新、`log_event/config` 配置协商、`player/get_watch/initplayback/ad_break` 播放链路、Shorts 与 UMP 媒体事件。旧 `/download.log` 地址只跳转到这个完整导出；`/download.json`、`/download-feed.json` 和信息流专用出口已移除。页面内部使用的小型清单和分块接口只负责本机传输，不会作为日志文件提供给用户。
 
-浏览器分块合成没有读取 Loon 未捕获的数据，也不能修复已经下载的不完整文件。Safari 内存、后台切换和保存行为仍需要实机验证。完整开发记录可能较大，排查首页广告优先使用信息流导出；导出失败时不要清空缓存。
+浏览器分块合成没有读取 Loon 未捕获的数据，也不能修复已经下载的不完整文件。Safari 内存、后台切换和保存行为仍需要实机验证。完整开发记录可能较大，浏览、刷新、播放共用唯一导出；导出失败时不要清空缓存。
 
 ### 保留策略和实际边界
 
-- 不再自动覆盖旧记录。统一索引最多 600 条、128 KiB UTF-8 序列化内容；原始样本另按选定容量保存，Base64 和 JSON 开销计入容量。达到任一上限即停止新增并显示停止状态，先导出，再清空重录。
+- 不再自动覆盖旧记录。统一索引最多 600 条、128 KiB UTF-8 序列化内容；脱敏结构另按选定容量保存，结构序列化开销计入容量。达到任一上限即停止新增并显示停止状态，先导出，再清空重录。
 - 单个运行时正文最多 8 MiB；单事件最多 32 MiB 字符内容、256 个存储块。超限停止抓包并给出原因，不保存一份看似完整的截断正文。请求和响应各算一个事件。
 - 存储失败、序列化失败或正文超限时不改变去广告输出。存储本身不能写入时，停止标记也可能无法落盘，只能在控制台看到固定错误提示。
 - Loon 公开存储 API 在这里没有原子追加；并发脚本可能丢失索引条目。脚本被系统终止时也可能留下未索引块，无法通过当前公开接口枚举并恢复。因此这是**尽可能保留运行时可见数据的开发记录**，不能保证整个网络会话无遗漏。
 - 只匹配已配置的 `player/get_watch/player/ad_break/browse/next/search/reel_watch_sequence/log_event/config` 与 `googlevideo/videoplayback/initplayback`。没有命中 MitM、TLS 失败、脚本超时及其他接口不在本记录范围。响应脚本可见的请求正文可能缺失，独立请求阶段用于补充，但并发重复 URL 的精确配对无法保证；`correlation.urlMethodHash` 仅作分组提示。
-- Loon 提供的正文可能已经解压，并非原始 TLS/HTTP 线上字节。完整记录的是运行时交给脚本的字节及字符串，需结合保存的头和 `available` 标记解释。
-- 完整读取响应、Base64 编码及写本地样本可能增加播放等待。建议只录制一次问题，随后关闭；不能保证抓包过程不影响播放时序。
+- Loon 提供的正文可能已经解压，并非原始 TLS/HTTP 线上字节。记录的是运行时交给脚本数据的脱敏结构，需结合保存的头和 `available` 标记解释。
+- 读取响应、结构脱敏及写本地诊断数据可能增加播放等待。建议只录制一次问题，随后关闭；不能保证抓包过程不影响播放时序。
 - 手机上的脚本引擎、存储容量、页面入口和 Safari 大文件下载仍需实机验证。
 
 升级时先打开日志页面：统一索引尚不存在时会合并当前会话旧缓存。只有新索引成功写入后才删除旧缓存；合并超限时保留旧数据并暂停，仍可导出旧摘要。统一索引已存在时不再重复导入旧缓存。
@@ -258,7 +262,7 @@ UMP 是多部分播放封装，包含特殊前缀整数、音视频和控制消�
 [YouTubePlayback 1.5.0] ump pass: mode=inspect removed_prefetch=0 ad_cues=1 ad_prefetch=1 other_ad_cues=0 bytes=130 parts=20:1,21:1,22:1,69:1
 ```
 
-这里的 `20:1` 表示类型 20 出现 1 次；`ad_prefetch` 是符合两个条件的元数据条目数。普通摘要不输出媒体内容、视频 ID、签名、token 或上下文原文；开启日志工具后，完整 `.log` 会保留运行时可见的原始数据。
+这里的 `20:1` 表示类型 20 出现 1 次；`ad_prefetch` 是符合两个条件的元数据条目数。普通摘要不输出媒体内容、视频 ID、签名、token 或上下文原文；开启日志工具后，完整 `.log` 会保留脱敏字段树和处理结果。
 
 ### 片头广告完整样本结论
 
@@ -286,7 +290,7 @@ Loon 响应脚本需要读取完整响应体。即使 `inspect` 不修改数据�
 
 ## 本地验证
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 243 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 立即回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 252 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 立即回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeed.js

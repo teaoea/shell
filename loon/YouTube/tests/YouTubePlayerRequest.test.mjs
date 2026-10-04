@@ -113,9 +113,9 @@ test('development capture stores original and modified player requests in one ev
   assert.equal(entry.source,'YouTubePlayback');
   assert.equal(entry.message,'development capture: changed=true');
   const payload=JSON.parse(Array.from({length:entry.captureRef.chunks},(_,i)=>store.get(entry.captureRef.prefix+i)).join(''));
-  assert.equal(payload.request.body.encoding,'base64');
+  assert.equal(payload.request.body.reason,'privacy-structure-only');
   assert.equal(payload.requestAfter.changed,true);
-  assert.equal(payload.requestAfter.body.encoding,'base64');
+  assert.equal(payload.requestAfter.body.reason,'privacy-structure-only');
   assert.ok(payload.request.body.bytes>payload.requestAfter.body.bytes);
   assert.equal(payload.processing.arguments.suppress_player_ads,true);
 });

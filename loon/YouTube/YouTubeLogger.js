@@ -5,6 +5,118 @@
  * 更新时间：2026-10-04T08:54:22+08:00
  * 运行环境：Loon JavaScript
  */
+/**
+ * 功能：首次使用脱敏版日志时清除旧缓存中未脱敏的正文块，保留无身份信息的事件摘要。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ * @returns {void} 删除失败时抛出异常，阻止本次日志写入。
+ */
+function ytDiagnosticPurgeLegacy() {
+  if (typeof $persistentStore === 'undefined') return;
+  var key='ytads.logger.privacy.v1';
+  if ($persistentStore.read(key)==='structure-only-v1') return;
+  var raw=$persistentStore.read('ytads.logger.entries.v2'),state=raw?JSON.parse(raw):null;
+  if(state&&Array.isArray(state.entries)) {
+    for(var n=0;n<state.entries.length;n++) {
+      var entry=state.entries[n],ref=entry&&entry.captureRef;
+      if(!ref)continue;
+      if(typeof ref.prefix!=='string'||!/^ytads\.capture\.[a-z0-9-]+\.[a-z0-9-]+\.$/.test(ref.prefix)||!Number.isInteger(ref.chunks)||ref.chunks<1||ref.chunks>256)throw Error('privacy-invalid-reference');
+      for(var i=0;i<ref.chunks;i++)if($persistentStore.write(undefined,ref.prefix+i)!==true)throw Error('privacy-delete-failed');
+      delete entry.captureRef;entry.message='legacy capture removed for privacy';
+    }
+    state.captureBytes=0;
+    if($persistentStore.write(JSON.stringify(state),'ytads.logger.entries.v2')!==true)throw Error('privacy-index-failed');
+  }
+  if($persistentStore.write('structure-only-v1',key)!==true)throw Error('privacy-marker-failed');
+}
+/**
+ * 功能：在日志落盘前移除身份信息，只保留协议字段、长度和广告结构标记；未知正文不保存原文。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ * @param {Object} payload 原始诊断事件。
+ * @returns {Object} 可安全持久化的结构诊断事件。
+ */
+function ytDiagnosticSanitize(payload) {
+  if (!payload) return payload;
+  var markers = /(?:[a-z_]+\.eml-fe\|[0-9a-f]{16}|skip_ad_on_block|googleadservices\.com\/pagead\/|youtube\.com\/pagead\/|yt-ads-web-view-id|FEwhat_to_watch|FEsubscriptions|FEshorts)/g;
+  /**
+   * 功能：只提取用于广告分类的固定标记，模板哈希归零。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function labels(text) { return (String(text).match(markers) || []).map(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function (s) { return s.replace(/\|[0-9a-f]{16}$/, '|0000000000000000'); }); }
+  /**
+   * 功能：移除 URL 的全部查询参数和片段，阻止签名、令牌、IP 及账号标识写入。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function url(text) { var m=/^(https?:\/\/[^/?#]+)(\/[^?#]*)?/.exec(String(text||''));return m?m[1]+(m[2]||'/'):'[removed]'; }
+  /**
+   * 功能：仅保留 MIME、压缩方式和长度等无身份信息的传输头。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function headers(value) { var out={};Object.keys(value||{}).forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(k){if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(String(value[k])))out[k]=value[k];});return out; }
+  /**
+   * 功能：读取 Base64 到临时内存；原始字节不会写入日志。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function decode(text) { var alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',out=[],v=0,bits=0;for(var i=0;i<text.length&&text[i]!=='=';i++){var n=alphabet.indexOf(text[i]);if(n<0)throw Error('base64');v=(v<<6)|n;bits+=6;if(bits>=8){bits-=8;out.push((v>>>bits)&255);}}return new Uint8Array(out); }
+  var fields=0;
+  /**
+   * 功能：导出 Protobuf 字段树；仅保存字段号、线型、长度、布尔值和固定广告标记。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function proto(b,depth) {
+    if(depth>32||fields>30000)return {bytes:b.length,omitted:true};
+    var i=0,out=[];
+    /**
+     * 功能：读取结构分析使用的变长整数，限制最大编码长度。
+     * 更新时间：2026-10-04T14:45:25+08:00
+     */
+    function integer(){var n=0,f=1;for(var c=0;c<10&&i<b.length;c++){var x=b[i++];n+=(x&127)*f;if(x<128)return n;f*=128;}throw Error('varint');}
+    while(i<b.length){if(++fields>30000)throw Error('limit');var tag=integer(),no=Math.floor(tag/8),wire=tag%8;if(!no)throw Error('tag');var item={field:no,wire:wire};
+      if(wire===0){var n=integer();item.value=n===0||n===1?n:'[removed]';}
+      else if(wire===1||wire===5){var size=wire===1?8:4;i+=size;item.bytes=size;}
+      else if(wire===2){var len=integer();if(!Number.isSafeInteger(len)||len<0||len>b.length-i)throw Error('length');var child=b.subarray(i,i+len);i+=len;item.bytes=len;try{item.fields=proto(child,depth+1);}catch(_){var text='';for(var j=0;j<child.length;j++)text+=child[j]>=32&&child[j]<127?String.fromCharCode(child[j]):' ';item.markers=labels(text);}}
+      else throw Error('wire');if(i>b.length)throw Error('truncated');out.push(item);
+    }return out;
+  }
+  /**
+   * 功能：导出 JSON 结构，清除字符串内容及非布尔数值，并过滤身份键名。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function json(value,depth){if(depth>32)return '[omitted]';if(typeof value==='string')return {chars:value.length,markers:labels(value)};if(typeof value==='number')return value===0||value===1?value:'[removed]';if(Array.isArray(value))return value.map(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(v){return json(v,depth+1);});if(value&&typeof value==='object'){var out={};Object.keys(value).forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptkey|trackingparams|clicktracking/i.test(k)&&/^[a-zA-Z_][a-zA-Z0-9_]{0,80}$/.test(k))out[k]=json(value[k],depth+1);});return out;}return value;}
+  /**
+   * 功能：替换正文为不可重放的脱敏结构诊断；请求、配置及媒体正文不保存。
+   * 更新时间：2026-10-04T14:45:25+08:00
+   */
+  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(request||/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  ['request','requestAfter','responseBefore','responseAfter'].forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(key){var v=payload[key];if(!v)return;var out={};['status','method','synthetic','changed','transportHeadersRecomputedByLoon'].forEach(/**
+ * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
+ * 更新时间：2026-10-04T14:45:25+08:00
+ */
+function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.headers)out.headers=headers(v.headers);if(v.headerOverrides)out.headerOverrides=headers(v.headerOverrides);out.body=body(v.body,key==='request'||key==='requestAfter');payload[key]=out;});
+  if(payload.processing&&payload.processing.exception)payload.processing.exception={code:'processing-failed'};
+  payload.privacy='structure-only-v1';return payload;
+}
+
+
 
 
 
@@ -21,7 +133,7 @@
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.0.0";
+  var VERSION = "2.1.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -129,12 +241,13 @@
     try {
       c = devConfig();
       if (!c) return false;
+      ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read("ytads.logger.entries.v2");
       if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");
       var old = raw ? JSON.parse(raw) : null;
       var state = old && old.session === c.session && Array.isArray(old.entries) ? old : {session:c.session, entries:[], captureBytes:0};
       if (state.entries.length >= 600) { devHalt(c, "entry-limit"); return false; }
-      var serialized = payload ? JSON.stringify(payload) : null;
+      var serialized = payload ? JSON.stringify(ytDiagnosticSanitize(payload)) : null;
       if (serialized && serialized.length > 33554432) { devHalt(c, "capture-event-limit"); return false; }
       var used = state.captureBytes || 0;
       var budget = [16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) * 1048576 : 33554432;
@@ -256,6 +369,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   function shared(c) {
+    ytDiagnosticPurgeLegacy();
     var state = read(CACHE);
     if (state) return state;
 
@@ -462,7 +576,7 @@ function (row) {
       function body(label,v,lines) {
         lines.push(label+":");
         if(v&&v.reference){lines.push("  Reference: "+value(v.reference));return;}
-        if(!v||v.available!==true){lines.push("  Available: false");lines.push("  Reason: "+value(v&&v.reason));return;}
+        if(!v||v.available!==true){lines.push("  Available: false");lines.push("  Reason: "+value(v&&v.reason));if(v&&v.bytes!==undefined)lines.push("  Bytes: "+value(v.bytes));if(v&&v.structure)structure("Structure",v.structure,lines,1);return;}
         lines.push("  Available: true");lines.push("  Encoding: "+value(v.encoding));lines.push("  Bytes: "+value(v.bytes));
         if(Object.prototype.hasOwnProperty.call(v,"data")){var encoding=v.encoding==="base64"?"BASE64":"UTF-8 TEXT";lines.push("  ----- BEGIN "+encoding+" -----");lines.push(String(v.data));lines.push("  ----- END "+encoding+" -----");}
       }
@@ -491,7 +605,7 @@ function (row) {
       }
       var manifest = await get("/export-manifest.json");
       var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
-      parts.push(["YouTube full diagnostic log","Format-Version: 1","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Raw-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Binary-Body-Encoding: Base64","Sensitive-Data: full URLs, headers and bodies may contain account credentials, cookies, tokens and signatures","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, request/config/media bodies and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
       for (var n = 0; n < rows.length; n++) {
         var row = rows[n], capture = null, captureError = row.captureError || null;
         status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;
@@ -540,10 +654,10 @@ function (row) {
       '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
       '<form method="post" action="/mark-content"><button>标记：正在播放正片</button></form>' +
       '<a href="/export">导出完整日志文件 .log（浏览、刷新、播放全链路）</a>' +
-      '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存原始数据' : '未开启，只保存摘要') + '。' +
+      '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
-      '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，原始样本另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
-      '<p>开发抓包在主插件手动开启，请先选择容量和 UMP 模式，再开始记录。它会同时读取 UMP 响应；唯一的 .log 文件保存完整 URL、请求头、文本正文和 Base64 二进制，可能包含账号凭据与签名；文件留在本机，不会自动上传。</p>' +
+      '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，脱敏记录另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
+      '<p>日志工具在主插件手动开启，请先选择容量和 UMP 模式，再开始记录。它会同时读取 UMP 响应；唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
       '<p>在主插件选择日志保存级别：debug 为全部排查摘要；info 为修改结果及异常；warn 为警告及错误；error 为未预期错误。调整级别只影响新记录。</p>' +
       '<p>开发抓包记录不受摘要级别过滤。日志无法读取 Loon 的连接、证书或脚本超时记录。抓包可能增加播放等待，复现后应关闭。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form></html>';
