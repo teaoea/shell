@@ -394,3 +394,19 @@ for(const malformed of [scalar(4,1),concat(message(4,new Uint8Array(0)),message(
  assert.deepEqual(field(field(result.output.body||input,3),2),field(field(input,3),2));
  assert.ok(result.logs.some(x=>x.includes('protocol_cleanup_failed')));
 });
+
+for (const protobuf of [false,true]) test(`INFO stores authenticated ${protobuf?'protobuf':'JSON'} initialization player structures before and after cleanup without secrets`,()=>{
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+ const store=new Map([[logConfigKey,JSON.stringify({enabled:true,session:'inner-info'})]]);
+ configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+ const player=protobuf?concat(protobufPlayer(),message(100,new TextEncoder().encode('PRIVATE-VIDEO-ID'))):{context:{adSignalsInfo:{params:[1]},visitorData:'PRIVATE-VISITOR'},playbackContext:{contentPlaybackContext:{adParams:'PRIVATE-VAST'}},videoId:'PRIVATE-VIDEO-ID'};
+ initPlayback(store,[...encryptKey],youtubeUA,{capture_raw:true,log_level:'INFO'},makeEncryptedInit(clientKey,encryptKey,player,{protobuf}));
+ const entry=JSON.parse(store.get(logCacheKey)).entries.at(-1),ref=entry.captureRef;
+ const payload=JSON.parse(Array.from({length:ref.chunks},(_,i)=>store.get(ref.prefix+i)).join(''));
+ const before=payload.requestInner.body,after=payload.requestInnerAfter.body;
+ assert.equal(before.redacted,true);assert.equal(after.redacted,true);assert.equal(before.data,undefined);assert.equal(after.data,undefined);
+ if(protobuf){assert.ok(before.structure.some(x=>x.field===100));const content=after.structure.find(x=>x.field===4).fields.find(x=>x.field===1).fields;assert.equal(content.find(x=>x.field===50).value,1);assert.equal(content.some(x=>x.field===12),false);}
+ else {assert.ok(before.structure.context.adSignalsInfo);assert.equal(after.structure.context.adSignalsInfo,undefined);assert.equal(after.structure.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd,true);}
+ const saved=[...store.entries()].filter(([key])=>key.startsWith('ytads.capture.')||key===logCacheKey).map(([,value])=>value).join('');
+ for(const secret of ['PRIVATE-VIDEO-ID','PRIVATE-VAST','PRIVATE-VISITOR',Buffer.from(clientKey).toString('base64')])assert.ok(!saved.includes(secret));
+});

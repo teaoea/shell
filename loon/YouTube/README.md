@@ -320,3 +320,6 @@ node --test loon/YouTube/tests/*.test.mjs
 - CuepointList / CuepointInfo：https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/cuepoint_list.proto 和 https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/cuepoint_info.proto
 
 以上为格式与接口参考，插件不会调用这些项目的代码或服务。
+
+
+2026-10-05 INFO 开发记录补充：初始化请求经本地 HMAC 验证、解密及解压后，记录内层播放器请求修改前后的脱敏字段树，导出为 `Request-Inner-Before` / `Request-Inner-After`。JSON 保留字段层级、布尔开关和广告标记；Protobuf 保留字段号、线型、长度、布尔值和广告标记。原始明文、密钥、签名、身份字符串均不进入日志缓存。认证失败或未进入内层解析时没有这两段记录，不能据此认为播放器请求为空。该采样复用已有请求处理，不额外读取或缓冲响应正文；初始化响应及 UMP 媒体正文仍未采集，INFO 也无法凭响应头判断内部广告配置。它补充了开发证据，不代表片头广告已移除。

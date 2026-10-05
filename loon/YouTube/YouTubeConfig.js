@@ -146,11 +146,11 @@ function(v){return json(v,depth+1);});if(value&&typeof value==='object'){var out
  */
 function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptkey|trackingparams|clicktracking/i.test(k)&&/^[a-zA-Z_][a-zA-Z0-9_]{0,80}$/.test(k))out[k]=json(value[k],depth+1);});return out;}return value;}
   /**
-   * 功能：替换正文为不可重放的脱敏结构诊断；请求、配置及媒体正文不保存。
-   * 更新时间：2026-10-04T14:45:25+08:00
+   * 功能：将可用 API 正文及已认证的内层播放器请求转换为脱敏字段树；配置密钥和媒体正文不保存。
+   * 更新时间：2026-10-05T12:09:41+08:00
    */
-  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
-  ['request','requestAfter','responseBefore','responseAfter'].forEach(/**
+  function body(v,request,inner){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(!inner&&/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  ['request','requestAfter','requestInner','requestInnerAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
  */
@@ -158,7 +158,7 @@ function(key){var v=payload[key];if(!v)return;var out={};['status','method','syn
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
  */
-function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.headers)out.headers=headers(v.headers);if(v.headerOverrides)out.headerOverrides=headers(v.headerOverrides);out.body=body(v.body,key==='request'||key==='requestAfter');payload[key]=out;});
+function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.headers)out.headers=headers(v.headers);if(v.headerOverrides)out.headerOverrides=headers(v.headerOverrides);out.body=body(v.body,key==='request'||key==='requestAfter',key==='requestInner'||key==='requestInnerAfter');payload[key]=out;});
   if(payload.processing&&payload.processing.exception)payload.processing.exception={code:'processing-failed'};
   payload.privacy='structure-only-v1';return payload;
 }
@@ -483,7 +483,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.9.0";
+  var VERSION = "1.10.0";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -721,6 +721,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
     return only(records,no,wire);
   }
   var lastInnerDiagnostics=null;
+  var lastInnerBodies=null;
   /**
    * 功能：输出内层格式与已知路径的存在状态，不记录正文、令牌或密钥。
    * 更新时间：2026-10-05T11:54:46+08:00
@@ -824,6 +825,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
     var value=null,json=false;
     try {value=JSON.parse(utf8Decode(bytes));json=true;}catch(_) {}
     counts.format=json?"json":"protobuf";
+    if(flag(args.capture_raw))lastInnerBodies={before:bytes,after:null};
     lastInnerDiagnostics=counts;
     if(json) {if(!cleanPlayer(value,counts))return null;return {body:utf8Encode(JSON.stringify(value)),format:"json"};}
     var result=cleanProtoPlayer(bytes,budget,counts);
@@ -854,7 +856,7 @@ function(){return decodePlain(decrypted);}),plain=decoded.bytes,innerRecords=sta
  * 功能：封装局部作用域或执行当前回调步骤。
  * 更新时间：2026-10-04T08:54:22+08:00
  */
-function(){return parse(plain,budget);}),bodyField=only(innerRecords,3,2);if(!bodyField)return null;var counts={contextAdSignals:0,playbackAdParams:0,inlineNoAd:0},cleanedBody=cleanInnerBody(plain.subarray(bodyField.dataStart,bodyField.dataEnd),budget,counts);if(!cleanedBody)return null;var innerParts=[];for(var i=0;i<innerRecords.length;i++)innerParts.push(innerRecords[i]===bodyField?message(3,cleanedBody.body):raw(plain,innerRecords[i]));var cleanedPlain=concat(innerParts),encodedPlain=stage("compressed-",/**
+function(){return parse(plain,budget);}),bodyField=only(innerRecords,3,2);if(!bodyField)return null;var counts={contextAdSignals:0,playbackAdParams:0,inlineNoAd:0},cleanedBody=cleanInnerBody(plain.subarray(bodyField.dataStart,bodyField.dataEnd),budget,counts);if(lastInnerBodies)lastInnerBodies.after=cleanedBody?cleanedBody.body:lastInnerBodies.before;if(!cleanedBody)return null;var innerParts=[];for(var i=0;i<innerRecords.length;i++)innerParts.push(innerRecords[i]===bodyField?message(3,cleanedBody.body):raw(plain,innerRecords[i]));var cleanedPlain=concat(innerParts),encodedPlain=stage("compressed-",/**
  * 功能：封装局部作用域或执行当前回调步骤。
  * 更新时间：2026-10-04T08:54:22+08:00
  */
@@ -913,7 +915,7 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
    * 功能：记录当前配置或请求处理结果。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
-  function record(message,level,output){var now=new Date().toISOString(),changed=!!(output&&(output.response||output.body));if(flag(args.capture_raw)){var id=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,14),request={url:$request.url,method:$request.method||"GET",headers:$request.headers||{},h2_trailers:$request.h2_trailers||{},body:captureBody($request.body)};var payload={schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:"request",endpoint:"initplayback",runtime:typeof $loon==="string"?$loon:null,correlation:{urlMethodHash:checksum(request.method+" "+request.url),exactPairing:false},request:request,processing:{exception:null,executionScript:SOURCE,elapsedMs:null,messages:[message],arguments:{onesie_enabled:enabled,onesie_refresh_on_mismatch:refreshMismatch,log_level:args.log_level||"info"}},responseAfter:output&&output.response?{synthetic:true,status:output.response.status,headers:output.response.headers,body:captureBody(output.response.body)}:null,requestAfter:output&&output.body?{changed:true,body:captureBody(output.body)}:null};append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:"development capture: "+message+" changed="+changed},payload);}else{var ranks={debug:0,info:1,warn:2,error:3},minimum=Object.prototype.hasOwnProperty.call(ranks,args.log_level)?args.log_level:"info";if((minimum==="info"||ranks[level]>=ranks[minimum]))append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:message},null);}if(debug&&typeof console!=="undefined")console.log("["+SOURCE+" "+VERSION+"] initplayback "+message);}
+  function record(message,level,output){var now=new Date().toISOString(),changed=!!(output&&(output.response||output.body));if(flag(args.capture_raw)){var id=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,14),request={url:$request.url,method:$request.method||"GET",headers:$request.headers||{},h2_trailers:$request.h2_trailers||{},body:captureBody($request.body)};var payload={schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:"request",endpoint:"initplayback",requestInner:lastInnerBodies?{body:captureBody(lastInnerBodies.before)}:null,requestInnerAfter:lastInnerBodies&&lastInnerBodies.after?{body:captureBody(lastInnerBodies.after)}:null,runtime:typeof $loon==="string"?$loon:null,correlation:{urlMethodHash:checksum(request.method+" "+request.url),exactPairing:false},request:request,processing:{exception:null,executionScript:SOURCE,elapsedMs:null,messages:[message],arguments:{onesie_enabled:enabled,onesie_refresh_on_mismatch:refreshMismatch,log_level:args.log_level||"info"}},responseAfter:output&&output.response?{synthetic:true,status:output.response.status,headers:output.response.headers,body:captureBody(output.response.body)}:null,requestAfter:output&&output.body?{changed:true,body:captureBody(output.body)}:null};append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:"development capture: "+message+" changed="+changed},payload);}else{var ranks={debug:0,info:1,warn:2,error:3},minimum=Object.prototype.hasOwnProperty.call(ranks,args.log_level)?args.log_level:"info";if((minimum==="info"||ranks[level]>=ranks[minimum]))append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:message},null);}if(debug&&typeof console!=="undefined")console.log("["+SOURCE+" "+VERSION+"] initplayback "+message);}
 
   var output = {};
   if (enabled && typeof $request !== "undefined" && typeof $response === "undefined" && API.test($request.url || "") && isYouTubeApp()) {
