@@ -6,6 +6,36 @@
  * 运行环境：Loon JavaScript
  */
 /**
+ * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
+ * 更新时间：2026-10-05T09:16:03+08:00
+ * @param {Object} pending 本次待提交的索引，其末项为新事件。
+ * @param {number} budget 日志字节容量上限。
+ * @returns {boolean} 索引提交成功；失败时抛出固定错误供调用方清理样本。
+ */
+function ytDiagnosticCommitEntry(pending, budget) {
+  var configKey = "ytads.logger.config.v1", key = "ytads.logger.entries.v2";
+  var current = JSON.parse($persistentStore.read(configKey) || "null");
+  if (!current || !current.enabled || current.session !== pending.session) throw Error("log-session-inactive");
+  var raw = $persistentStore.read(key);
+  if (raw && raw.length > 131072) throw Error("log-index-invalid");
+  var old = raw ? JSON.parse(raw) : null;
+  var state = old && old.session === pending.session && Array.isArray(old.entries) ? old : {session:pending.session, entries:[], captureBytes:0};
+  var entry = pending.entries[pending.entries.length - 1];
+  var size = entry.captureRef ? entry.captureRef.storedBytes : 0;
+  var used = Number(state.captureBytes || 0);
+  if (!Number.isFinite(used) || used < 0 || !Number.isFinite(size) || size < 0) throw Error("log-index-invalid");
+  var reason = state.entries.length >= 600 ? "entry-limit" : used + size > budget ? "capture-budget-limit" : null;
+  var next = JSON.stringify({session:pending.session, entries:state.entries.concat([entry]), captureBytes:used + size});
+  if (!reason && unescape(encodeURIComponent(next)).length > 131072) reason = "log-index-limit";
+  if (reason) {
+    current.enabled = false; current.haltReason = reason; current.haltedAt = new Date().toISOString();
+    if ($persistentStore.write(JSON.stringify(current), configKey) !== true) throw Error("log-stop-write-failed");
+    throw Error(reason);
+  }
+  if ($persistentStore.write(next, key) !== true) throw Error("log-index-write-failed");
+  return true;
+}
+/**
  * 功能：首次使用脱敏版日志时清除旧缓存中未脱敏的正文块，保留无身份信息的事件摘要。
  * 更新时间：2026-10-04T14:45:25+08:00
  * @returns {void} 删除失败时抛出异常，阻止本次日志写入。
@@ -233,6 +263,8 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
    */
   function devHalt(c, reason) {
     if (c) {
+      var latest = JSON.parse($persistentStore.read("ytads.logger.config.v1") || "null");
+      if (!latest || !latest.enabled || latest.session !== c.session) return;
       c.enabled = false;
       c.haltReason = reason;
       c.haltedAt = new Date().toISOString();
@@ -283,7 +315,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
           written.push(key);
         }
       }
-      if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
+      if (ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {
       written.forEach(
@@ -822,7 +854,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
       }
       var next = {session:config.session, entries:state.entries.concat([entry]), captureBytes:(state.captureBytes || 0) + size};
       var index = JSON.stringify(next);
-      if (utf8Size(index) > 131072 || $persistentStore.write(index, CACHE) !== true) throw new Error("index-write-failed");
+      if (utf8Size(index) > 131072 || ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("index-write-failed");
       return true;
     } catch (_) {
       for (var j = 0; j < written.length; j++) try {$persistentStore.write(undefined, written[j]);} catch (_) {}
@@ -1202,7 +1234,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
       }
       var next = {session:config.session, entries:state.entries.concat([entry]), captureBytes:(state.captureBytes || 0) + size};
       var index = JSON.stringify(next);
-      if (utf8Size(index) > 131072 || $persistentStore.write(index, CACHE) !== true) throw new Error("index-write-failed");
+      if (utf8Size(index) > 131072 || ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("index-write-failed");
       return true;
     } catch (_) {
       for (var j = 0; j < written.length; j++) try { $persistentStore.write(undefined, written[j]); } catch (_) {}
@@ -1413,6 +1445,8 @@ function (key) {
    */
   function devHalt(c, reason) {
     if (c) {
+      var latest = JSON.parse($persistentStore.read("ytads.logger.config.v1") || "null");
+      if (!latest || !latest.enabled || latest.session !== c.session) return;
       c.enabled = false;
       c.haltReason = reason;
       c.haltedAt = new Date().toISOString();
@@ -1463,7 +1497,7 @@ function (key) {
           written.push(key);
         }
       }
-      if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
+      if (ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {
       written.forEach(
@@ -2140,6 +2174,8 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
    */
   function devHalt(c, reason) {
     if (c) {
+      var latest = JSON.parse($persistentStore.read("ytads.logger.config.v1") || "null");
+      if (!latest || !latest.enabled || latest.session !== c.session) return;
       c.enabled = false;
       c.haltReason = reason;
       c.haltedAt = new Date().toISOString();
@@ -2190,7 +2226,7 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
           written.push(key);
         }
       }
-      if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
+      if (ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {
       written.forEach(
@@ -2693,6 +2729,8 @@ function (entry) {
    */
   function devHalt(c, reason) {
     if (c) {
+      var latest = JSON.parse($persistentStore.read("ytads.logger.config.v1") || "null");
+      if (!latest || !latest.enabled || latest.session !== c.session) return;
       c.enabled = false;
       c.haltReason = reason;
       c.haltedAt = new Date().toISOString();
@@ -2743,7 +2781,7 @@ function (entry) {
           written.push(key);
         }
       }
-      if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
+      if (ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {
       written.forEach(

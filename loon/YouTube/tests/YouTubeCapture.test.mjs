@@ -366,3 +366,46 @@ test('privacy deletion failure blocks new capture without changing playback proc
  const result=run('YouTubePlayback',store,{$request:{url:api},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"playabilityStatus":{},"adSlots":[]}'}},prefix+'0');
  assert.equal(JSON.parse(result.result.body).adSlots,undefined);assert.equal(store.get(indexKey),before);assert.equal(store.has('ytads.logger.privacy.v1'),false);
 });
+
+test('sample chunk writes preserve an event appended by another writer before final commit',()=>{
+  const store=started();
+  const originalSet=store.set.bind(store);let injected=false;
+  store.set=(key,value)=>{
+    originalSet(key,value);
+    if(!injected&&key.startsWith('ytads.capture.')) {
+      injected=true;
+      assert.equal(page(store,'mark-ad','POST').status,303);
+    }
+    return store;
+  };
+  player(store);
+  const rows=JSON.parse(store.get(indexKey)).entries;
+  assert.equal(rows.length,2);
+  assert.ok(rows.some(row=>row.message==='user mark: ad-playing'));
+  assert.ok(rows.some(row=>row.endpoint==='player'));
+  assert.equal(exportData(store).completeness.allReferencedSamplesReadable,true);
+});
+
+for(const action of ['pause','clear'])test(`an in-flight capture cannot undo ${action} or leave its sample chunks`,()=>{
+  const store=started();
+  const originalSet=store.set.bind(store);let injected=false;
+  store.set=(key,value)=>{
+    originalSet(key,value);
+    if(!injected&&key.startsWith('ytads.capture.')) {
+      injected=true;
+      assert.equal(page(store,action,'POST').status,303);
+    }
+    return store;
+  };
+  player(store);
+  assert.equal(JSON.parse(store.get(configKey)).enabled,false);
+  assert.equal([...store.keys()].filter(key=>key.startsWith('ytads.capture.')).length,0);
+  const state=JSON.parse(store.get(indexKey)||'null');
+  assert.equal(state?.entries?.length||0,0);
+});
+
+test('all four standalone scripts use the same final-commit implementation',()=>{
+  const names=['YouTubeLogger','YouTubeFeed','YouTubePlayback','YouTubeConfig'];
+  const helpers=names.map(name=>fs.readFileSync(new URL(name+'.js',root),'utf8').split('function ytDiagnosticCommitEntry(pending, budget) {')[1].split('\n}\n')[0]);
+  for(const helper of helpers)assert.equal(helper,helpers[0]);
+});

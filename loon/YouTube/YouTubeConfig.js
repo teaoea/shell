@@ -6,6 +6,36 @@
  * 运行环境：Loon JavaScript
  */
 /**
+ * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
+ * 更新时间：2026-10-05T09:16:03+08:00
+ * @param {Object} pending 本次待提交的索引，其末项为新事件。
+ * @param {number} budget 日志字节容量上限。
+ * @returns {boolean} 索引提交成功；失败时抛出固定错误供调用方清理样本。
+ */
+function ytDiagnosticCommitEntry(pending, budget) {
+  var configKey = "ytads.logger.config.v1", key = "ytads.logger.entries.v2";
+  var current = JSON.parse($persistentStore.read(configKey) || "null");
+  if (!current || !current.enabled || current.session !== pending.session) throw Error("log-session-inactive");
+  var raw = $persistentStore.read(key);
+  if (raw && raw.length > 131072) throw Error("log-index-invalid");
+  var old = raw ? JSON.parse(raw) : null;
+  var state = old && old.session === pending.session && Array.isArray(old.entries) ? old : {session:pending.session, entries:[], captureBytes:0};
+  var entry = pending.entries[pending.entries.length - 1];
+  var size = entry.captureRef ? entry.captureRef.storedBytes : 0;
+  var used = Number(state.captureBytes || 0);
+  if (!Number.isFinite(used) || used < 0 || !Number.isFinite(size) || size < 0) throw Error("log-index-invalid");
+  var reason = state.entries.length >= 600 ? "entry-limit" : used + size > budget ? "capture-budget-limit" : null;
+  var next = JSON.stringify({session:pending.session, entries:state.entries.concat([entry]), captureBytes:used + size});
+  if (!reason && unescape(encodeURIComponent(next)).length > 131072) reason = "log-index-limit";
+  if (reason) {
+    current.enabled = false; current.haltReason = reason; current.haltedAt = new Date().toISOString();
+    if ($persistentStore.write(JSON.stringify(current), configKey) !== true) throw Error("log-stop-write-failed");
+    throw Error(reason);
+  }
+  if ($persistentStore.write(next, key) !== true) throw Error("log-index-write-failed");
+  return true;
+}
+/**
  * 功能：首次使用脱敏版日志时清除旧缓存中未脱敏的正文块，保留无身份信息的事件摘要。
  * 更新时间：2026-10-04T14:45:25+08:00
  * @returns {void} 删除失败时抛出异常，阻止本次日志写入。
@@ -370,7 +400,7 @@ function (key) {
         for (var i = 0; i < chunks.length; i++) { var key = prefix + i; if ($persistentStore.write(chunks[i], key) !== true) fail("capture-write-failed"); written.push(key); }
       }
       var next = {session:c.session,entries:state.entries.concat([entry]),captureBytes:(state.captureBytes || 0) + size};
-      var index = JSON.stringify(next); if (utf8Size(index) > 131072 || $persistentStore.write(index, LOG_CACHE) !== true) fail("index-write-failed");
+      var index = JSON.stringify(next); if (utf8Size(index) > 131072 || ytDiagnosticCommitEntry(next, budget) !== true) fail("index-write-failed");
       return true;
     } catch (_) { for (var j = 0; j < written.length; j++) try { $persistentStore.write(undefined, written[j]); } catch (_) {} return false; }
   }
@@ -769,7 +799,7 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
    * 功能：执行 append 对应的内部处理步骤。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
-  function append(entry,payload){var c=logConfig(),written=[];if(!c)return false;try{ytDiagnosticPurgeLegacy();var raw=$persistentStore.read(LOG_CACHE),old=raw?JSON.parse(raw):null,state=old&&old.session===c.session&&Array.isArray(old.entries)?old:{session:c.session,entries:[],captureBytes:0};if(state.entries.length>=600)return false;var serialized=payload?JSON.stringify(ytDiagnosticSanitize(payload)):null,size=serialized?utf8Size(serialized):0,budget=[16,32,64].indexOf(Number(args.capture_budget))>=0?Number(args.capture_budget)*1048576:33554432;if((state.captureBytes||0)+size>budget||size>33554432)return false;if(serialized){var chunks=[];for(var start=0;start<serialized.length;start+=131072)chunks.push(serialized.slice(start,start+131072));if(chunks.length>256)return false;var prefix="ytads.capture."+c.session+"."+payload.id+".";entry.captureRef={prefix:prefix,chunks:chunks.length,chars:serialized.length,storedBytes:size,checksum:checksum(serialized)};for(var i=0;i<chunks.length;i++){var key=prefix+i;if($persistentStore.write(chunks[i],key)!==true)fail("capture-write-failed");written.push(key);}}var next={session:c.session,entries:state.entries.concat([entry]),captureBytes:(state.captureBytes||0)+size},index=JSON.stringify(next);if(utf8Size(index)>131072||$persistentStore.write(index,LOG_CACHE)!==true)fail("index-write-failed");return true;}catch(_){for(var j=0;j<written.length;j++)try{$persistentStore.write(undefined,written[j]);}catch(_){}return false;}}
+  function append(entry,payload){var c=logConfig(),written=[];if(!c)return false;try{ytDiagnosticPurgeLegacy();var raw=$persistentStore.read(LOG_CACHE),old=raw?JSON.parse(raw):null,state=old&&old.session===c.session&&Array.isArray(old.entries)?old:{session:c.session,entries:[],captureBytes:0};if(state.entries.length>=600)return false;var serialized=payload?JSON.stringify(ytDiagnosticSanitize(payload)):null,size=serialized?utf8Size(serialized):0,budget=[16,32,64].indexOf(Number(args.capture_budget))>=0?Number(args.capture_budget)*1048576:33554432;if((state.captureBytes||0)+size>budget||size>33554432)return false;if(serialized){var chunks=[];for(var start=0;start<serialized.length;start+=131072)chunks.push(serialized.slice(start,start+131072));if(chunks.length>256)return false;var prefix="ytads.capture."+c.session+"."+payload.id+".";entry.captureRef={prefix:prefix,chunks:chunks.length,chars:serialized.length,storedBytes:size,checksum:checksum(serialized)};for(var i=0;i<chunks.length;i++){var key=prefix+i;if($persistentStore.write(chunks[i],key)!==true)fail("capture-write-failed");written.push(key);}}var next={session:c.session,entries:state.entries.concat([entry]),captureBytes:(state.captureBytes||0)+size},index=JSON.stringify(next);if(utf8Size(index)>131072||ytDiagnosticCommitEntry(next, budget)!==true)fail("index-write-failed");return true;}catch(_){for(var j=0;j<written.length;j++)try{$persistentStore.write(undefined,written[j]);}catch(_){}return false;}}
   /**
    * 功能：记录当前配置或请求处理结果。
    * 更新时间：2026-10-04T08:54:22+08:00

@@ -1,10 +1,40 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：2.3.0
+ * 版本：2.4.0
  * 更新时间：2026-10-04T08:54:22+08:00
  * 运行环境：Loon JavaScript
  */
+/**
+ * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
+ * 更新时间：2026-10-05T09:16:03+08:00
+ * @param {Object} pending 本次待提交的索引，其末项为新事件。
+ * @param {number} budget 日志字节容量上限。
+ * @returns {boolean} 索引提交成功；失败时抛出固定错误供调用方清理样本。
+ */
+function ytDiagnosticCommitEntry(pending, budget) {
+  var configKey = "ytads.logger.config.v1", key = "ytads.logger.entries.v2";
+  var current = JSON.parse($persistentStore.read(configKey) || "null");
+  if (!current || !current.enabled || current.session !== pending.session) throw Error("log-session-inactive");
+  var raw = $persistentStore.read(key);
+  if (raw && raw.length > 131072) throw Error("log-index-invalid");
+  var old = raw ? JSON.parse(raw) : null;
+  var state = old && old.session === pending.session && Array.isArray(old.entries) ? old : {session:pending.session, entries:[], captureBytes:0};
+  var entry = pending.entries[pending.entries.length - 1];
+  var size = entry.captureRef ? entry.captureRef.storedBytes : 0;
+  var used = Number(state.captureBytes || 0);
+  if (!Number.isFinite(used) || used < 0 || !Number.isFinite(size) || size < 0) throw Error("log-index-invalid");
+  var reason = state.entries.length >= 600 ? "entry-limit" : used + size > budget ? "capture-budget-limit" : null;
+  var next = JSON.stringify({session:pending.session, entries:state.entries.concat([entry]), captureBytes:used + size});
+  if (!reason && unescape(encodeURIComponent(next)).length > 131072) reason = "log-index-limit";
+  if (reason) {
+    current.enabled = false; current.haltReason = reason; current.haltedAt = new Date().toISOString();
+    if ($persistentStore.write(JSON.stringify(current), configKey) !== true) throw Error("log-stop-write-failed");
+    throw Error(reason);
+  }
+  if ($persistentStore.write(next, key) !== true) throw Error("log-index-write-failed");
+  return true;
+}
 /**
  * 功能：首次使用脱敏版日志时清除旧缓存中未脱敏的正文块，保留无身份信息的事件摘要。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -133,7 +163,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.3.0";
+  var VERSION = "2.4.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -225,6 +255,8 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
    */
   function devHalt(c, reason) {
     if (c) {
+      var latest = JSON.parse($persistentStore.read("ytads.logger.config.v1") || "null");
+      if (!latest || !latest.enabled || latest.session !== c.session) return;
       c.enabled = false;
       c.haltReason = reason;
       c.haltedAt = new Date().toISOString();
@@ -275,7 +307,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
           written.push(key);
         }
       }
-      if ($persistentStore.write(index, "ytads.logger.entries.v2") !== true) throw new Error("log-index-write-failed");
+      if (ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {
       written.forEach(
@@ -515,7 +547,7 @@ function (row) {
           "Runtime bodies may already be decoded; these are not TLS/HTTP wire bytes.",
           "Missing runtime bodies are marked unavailable; before/after transport headers are not reconstructed.",
           "URL/method hashes are grouping hints, not guaranteed request/response pairs.",
-          "Loon storage has no atomic append here; concurrent writers may lose index entries.",
+          "Index is refreshed after sample writes; Loon has no atomic append, so simultaneous final commits may still lose entries.",
           "Script timeouts, TLS failures and requests bypassing MitM are not observed."]}, events:events};
   }
   /**
