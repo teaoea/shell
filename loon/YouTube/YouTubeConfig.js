@@ -172,12 +172,6 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   "use strict";
   var dispatcherUrl = typeof $request !== "undefined" ? String($request.url || "") : "";
   var dispatcherResponse = typeof $response !== "undefined";
-  // 功能：初始化响应兼容交付；正文已由 Loon 收齐，本脚本不解析、改写或保存媒体。
-  // 更新时间：2026-10-05；与日志开关分离，普通 videoplayback 不进入此分支。
-  if (dispatcherResponse && /^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$/i.test(dispatcherUrl)) {
-    $done({});
-    return;
-  }
   if (/\/youtubei\/v1\/(?:config|log_event)(?:\?[^#]*)?$/i.test(dispatcherUrl)) {
 
 

@@ -347,8 +347,20 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 这项优化尚未进行设备验证，不能据此认定几秒黑屏已解决；首次响应到达前的连接尝试、DNS 或客户端内置的 HTTP/3 发现、广告调度及初始化请求重试仍可能产生等待。更新主插件后关闭日志工具，完全退出并重新打开 YouTube，再对比首次和后续视频的启动时间；无需清除账号或重装 App。
 
-用户随后确认：日志工具开启但页面暂停记录时，主视频也不黑屏，而整个下方推荐列表会暂时空白。这支持继续区分响应交付与写入日志的影响，不能单凭现象认定缓冲是唯一原因。当前增加初始化响应兼容：仅 `googlevideo /initplayback` 在日志关闭时也由 Loon 收齐正文后交给客户端，`YouTubeConfig.js` 原样放行，不读取、改写或保存该正文；普通 `videoplayback` 只有开发日志开启时才缓冲。开发采样规则先匹配，日志关闭时使用同一配置脚本的兼容分支，脚本条目和文件数量不增加。
+用户随后确认：日志工具开启但页面暂停记录时，主视频也不黑屏，而整个下方推荐列表会暂时空白。这支持继续区分响应交付与写入日志的影响，不能单凭现象认定缓冲是唯一原因。`9d21bd4` 曾增加初始化响应兼容：仅 `googlevideo /initplayback` 在日志关闭时也由 Loon 收齐正文后交给客户端，`YouTubeConfig.js` 原样放行，不读取、改写或保存该正文；普通 `videoplayback` 只有开发日志开启时才缓冲。该尝试已依据后续反馈撤回，以下保留诊断过程。
 
 兼容缓冲仍可能增加首帧等待，是针对上述设备反馈的有限尝试，效果需更新后验证。下方推荐列表由 `next` 响应处理，与该初始化兼容分支无关；目前没有本轮 `next` 日志，不能确认是网络等待、响应整包处理、客户端渲染，还是去除首张广告后的刷新。先不更改推荐过滤及分页字段，复现空白后导出同一个 `.log` 再分析。
+
+2026-10-05 后续设备反馈：日志开启和关闭均出现主视频 2–3 秒、整个推荐列表约 5 秒等待；关闭整个插件后两处明显加快。`YouTube-2026-10-05T11-40-11-664Z.log` 记录了以下时间线（UTC）：
+
+| 事件 | 时间 | 观察 |
+| --- | --- | --- |
+| 第二个初始化请求 | 11:40:00.981 | 内层广告协商已清理，没有脚本生成的空响应回退 |
+| 普通 player 响应 | 11:40:01.270 | 解析记录 3 ms；removed=0，changed 来自后台播放设置 |
+| 完整初始化响应 | 11:40:03.714 | 1,348,933 字节；与对应请求记录约隔 2.733 秒 |
+| next 请求 | 11:40:04.030 | 在完整初始化响应记录之后才出现 |
+| 完整 next 响应 | 11:40:06.032 | 清理前 727,516 字节、后 668,802 字节；解析记录 9 ms，移除 2 个广告项 |
+
+相关请求与响应按日志哈希关联，日志标注 exactPairing=false；上述间隔不是首帧测量，也不能分别量出连接、服务器等待和整包缓冲。解析时间是在保存开发样本前记录的，不包含全部脱敏和持久化成本。时间线支持先撤销未改善体验的初始化兼容缓冲：日志关闭时，`initplayback` 和 `videoplayback` 响应均不进入正文脚本；请求侧广告清理、QUIC 拦截和 Alt-Svc 复写保留。日志开启时仍完整采样并等待响应，不能承诺开发采样与日常播放相同延迟。推荐响应整包过滤暂不改为直接放行，以免重新引入已识别的广告；若关闭日志后仍慢，继续分别对比 QUIC 回退和 next 过滤，不能以毫秒级解析数据否定整个插件带来的等待。
 
 协议依据：[Loon 协议规则](https://nsloon.app/docs/Rule/protocol_rule/)、[UMP 分片类型](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/ump_part_id.proto)、[Onesie 响应结构](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/onesie_innertube_response.proto)、[响应认证示例](https://github.com/LuanRT/googlevideo/blob/main/examples/onesie-request/utils.ts)、[客户端地区字段](https://github.com/LuanRT/YouTube.js/blob/main/protos/youtube/api/pfiinnertube/client_info.proto)。

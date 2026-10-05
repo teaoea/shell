@@ -55,7 +55,7 @@ function passed(result) {
   assert.deepEqual(Object.keys(result.output), [], 'must return no changes');
 }
 
-test('plugin separates initialization compatibility buffering from optional media sampling', () => {
+test('plugin buffers initialization and media responses only for optional development sampling', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
   assert.equal(allEntries.length, 4);
   const entries = [
