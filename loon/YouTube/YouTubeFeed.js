@@ -7,7 +7,7 @@
  */
 /**
  * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
- * 更新时间：2026-10-05T11:28:10+08:00
+ * 更新时间：2026-10-05T11:54:46+08:00
  * @param {Object} entry 事件摘要。
  * @param {Object|null} payload 待脱敏的结构诊断。
  * @param {string} level 主插件选择的级别。
@@ -15,11 +15,11 @@
  */
 function ytDiagnosticShouldRecord(entry,payload,level) {
   var processing=payload&&payload.processing;
-  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  var isError=entry.level==="error" || !!(payload&&payload.responseBefore&&Number(payload.responseBefore.status)>=400&&Number(payload.responseBefore.status)<=599) || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
   if(isError)entry.level="error";
   if(level==="error")return isError;
   if(level==="warn")return isError||entry.level==="warn";
-  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  if(level!=="debug"&&entry.level==="debug")entry.level="info";
   return true;
 }
 /**
@@ -106,7 +106,7 @@ function (s) { return s.replace(/\|[0-9a-f]{16}$/, '|0000000000000000'); }); }
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
  */
-function(k){if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(String(value[k])))out[k]=value[k];});return out; }
+function(k){var text=String(value[k]);if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(text)||/^transfer-encoding$/i.test(k)&&/^(?:chunked|gzip|deflate|br|identity)(?:,\s*(?:chunked|gzip|deflate|br|identity))*$/i.test(text)||/^accept-ranges$/i.test(k)&&/^(?:bytes|none)$/i.test(text)||/^content-range$/i.test(k)&&/^bytes (?:\d+-\d+|\*)\/(?:\d+|\*)$/.test(text))out[k]=text;});return out; }
   /**
    * 功能：读取 Base64 到临时内存；原始字节不会写入日志。
    * 更新时间：2026-10-04T14:45:25+08:00
@@ -149,7 +149,7 @@ function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptke
    * 功能：替换正文为不可重放的脱敏结构诊断；请求、配置及媒体正文不保存。
    * 更新时间：2026-10-04T14:45:25+08:00
    */
-  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(request||/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
   ['request','requestAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -193,6 +193,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = args.script_debug === true || args.script_debug === "true";
   var hideHomeShorts = args.hide_home_shorts === true || args.hide_home_shorts === "true";
@@ -411,7 +412,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       message === "pass: parse/schema check failed" ? "error" :
       /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
     var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubeFeed", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
+    if ((minimum === "info" || ranks[level] >= ranks[minimum])) devAppend({source:"YouTubeFeed", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
   /**

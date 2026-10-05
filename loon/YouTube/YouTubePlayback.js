@@ -7,7 +7,7 @@
  */
 /**
  * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
- * 更新时间：2026-10-05T11:28:10+08:00
+ * 更新时间：2026-10-05T11:54:46+08:00
  * @param {Object} entry 事件摘要。
  * @param {Object|null} payload 待脱敏的结构诊断。
  * @param {string} level 主插件选择的级别。
@@ -15,11 +15,11 @@
  */
 function ytDiagnosticShouldRecord(entry,payload,level) {
   var processing=payload&&payload.processing;
-  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  var isError=entry.level==="error" || !!(payload&&payload.responseBefore&&Number(payload.responseBefore.status)>=400&&Number(payload.responseBefore.status)<=599) || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
   if(isError)entry.level="error";
   if(level==="error")return isError;
   if(level==="warn")return isError||entry.level==="warn";
-  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  if(level!=="debug"&&entry.level==="debug")entry.level="info";
   return true;
 }
 /**
@@ -106,7 +106,7 @@ function (s) { return s.replace(/\|[0-9a-f]{16}$/, '|0000000000000000'); }); }
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
  */
-function(k){if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(String(value[k])))out[k]=value[k];});return out; }
+function(k){var text=String(value[k]);if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(text)||/^transfer-encoding$/i.test(k)&&/^(?:chunked|gzip|deflate|br|identity)(?:,\s*(?:chunked|gzip|deflate|br|identity))*$/i.test(text)||/^accept-ranges$/i.test(k)&&/^(?:bytes|none)$/i.test(text)||/^content-range$/i.test(k)&&/^bytes (?:\d+-\d+|\*)\/(?:\d+|\*)$/.test(text))out[k]=text;});return out; }
   /**
    * 功能：读取 Base64 到临时内存；原始字节不会写入日志。
    * 更新时间：2026-10-04T14:45:25+08:00
@@ -149,7 +149,7 @@ function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptke
    * 功能：替换正文为不可重放的脱敏结构诊断；请求、配置及媒体正文不保存。
    * 更新时间：2026-10-04T14:45:25+08:00
    */
-  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(request||/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
   ['request','requestAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -190,6 +190,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var VERSION = "1.5.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = args.script_debug === true || args.script_debug === "true";
   var endpoint = "unknown";
@@ -409,7 +410,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       message === "pass: parse/schema check failed" ? "error" :
       /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
     var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
+    if ((minimum === "info" || ranks[level] >= ranks[minimum])) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
   /**
@@ -767,6 +768,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
   var CACHE = "ytads.logger.entries.v2";
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$/i;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.block_ad_break !== false && args.block_ad_break !== "false";
   var debug = args.script_debug === true || args.script_debug === "true";
@@ -892,7 +894,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
       var payload = {schema:1, id:id, time:now, source:SOURCE, version:VERSION, phase:"request", endpoint:ENDPOINT,
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:checksum(request.method + " " + request.url), exactPairing:true}, request:request,
-        processing:{executionScript:SOURCE, elapsedMs:0, messages:[message], arguments:{block_ad_break:enabled, log_level:args.log_level || "info"}},
+        processing:{executionScript:SOURCE, elapsedMs:null, messages:[message], arguments:{block_ad_break:enabled, log_level:args.log_level || "info"}},
         responseAfter:{changed:true, synthetic:true, status:200, headerOverrides:{"Content-Type":"application/x-protobuf", "Cache-Control":"no-store"}, transportHeadersRecomputedByLoon:true,
           body:{available:true, encoding:"base64", bytes:0, data:""}}};
       append({source:SOURCE, version:VERSION, endpoint:ENDPOINT, level:"debug", time:now, phase:"request", message:"development capture: blocked=true"}, payload);
@@ -935,6 +937,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
   var MAX_BODY = 2097152;
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.suppress_player_ads !== false && args.suppress_player_ads !== "false";
   var debug = args.script_debug === true || args.script_debug === "true";
@@ -1270,7 +1273,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
       if (flag(args.capture_raw) || !flag(args.log_enabled) || typeof $persistentStore === "undefined") return;
       var ranks = {debug:0, info:1, warn:2, error:3};
       var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-      if (!Object.prototype.hasOwnProperty.call(ranks, level) || ranks[level] < ranks[minimum]) return;
+      if (!Object.prototype.hasOwnProperty.call(ranks, level) || (minimum !== "info" && ranks[level] < ranks[minimum])) return;
       append({source:SOURCE, version:VERSION, endpoint:kind, level:level, time:new Date().toISOString(), phase:"request", message:message}, null);
     } catch (_) {}
   }
@@ -1289,7 +1292,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:checksum(request.method + " " + request.url), exactPairing:true},
         request:request,
-        processing:{exception:null, executionScript:SOURCE, elapsedMs:0, messages:[message],
+        processing:{exception:null, executionScript:SOURCE, elapsedMs:null, messages:[message],
           arguments:{suppress_player_ads:enabled, log_level:args.log_level || "info"}},
         requestAfter:{changed:!!changed, headerOverrides:changed ? output.headers || null : null,
           transportHeadersRecomputedByLoon:true, body:changed ? captureBody(output.body) : {reference:"request.body"}}};
@@ -1374,6 +1377,7 @@ function (key) {
   var VERSION = "2.2.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = args.script_debug === true || args.script_debug === "true";
   var backgroundPlayback = args.background_playback === true || args.background_playback === "true";
@@ -1594,7 +1598,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       message === "pass: parse/schema check failed" ? "error" :
       /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
     var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
+    if ((minimum === "info" || ranks[level] >= ranks[minimum])) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
   /**
@@ -2108,6 +2112,7 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
   var VERSION = "1.0.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = args.script_debug === true || args.script_debug === "true";
   var removeShortsAds = args.remove_shorts_ads !== false && args.remove_shorts_ads !== "false";
@@ -2328,7 +2333,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       message === "pass: parse/schema check failed" ? "error" :
       /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
     var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
+    if ((minimum === "info" || ranks[level] >= ranks[minimum])) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
   /**
@@ -2666,6 +2671,7 @@ function (entry) {
   var VERSION = "1.5.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = args.script_debug === true || args.script_debug === "true";
   var endpoint = "unknown";
@@ -2885,7 +2891,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       message === "pass: parse/schema check failed" ? "error" :
       /^(pass: (removed=|mode=|non-UMP))/.test(message) ? "debug" : "warn";
     var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
-    if (ranks[level] >= ranks[minimum]) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
+    if ((minimum === "info" || ranks[level] >= ranks[minimum])) devAppend({source:"YouTubePlayback", level:level, time:new Date().toISOString(), version:VERSION, endpoint:endpoint, message:message}, null);
   }
 
   /**

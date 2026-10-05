@@ -170,7 +170,7 @@ test('main logging switch blocks all cache writes and manual entry when disabled
   assert.equal(manual.notices.length, 0);
 });
 
-test('each save level includes its own severity and higher levels only', () => {
+test('info preserves all summaries while warn and error filter severity', () => {
   for (const minimum of ['debug','info','warn','error']) {
     const store = new Map();
     request(store, '/start', 'POST');
@@ -186,7 +186,7 @@ test('each save level includes its own severity and higher levels only', () => {
     });
     const levels = JSON.parse(store.get(cacheKey)).entries.map(r => r.level);
     const all = ['debug','info','warn','error'];
-    assert.deepEqual(levels, all.slice(all.indexOf(minimum)));
+    assert.deepEqual(levels, minimum==='info'?['info','info','warn','error']:all.slice(all.indexOf(minimum)));
     assert.ok(!JSON.stringify(JSON.parse(store.get(cacheKey)).entries).includes('SECRET'));
     assert.ok(levels.includes('error'));
   }

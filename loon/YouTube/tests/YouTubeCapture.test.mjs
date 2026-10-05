@@ -443,3 +443,41 @@ test('main-page download pauses recording and triggers one file download without
  assert.equal(save.clicks,1);assert.ok(save.download.endsWith('.log'));
  assert.match(await blob.text(),/EVENT 1/);assert.equal(save.hidden,false);
 });
+
+test('uppercase INFO retains unchanged initialization response metadata without accessing either body',()=>{
+ const store=started(),init='https://rr5.googlevideo.com/initplayback?sig=PRIVATE';
+ const line=plugin.split('\n').find(x=>x.startsWith('http-response')&&x.includes('YouTubeLogger.js'));
+ assert.ok(new RegExp(line.split(' ')[1]).test(init));assert.ok(line.includes('requires-body=false'));
+ const request={url:init,method:'POST',headers:{Authorization:'PRIVATE'}};
+ const response={status:200,headers:{'Content-Type':'application/vnd.yt-ump','Transfer-Encoding':'chunked','Set-Cookie':'PRIVATE'}};
+ Object.defineProperty(request,'body',{get(){throw new Error('request body should not be buffered');}});
+ Object.defineProperty(response,'body',{get(){throw new Error('response body should not be buffered');}});
+ run('YouTubeLogger',store,{$request:request,$response:response,$argument:{log_enabled:true,log_level:'INFO'}});
+ const event=exportData(store).events[0];
+ assert.equal(event.summary.endpoint,'initplayback');assert.equal(event.summary.phase,'response');assert.equal(event.summary.level,'info');
+ assert.equal(event.capture.responseBefore.headers['Transfer-Encoding'],'chunked');
+ assert.equal(event.capture.responseBefore.status,200);assert.equal(event.capture.responseBefore.body.reason,'headers-only-not-buffered');
+ assert.equal(event.capture.responseAfter.changed,false);assert.equal(event.capture.processing.bodyBuffering,false);
+ assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE'));
+ page(store,'pause','POST');
+ const manifest=JSON.parse(page(store,'export-manifest.json').body);
+ assert.equal(manifest.data.coverage.counts.initplayback,1);
+ assert.equal(manifest.data.coverage.initializationVersions.length,0,'observer version is not an initialization cleaner version');
+});
+
+test('ERROR records HTTP failures but does not store successful initialization response samples',()=>{
+ const store=started();
+ for(const status of [200,503])run('YouTubeLogger',store,{$request:{url:'https://rr5.googlevideo.com/initplayback',method:'POST'},$response:{status,headers:{}},$argument:{log_enabled:true,log_level:'ERROR'}});
+ const events=exportData(store).events;assert.equal(events.length,1);assert.equal(events[0].summary.level,'error');assert.equal(events[0].capture.responseBefore.status,503);
+});
+
+test('INFO preserves safe before/after player request structure while removing request credentials',()=>{
+ const store=started();
+ const payload={context:{adSignalsInfo:{params:[{key:'token',value:'PRIVATE_TOKEN'}]},client:{visitorData:'PRIVATE_VISITOR'}},videoId:'PRIVATE_VIDEO',playbackContext:{contentPlaybackContext:{adParams:'PRIVATE_SIGNATURE'}}};
+ run('YouTubePlayback',store,{$request:{url:api,method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)},$argument:{log_enabled:true,log_level:'INFO'}});
+ const capture=exportData(store).events[0].capture;
+ assert.ok(capture.request.body.structure.context.adSignalsInfo);
+ assert.equal(capture.requestAfter.body.structure.context.adSignalsInfo,undefined);
+ assert.equal(capture.requestAfter.body.structure.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd,true);
+ assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE_'));
+});

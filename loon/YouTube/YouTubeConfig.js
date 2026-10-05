@@ -7,7 +7,7 @@
  */
 /**
  * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
- * 更新时间：2026-10-05T11:28:10+08:00
+ * 更新时间：2026-10-05T11:54:46+08:00
  * @param {Object} entry 事件摘要。
  * @param {Object|null} payload 待脱敏的结构诊断。
  * @param {string} level 主插件选择的级别。
@@ -15,11 +15,11 @@
  */
 function ytDiagnosticShouldRecord(entry,payload,level) {
   var processing=payload&&payload.processing;
-  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  var isError=entry.level==="error" || !!(payload&&payload.responseBefore&&Number(payload.responseBefore.status)>=400&&Number(payload.responseBefore.status)<=599) || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
   if(isError)entry.level="error";
   if(level==="error")return isError;
   if(level==="warn")return isError||entry.level==="warn";
-  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  if(level!=="debug"&&entry.level==="debug")entry.level="info";
   return true;
 }
 /**
@@ -106,7 +106,7 @@ function (s) { return s.replace(/\|[0-9a-f]{16}$/, '|0000000000000000'); }); }
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
  */
-function(k){if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(String(value[k])))out[k]=value[k];});return out; }
+function(k){var text=String(value[k]);if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(text)||/^transfer-encoding$/i.test(k)&&/^(?:chunked|gzip|deflate|br|identity)(?:,\s*(?:chunked|gzip|deflate|br|identity))*$/i.test(text)||/^accept-ranges$/i.test(k)&&/^(?:bytes|none)$/i.test(text)||/^content-range$/i.test(k)&&/^bytes (?:\d+-\d+|\*)\/(?:\d+|\*)$/.test(text))out[k]=text;});return out; }
   /**
    * 功能：读取 Base64 到临时内存；原始字节不会写入日志。
    * 更新时间：2026-10-04T14:45:25+08:00
@@ -149,7 +149,7 @@ function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptke
    * 功能：替换正文为不可重放的脱敏结构诊断；请求、配置及媒体正文不保存。
    * 更新时间：2026-10-04T14:45:25+08:00
    */
-  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(request||/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
   ['request','requestAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -198,6 +198,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var MAX_BODY = 2097152;
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var debug = flag(args.script_debug);
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(config|log_event)(?:\?[^#]*)?$/i;
@@ -433,12 +434,12 @@ function (key) {
       var payload = {schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:phase,endpoint:endpoint,
         runtime:typeof $loon === "string" ? $loon : null,correlation:{urlMethodHash:checksum(($request.method || "GET") + " " + $request.url),exactPairing:false},
         request:{url:$request.url,method:$request.method || "GET",headers:$request.headers || {},h2_trailers:$request.h2_trailers || {},body:captureBody($request.body)},
-        processing:{exception:null,executionScript:SOURCE,elapsedMs:0,messages:[message],arguments:{onesie_enabled:true,log_level:args.log_level || "info"}}};
+        processing:{exception:null,executionScript:SOURCE,elapsedMs:null,messages:[message],arguments:{onesie_enabled:true,log_level:args.log_level || "info"}}};
       if (typeof $response !== "undefined") { payload.responseBefore = {status:$response.status,headers:$response.headers || {},h2_trailers:$response.h2_trailers || {},body:captureBody($response.body)}; payload.responseAfter = {changed:false,status:$response.status,headerOverrides:null,transportHeadersRecomputedByLoon:true,body:{reference:"responseBefore.body"}}; }
       append({source:SOURCE,version:VERSION,endpoint:endpoint,level:"debug",time:now,phase:phase,message:"development capture: " + phase + " changed=" + !!(output && Object.keys(output).length)}, payload);
     } else {
       var ranks = {debug:0,info:1,warn:2,error:3}, minimum = Object.prototype.hasOwnProperty.call(ranks,args.log_level) ? args.log_level : "info";
-      if (ranks[level] >= ranks[minimum]) append({source:SOURCE,version:VERSION,endpoint:endpoint,level:level,time:now,phase:phase,message:message}, null);
+      if ((minimum === "info" || ranks[level] >= ranks[minimum])) append({source:SOURCE,version:VERSION,endpoint:endpoint,level:level,time:now,phase:phase,message:message}, null);
     }
     if (debug && typeof console !== "undefined") console.log("[" + SOURCE + " " + VERSION + "] " + endpoint + " " + message);
   }
@@ -490,6 +491,7 @@ function (key) {
   var MAX_BODY = 2097152;
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var enabled = args.onesie_enabled !== false && args.onesie_enabled !== "false";
   var refreshMismatch = args.onesie_refresh_on_mismatch !== false && args.onesie_refresh_on_mismatch !== "false";
@@ -708,7 +710,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
   function stage(prefix,fn){try{return fn();}catch(error){fail(prefix+(error&&error.ytNoAdsCode||"failed"));}}
   /**
    * 功能：验证播放器已知字段的类型与唯一性，遇到歧义时停止内层改写。
-   * 更新时间：2026-10-05T11:28:10+08:00
+   * 更新时间：2026-10-05T11:54:46+08:00
    * @param {Array} records 已解析字段。
    * @param {number} no 字段编号。
    * @param {number} wire 预期类型。
@@ -721,7 +723,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
   var lastInnerDiagnostics=null;
   /**
    * 功能：输出内层格式与已知路径的存在状态，不记录正文、令牌或密钥。
-   * 更新时间：2026-10-05T11:28:10+08:00
+   * 更新时间：2026-10-05T11:54:46+08:00
    * @param {Object} counts 内层清理计数及原始结构状态。
    * @returns {string} 固定字段名称及有限状态组成的安全诊断摘要。
    */
@@ -731,7 +733,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
   }
   /**
    * 功能：清理播放器消息中的广告配置并保留未知字段。
-   * 更新时间：2026-10-05T11:28:10+08:00
+   * 更新时间：2026-10-05T11:54:46+08:00
    */
   function cleanPlayer(value,counts) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -762,7 +764,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
   function cleanProtoContext(bytes,budget,counts){var records=parse(bytes,budget),parts=[],changed=false;for(var i=0;i<records.length;i++){if(records[i].no===9&&records[i].wire===2){counts.contextAdSignals++;changed=true;}else parts.push(raw(bytes,records[i]));}return{body:changed?concat(parts):bytes,changed:changed};}
   /**
    * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
-   * 更新时间：2026-10-05T11:28:10+08:00
+   * 更新时间：2026-10-05T11:54:46+08:00
    */
   function cleanProtoContent(bytes,budget,counts) {
     var records=parse(bytes,budget),parts=[],changed=false;
@@ -781,7 +783,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
 
   /**
    * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
-   * 更新时间：2026-10-05T11:28:10+08:00
+   * 更新时间：2026-10-05T11:54:46+08:00
    */
   function cleanProtoPlayback(bytes,budget,counts) {
     var records=parse(bytes,budget),parts=[],changed=false,content=knownPlayerField(records,1,2);
@@ -797,7 +799,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
 
   /**
    * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
-   * 更新时间：2026-10-05T11:28:10+08:00
+   * 更新时间：2026-10-05T11:54:46+08:00
    */
   function cleanProtoPlayer(bytes,budget,counts) {
     var records=parse(bytes,budget),parts=[],changed=false;
@@ -816,7 +818,7 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
 
   /**
    * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
-   * 更新时间：2026-10-05T11:28:10+08:00
+   * 更新时间：2026-10-05T11:54:46+08:00
    */
   function cleanInnerBody(bytes,budget,counts) {
     var value=null,json=false;
@@ -911,7 +913,7 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
    * 功能：记录当前配置或请求处理结果。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
-  function record(message,level,output){var now=new Date().toISOString(),changed=!!(output&&(output.response||output.body));if(flag(args.capture_raw)){var id=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,14),request={url:$request.url,method:$request.method||"GET",headers:$request.headers||{},h2_trailers:$request.h2_trailers||{},body:captureBody($request.body)};var payload={schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:"request",endpoint:"initplayback",runtime:typeof $loon==="string"?$loon:null,correlation:{urlMethodHash:checksum(request.method+" "+request.url),exactPairing:false},request:request,processing:{exception:null,executionScript:SOURCE,elapsedMs:0,messages:[message],arguments:{onesie_enabled:enabled,onesie_refresh_on_mismatch:refreshMismatch,log_level:args.log_level||"info"}},responseAfter:output&&output.response?{synthetic:true,status:output.response.status,headers:output.response.headers,body:captureBody(output.response.body)}:null,requestAfter:output&&output.body?{changed:true,body:captureBody(output.body)}:null};append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:"development capture: "+message+" changed="+changed},payload);}else{var ranks={debug:0,info:1,warn:2,error:3},minimum=Object.prototype.hasOwnProperty.call(ranks,args.log_level)?args.log_level:"info";if(ranks[level]>=ranks[minimum])append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:message},null);}if(debug&&typeof console!=="undefined")console.log("["+SOURCE+" "+VERSION+"] initplayback "+message);}
+  function record(message,level,output){var now=new Date().toISOString(),changed=!!(output&&(output.response||output.body));if(flag(args.capture_raw)){var id=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,14),request={url:$request.url,method:$request.method||"GET",headers:$request.headers||{},h2_trailers:$request.h2_trailers||{},body:captureBody($request.body)};var payload={schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:"request",endpoint:"initplayback",runtime:typeof $loon==="string"?$loon:null,correlation:{urlMethodHash:checksum(request.method+" "+request.url),exactPairing:false},request:request,processing:{exception:null,executionScript:SOURCE,elapsedMs:null,messages:[message],arguments:{onesie_enabled:enabled,onesie_refresh_on_mismatch:refreshMismatch,log_level:args.log_level||"info"}},responseAfter:output&&output.response?{synthetic:true,status:output.response.status,headers:output.response.headers,body:captureBody(output.response.body)}:null,requestAfter:output&&output.body?{changed:true,body:captureBody(output.body)}:null};append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:"development capture: "+message+" changed="+changed},payload);}else{var ranks={debug:0,info:1,warn:2,error:3},minimum=Object.prototype.hasOwnProperty.call(ranks,args.log_level)?args.log_level:"info";if((minimum==="info"||ranks[level]>=ranks[minimum]))append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:message},null);}if(debug&&typeof console!=="undefined")console.log("["+SOURCE+" "+VERSION+"] initplayback "+message);}
 
   var output = {};
   if (enabled && typeof $request !== "undefined" && typeof $response === "undefined" && API.test($request.url || "") && isYouTubeApp()) {

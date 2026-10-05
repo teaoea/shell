@@ -199,10 +199,10 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 
 日志在写入缓存前脱敏；单一 `.log` 保留浏览、刷新、播放的事件时间、脚本版本、接口路径、状态、耗时、删除计数、媒体响应头和人工标记。
 
-- URL 仅保留主机和路径，全部查询参数及片段移除。请求/响应头仅允许 Content-Type、Content-Length、Content-Encoding、Accept-Encoding；Authorization、Cookie、Set-Cookie、访客及账号头、HTTP/2 trailers 不保存。
+- URL 仅保留主机和路径，全部查询参数及片段移除。请求/响应头允许 Content-Type、Content-Length、Content-Encoding、Accept-Encoding，以及经过固定格式验证的 Transfer-Encoding、Accept-Ranges、Content-Range；Authorization、Cookie、Set-Cookie、访客及账号头、HTTP/2 trailers 不保存。
 - Protobuf 响应保留字段号、wire type、长度、嵌套路径及布尔值。字符串只保留已知广告标记、模板名称和首页身份标记，模板哈希归零；未知叶节点不保存原始字节。非布尔数值不保存原值。
 - JSON 响应保留合法字段名及层级，身份相关键移除；字符串只保留长度和固定广告标记。标题、账号、视频 ID、正文中的签名 URL 不保存原文。
-- 请求正文、config/log_event/initplayback 正文及 UMP 媒体正文不进入日志。媒体日志规则不读取正文；媒体长度仅来自 Content-Length，分块传输时长度可能未知。配置密钥仍供协议处理在功能缓存中使用，不进入日志缓存或导出。
+- 可用的普通 API 请求正文保存脱敏字段结构及修改前后结果，原始字节不保存。config/log_event/initplayback 正文及 UMP 媒体正文不进入日志；初始化响应和媒体响应记录状态及安全传输头，不读取正文，以避免完整媒体缓冲等待。未读取的正文明确标记为 headers-only-not-buffered；媒体长度仅来自 Content-Length，分块传输时长度可能未知。配置密钥仍供协议处理在功能缓存中使用，不进入日志缓存或导出。
 - 异常只保留固定错误代码，不保存可能包含正文的异常消息和堆栈。脱敏失败或未知协议只留下省略标记，不回退到保存原文。
 - 脱敏数据继续分块保存并校验长度和校验值。它能用于定位结构漏点，不能恢复为可重放的原始网络包；`Available:false` 配合 `Reason:privacy-structure-only` 表示主动脱敏，结构可见于 `Structure`。
 
@@ -291,7 +291,9 @@ Loon 官方 [Rewrite 文档](https://nsloon.app/en/docs/Rewrite/rewrite_v2/) 支
 
 日志工具 2.5.0 移除主页接口统计和初始化提示，在下载文件中保留诊断信息。info 保存完整脱敏链路，error 只保存错误；下载日志按钮在当前页面暂停记录、校验样本并触发下载。媒体正文仍不缓冲，凭据和签名仍不保存。
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 283 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
+日志工具 2.6.0 统一 INFO/info 等大小写，并修正旧摘要分支仍过滤未修改事件的问题。普通播放器 API 请求的可用正文现在保留修改前后脱敏结构，未知字符串、身份数据及原始字节继续排除。现有媒体响应日志规则同时覆盖 initplayback，记录其响应状态与安全传输头；正文未读取时明确写出 headers-only-not-buffered。该入口不等待媒体正文，不能据此分析初始化响应内的广告配置。ERROR/error 保留脚本错误、已识别的认证/清理失败和 HTTP 4xx/5xx；正常事件不保存。未测量的处理耗时写为 null，避免把占位 0 当成真实耗时。
+
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 286 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeed.js

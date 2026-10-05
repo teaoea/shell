@@ -1,13 +1,13 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：2.5.0
+ * 版本：2.6.0
  * 更新时间：2026-10-04T08:54:22+08:00
  * 运行环境：Loon JavaScript
  */
 /**
  * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
- * 更新时间：2026-10-05T11:28:10+08:00
+ * 更新时间：2026-10-05T11:54:46+08:00
  * @param {Object} entry 事件摘要。
  * @param {Object|null} payload 待脱敏的结构诊断。
  * @param {string} level 主插件选择的级别。
@@ -15,11 +15,11 @@
  */
 function ytDiagnosticShouldRecord(entry,payload,level) {
   var processing=payload&&payload.processing;
-  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  var isError=entry.level==="error" || !!(payload&&payload.responseBefore&&Number(payload.responseBefore.status)>=400&&Number(payload.responseBefore.status)<=599) || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
   if(isError)entry.level="error";
   if(level==="error")return isError;
   if(level==="warn")return isError||entry.level==="warn";
-  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  if(level!=="debug"&&entry.level==="debug")entry.level="info";
   return true;
 }
 /**
@@ -106,7 +106,7 @@ function (s) { return s.replace(/\|[0-9a-f]{16}$/, '|0000000000000000'); }); }
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
  */
-function(k){if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(String(value[k])))out[k]=value[k];});return out; }
+function(k){var text=String(value[k]);if(/^(content-type|content-length|content-encoding|accept-encoding)$/i.test(k)&&/^[a-z0-9\s/.,;+_=\-]{0,160}$/i.test(text)||/^transfer-encoding$/i.test(k)&&/^(?:chunked|gzip|deflate|br|identity)(?:,\s*(?:chunked|gzip|deflate|br|identity))*$/i.test(text)||/^accept-ranges$/i.test(k)&&/^(?:bytes|none)$/i.test(text)||/^content-range$/i.test(k)&&/^bytes (?:\d+-\d+|\*)\/(?:\d+|\*)$/.test(text))out[k]=text;});return out; }
   /**
    * 功能：读取 Base64 到临时内存；原始字节不会写入日志。
    * 更新时间：2026-10-04T14:45:25+08:00
@@ -149,7 +149,7 @@ function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptke
    * 功能：替换正文为不可重放的脱敏结构诊断；请求、配置及媒体正文不保存。
    * 更新时间：2026-10-04T14:45:25+08:00
    */
-  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(request||/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  function body(v,request){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
   ['request','requestAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -180,11 +180,12 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.5.0";
+  var VERSION = "2.6.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  args.log_level=String(args.log_level||"info").toLowerCase();
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
   var ranks = {debug:0, info:1, warn:2, error:3};
   var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
@@ -367,7 +368,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       if (!c || typeof $request === "undefined") return;
       var now = new Date().toISOString();
       var id = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 14);
-      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:devBody(headersOnly ? undefined : $request.body)};
+      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:headersOnly ? {available:false,reason:"headers-only-not-buffered"} : devBody($request.body)};
       var payload = {schema:1, id:id, time:now, source:source, version:version, phase:phase, endpoint:endpoint,
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
@@ -375,7 +376,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, bodyBuffering:!headersOnly, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
           arguments:{development_capture:devFlag(args.capture_raw), background_playback:devFlag(args.background_playback), log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
-        payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody(headersOnly ? undefined : $response.body)};
+        payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:headersOnly ? {available:false,reason:"headers-only-not-buffered"} : devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
         payload.responseAfter = {changed:!!changed, status:output && output.status !== undefined ? output.status : $response.status,
           headerOverrides:output && output.headers || null, transportHeadersRecomputedByLoon:true,
@@ -719,6 +720,7 @@ function (row) {
       counts[row.endpoint]++;
       if (/^(initplayback|player|get_watch)$/.test(row.endpoint)) {
         initialized = true;
+        if (row.endpoint === "initplayback" && row.phase === "response" && row.source === "YouTubeLogger") continue;
         if (/^\d+\.\d+\.\d+$/.test(row.version) && versions.indexOf(row.version) < 0) versions.push(row.version);
       }
     }
@@ -766,7 +768,8 @@ function (row) {
         var source = /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeed" :
           /^(log_event|config|initplayback)$/i.test(apiName) ? "YouTubeConfig" : api || apiName === "videoplayback" ? "YouTubePlayback" : "YouTubeLogger";
         var endpoint = apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName === "videoplayback" ? "ump" : apiName;
-        if (media) devMessages.push("media: headers_only=true body_buffering=false");
+        if (media) devMessages.push((apiName === "initplayback" ? "initialization_response" : "media") + ": headers_only=true body_buffering=false");
+        if(media&&apiName === "initplayback"&&typeof $response !== "undefined")source="YouTubeLogger";
         devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {}, !!media || typeof $response === "undefined");
         return {};
       }
