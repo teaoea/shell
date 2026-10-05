@@ -118,9 +118,9 @@ test('recording is off by default and only the complete log export is exposed', 
   play(store);
   assert.equal(store.size, 0);
   const rootPage=request(store);
-  assert.equal(rootPage.status,200);assert.ok(rootPage.body.includes('导出完整日志文件 .log'));
-  assert.equal((rootPage.body.match(/href="\/export"/g)||[]).length,1);
-  assert.ok(!rootPage.body.includes('.json')&&!rootPage.body.includes('export-feed'));
+  assert.equal(rootPage.status,200);assert.ok(rootPage.body.includes('下载日志'));
+  assert.equal((rootPage.body.match(/href="\/export"/g)||[]).length,0);
+  assert.ok(!rootPage.body.includes('href="/download.json"')&&!rootPage.body.includes('export-feed'));
   assert.equal(request(store,'/download.log').status,303);
   assert.equal(request(store,'/download.json').status,404);
 });
@@ -332,11 +332,11 @@ test('media request and response logging never access streaming bodies', () => {
   assert.ok(!JSON.stringify(rows).includes('PRIVATE'));
 });
 
-test('page and export report missing initialization rather than claiming full playback coverage', () => {
+test('initialization coverage stays in export and is hidden from the page', () => {
  const store=new Map();request(store,'/start','POST');
  request(store,'/mark-ad','POST');request(store,'/pause','POST');
  const page=request(store).body;
- assert.ok(page.includes('尚未记录 initplayback/player/get_watch'));
+ assert.ok(!page.includes('initplayback/player/get_watch'));
  const manifest=JSON.parse(request(store,'/export-manifest.json').body);
  assert.equal(manifest.data.coverage.hasPlaybackInitialization,false);
  assert.equal(manifest.data.coverage.counts.initplayback,0);
@@ -345,5 +345,5 @@ test('page and export report missing initialization rather than claiming full pl
  const complete=JSON.parse(request(store,'/export-manifest.json').body);
  assert.equal(complete.data.coverage.hasPlaybackInitialization,true);
  assert.equal(complete.data.coverage.counts.player,1);
- assert.ok(request(store).body.includes('已记录播放初始化'));
+ assert.ok(!request(store).body.includes('已记录播放初始化'));
 });

@@ -6,6 +6,23 @@
  * 运行环境：Loon JavaScript
  */
 /**
+ * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
+ * 更新时间：2026-10-05T11:28:10+08:00
+ * @param {Object} entry 事件摘要。
+ * @param {Object|null} payload 待脱敏的结构诊断。
+ * @param {string} level 主插件选择的级别。
+ * @returns {boolean} 是否保存当前事件。
+ */
+function ytDiagnosticShouldRecord(entry,payload,level) {
+  var processing=payload&&payload.processing;
+  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  if(isError)entry.level="error";
+  if(level==="error")return isError;
+  if(level==="warn")return isError||entry.level==="warn";
+  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  return true;
+}
+/**
  * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
  * 更新时间：2026-10-05T09:16:03+08:00
  * @param {Object} pending 本次待提交的索引，其末项为新事件。
@@ -281,6 +298,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     try {
       c = devConfig();
       if (!c) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read("ytads.logger.entries.v2");
       if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");
@@ -826,6 +844,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
     try {
       var config = loggerConfig();
       if (!config) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read(CACHE);
       if (raw && utf8Size(raw) > 131072) return false;
@@ -1206,6 +1225,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
     try {
       var config = loggerConfig();
       if (!config) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var rawState = $persistentStore.read(CACHE);
       if (rawState && utf8Size(rawState) > 131072) return false;
@@ -1351,7 +1371,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "2.1.0";
+  var VERSION = "2.2.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   if (typeof args.capture_raw === "undefined") args.capture_raw = args.log_enabled;
@@ -1463,6 +1483,7 @@ function (key) {
     try {
       c = devConfig();
       if (!c) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read("ytads.logger.entries.v2");
       if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");
@@ -1852,6 +1873,9 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
    */
   function cleanPlayer(bytes, budget) {
     var records = parse(bytes, budget);
+    var playerFields=[];
+    for(var f=0;f<records.length&&playerFields.length<24;f++)playerFields.push(records[f].no+"/"+records[f].wire);
+    var fieldSummary=playerFields.join(",")+(records.length>24?",more":"");
     var recognized = false;
     var statusChanges = [], trackingChanges = [];
     for (var i = 0; i < records.length; i++) {
@@ -1871,7 +1895,7 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
         trackingChanges[i] = cleanTracking(bytes.subarray(r.payloadStart, r.end), budget);
       }
     }
-    if (!recognized) return { body: bytes, removed: 0, tracking: 0, background: 0 };
+    if (!recognized) return { body: bytes, removed: 0, tracking: 0, background: 0, fieldSummary:fieldSummary };
     var parts = [];
     var removed = 0;
     var tracking = 0;
@@ -1890,7 +1914,7 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
       }
       else parts.push(bytes.subarray(field.start, field.end));
     }
-    return { body: removed || background ? join(parts) : bytes, removed: removed, tracking: tracking, background: background };
+    return { body: removed || background ? join(parts) : bytes, removed: removed, tracking: tracking, background: background, fieldSummary:fieldSummary };
   }
 
 
@@ -2049,7 +2073,8 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
     log((result.removed || result.background ? "changed" : "pass") + ": removed=" + result.removed +
       " tracking_removed=" + (result.tracking || 0) +
       " background_modified=" + result.background +
-      " format=" + (typeof body === "string" || json ? "json" : "protobuf"));
+      " format=" + (typeof body === "string" || json ? "json" : "protobuf") +
+      (result.fieldSummary ? " player_fields="+result.fieldSummary : ""));
     return result.removed || result.background ? { body: result.body } : {};
   }
 
@@ -2192,6 +2217,7 @@ function (item) {return item.no === 1;}).length !== 1) changed = true;
     try {
       c = devConfig();
       if (!c) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read("ytads.logger.entries.v2");
       if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");
@@ -2609,7 +2635,8 @@ function (entry) {
       if (!bytes || !/^(?:application\/(?:x-protobuf|protobuf|vnd\.google\.protobuf|octet-stream))$/.test(type)) {log("pass: unsupported content type"); return {};}
       result = cleanProto(bytes, {fields:0});
     }
-    log((result.removed ? "changed" : "pass") + ": removed=" + result.removed + " entries=" + result.entries + " format=" + (typeof body === "string" || json ? "json" : "protobuf"));
+    log((result.removed ? "changed" : "pass") + ": removed=" + result.removed + " entries=" + result.entries + " format=" + (typeof body === "string" || json ? "json" : "protobuf") +
+      (result.fieldSummary ? " player_fields="+result.fieldSummary : ""));
     return result.removed ? {body:result.body} : {};
   }
 
@@ -2747,6 +2774,7 @@ function (entry) {
     try {
       c = devConfig();
       if (!c) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read("ytads.logger.entries.v2");
       if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");

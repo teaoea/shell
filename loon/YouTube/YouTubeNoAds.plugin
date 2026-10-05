@@ -8,7 +8,7 @@
 background_playback = switch,false,tag=后台播放,desc=开启后允许普通视频在切换 App 或锁屏后继续播放音频；直播和受限内容仍由 YouTube 决定
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
 log_enabled = switch,false,tag=日志工具,desc=开启后记录浏览、刷新、播放及 UMP 全链路脱敏结构；凭据和签名不落盘；日志页面统一导出一个完整 .log 文件
-log_level = select,"info","debug","warn","error",tag=日志保存级别,desc=仅保存此级别及更高严重程度；排查详细处理结果请选择 debug
+log_level = select,"info","debug","warn","error",tag=日志保存级别,desc=info 保存完整脱敏链路；error 只保存错误；debug 保留调试级别；warn 保存警告和错误
 capture_budget = select,"32","16","64",tag=日志容量 MB,desc=达到上限停止记录，保留已有样本；导出后再清空
 
 [Rule]

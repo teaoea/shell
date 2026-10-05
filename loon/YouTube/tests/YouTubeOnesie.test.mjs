@@ -360,3 +360,37 @@ test('production gzip request keeps playback usable when compression is unavaila
  assert.equal(clean.player.videoId,'KEEP');
  assert.ok(available.logs.some(x=>x.includes('inner=authenticated_cleaned')));
 });
+
+for(const protobuf of [false,true])for(const withPlayback of [false,true])test(`authenticated ${protobuf?'protobuf':'JSON'} init supplies a missing ${withPlayback?'content':'playback'} context`,()=>{
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+ const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+ const context=message(1,message(90,Uint8Array.from([1,2,3])));
+ const player=protobuf?concat(context,withPlayback?message(4,message(99,Uint8Array.from([5,6]))):new Uint8Array(0),message(99,Uint8Array.from([7,8]))):{context:{client:{}},videoId:'KEEP',...(withPlayback?{playbackContext:{unknown:'KEEP'}}:{})};
+ const input=makeEncryptedInit(clientKey,encryptKey,player,{protobuf});
+ const result=initPlayback(store,[...encryptKey],youtubeUA,{script_debug:true},input);
+ assert.equal(result.output.response,undefined);
+ const decoded=decryptPlayer(result.output.body,clientKey);
+ if(protobuf){assert.equal(fields(field(field(decoded.playerBody,4),1)).find(x=>x.no===50).value,1);assert.deepEqual(field(decoded.playerBody,99),Uint8Array.from([7,8]));if(withPlayback)assert.deepEqual(field(field(decoded.playerBody,4),99),Uint8Array.from([5,6]));}
+ else{assert.equal(decoded.player.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd,true);assert.equal(decoded.player.videoId,'KEEP');if(withPlayback)assert.equal(decoded.player.playbackContext.unknown,'KEEP');}
+ assert.ok(result.logs.some(x=>x.includes('inline_no_ad=1')&&x.includes('inline_before=absent')&&x.includes('playback_present='+withPlayback)));
+});
+
+test('authenticated initialization retains an already enabled inline flag and reports unchanged state',()=>{
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+ const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+ const input=makeEncryptedInit(clientKey,encryptKey,concat(message(1,new Uint8Array(0)),message(4,message(1,scalar(50,1)))),{protobuf:true});
+ const result=initPlayback(store,[...encryptKey],youtubeUA,{script_debug:true},input);
+ assert.ok(result.logs.some(x=>x.includes('authenticated_unchanged')&&x.includes('inline_before=on')));
+ const output=result.output.body||input;
+ assert.deepEqual(field(field(output,3),2),field(field(input,3),2));
+});
+
+for(const malformed of [scalar(4,1),concat(message(4,new Uint8Array(0)),message(4,new Uint8Array(0))),message(4,message(1,message(50,new Uint8Array(0))))])test('ambiguous inner player fields preserve encrypted payload and do not synthesize responses',()=>{
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
+ const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+ const input=makeEncryptedInit(clientKey,encryptKey,concat(message(1,message(9,Uint8Array.from([8,1]))),malformed),{protobuf:true});
+ const result=initPlayback(store,[...encryptKey],youtubeUA,{script_debug:true},input);
+ assert.equal(result.output.response,undefined);
+ assert.deepEqual(field(field(result.output.body||input,3),2),field(field(input,3),2));
+ assert.ok(result.logs.some(x=>x.includes('protocol_cleanup_failed')));
+});

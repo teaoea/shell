@@ -6,6 +6,23 @@
  * 运行环境：Loon JavaScript
  */
 /**
+ * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
+ * 更新时间：2026-10-05T11:28:10+08:00
+ * @param {Object} entry 事件摘要。
+ * @param {Object|null} payload 待脱敏的结构诊断。
+ * @param {string} level 主插件选择的级别。
+ * @returns {boolean} 是否保存当前事件。
+ */
+function ytDiagnosticShouldRecord(entry,payload,level) {
+  var processing=payload&&payload.processing;
+  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  if(isError)entry.level="error";
+  if(level==="error")return isError;
+  if(level==="warn")return isError||entry.level==="warn";
+  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  return true;
+}
+/**
  * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
  * 更新时间：2026-10-05T09:16:03+08:00
  * @param {Object} pending 本次待提交的索引，其末项为新事件。
@@ -385,6 +402,7 @@ function (key) {
   function append(entry, payload) {
     var c = logConfig(), written = []; if (!c) return false;
     try {
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read(LOG_CACHE), old = raw ? JSON.parse(raw) : null;
       var state = old && old.session === c.session && Array.isArray(old.entries) ? old : {session:c.session,entries:[],captureBytes:0};
@@ -464,7 +482,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.8.0";
+  var VERSION = "1.9.0";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -689,39 +707,127 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
    */
   function stage(prefix,fn){try{return fn();}catch(error){fail(prefix+(error&&error.ytNoAdsCode||"failed"));}}
   /**
-   * 功能：清理播放器消息中的广告配置并保留未知字段。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：验证播放器已知字段的类型与唯一性，遇到歧义时停止内层改写。
+   * 更新时间：2026-10-05T11:28:10+08:00
+   * @param {Array} records 已解析字段。
+   * @param {number} no 字段编号。
+   * @param {number} wire 预期类型。
+   * @returns {Object|null} 唯一的合法字段或缺失状态。
    */
-  function cleanPlayer(value,counts){if(!value||typeof value!=="object")return false;var changed=false,context=value.context;if(context&&typeof context==="object"&&Object.prototype.hasOwnProperty.call(context,"adSignalsInfo")){delete context.adSignalsInfo;counts.contextAdSignals++;changed=true;}var content=value.playbackContext&&value.playbackContext.contentPlaybackContext;if(content&&typeof content==="object"){var names=["adParams","forceAdParameters"];for(var i=0;i<names.length;i++)if(Object.prototype.hasOwnProperty.call(content,names[i])){delete content[names[i]];counts.playbackAdParams++;changed=true;}if(content.isInlinePlaybackNoAd!==true){content.isInlinePlaybackNoAd=true;counts.inlineNoAd++;changed=true;}}return changed;}
+  function knownPlayerField(records,no,wire) {
+    for(var i=0;i<records.length;i++)if(records[i].no===no&&records[i].wire!==wire)fail("player-schema-mismatch");
+    return only(records,no,wire);
+  }
+  var lastInnerDiagnostics=null;
+  /**
+   * 功能：输出内层格式与已知路径的存在状态，不记录正文、令牌或密钥。
+   * 更新时间：2026-10-05T11:28:10+08:00
+   * @param {Object} counts 内层清理计数及原始结构状态。
+   * @returns {string} 固定字段名称及有限状态组成的安全诊断摘要。
+   */
+  function innerDiagnosticSummary(counts) {
+    if(!counts)return "";
+    return " inner_format="+counts.format+" playback_present="+!!counts.playbackPresent+" content_present="+!!counts.contentPresent+" inline_before="+(counts.inlineBefore||"unobserved");
+  }
+  /**
+   * 功能：清理播放器消息中的广告配置并保留未知字段。
+   * 更新时间：2026-10-05T11:28:10+08:00
+   */
+  function cleanPlayer(value,counts) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    var context = value.context;
+    if (!context || typeof context !== "object" || Array.isArray(context)) return false;
+    var changed = false;
+    if (Object.prototype.hasOwnProperty.call(context,"adSignalsInfo")) {delete context.adSignalsInfo;counts.contextAdSignals++;changed=true;}
+    counts.playbackPresent = Object.prototype.hasOwnProperty.call(value,"playbackContext");
+    if (!counts.playbackPresent) {value.playbackContext={};changed=true;}
+    var playback=value.playbackContext;
+    if (!playback || typeof playback!=="object" || Array.isArray(playback)) fail("playback-schema-mismatch");
+    counts.contentPresent=Object.prototype.hasOwnProperty.call(playback,"contentPlaybackContext");
+    if (!counts.contentPresent) {playback.contentPlaybackContext={};changed=true;}
+    var content=playback.contentPlaybackContext;
+    if (!content || typeof content!=="object" || Array.isArray(content)) fail("content-schema-mismatch");
+    var names=["adParams","forceAdParameters"];
+    for(var i=0;i<names.length;i++) if(Object.prototype.hasOwnProperty.call(content,names[i])) {delete content[names[i]];counts.playbackAdParams++;changed=true;}
+    counts.inlineBefore=content.isInlinePlaybackNoAd===true?"on":content.isInlinePlaybackNoAd===false?"off":Object.prototype.hasOwnProperty.call(content,"isInlinePlaybackNoAd")?"invalid":"absent";
+    if(counts.inlineBefore==="invalid") fail("inline-schema-mismatch");
+    if(content.isInlinePlaybackNoAd!==true) {content.isInlinePlaybackNoAd=true;counts.inlineNoAd++;changed=true;}
+    return changed;
+  }
+
   /**
    * 功能：执行 cleanProtoContext 对应的内部处理步骤。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   function cleanProtoContext(bytes,budget,counts){var records=parse(bytes,budget),parts=[],changed=false;for(var i=0;i<records.length;i++){if(records[i].no===9&&records[i].wire===2){counts.contextAdSignals++;changed=true;}else parts.push(raw(bytes,records[i]));}return{body:changed?concat(parts):bytes,changed:changed};}
   /**
-   * 功能：执行 cleanProtoContent 对应的内部处理步骤。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
+   * 更新时间：2026-10-05T11:28:10+08:00
    */
-  function cleanProtoContent(bytes,budget,counts){var records=parse(bytes,budget),parts=[],changed=false,noAd=false;for(var i=0;i<records.length;i++){var record=records[i];if((record.no===12||record.no===25)&&record.wire===2){counts.playbackAdParams++;changed=true;}else if(record.no===50&&record.wire===0){if(!noAd)parts.push(scalar(50,1));noAd=true;counts.inlineNoAd++;changed=true;}else parts.push(raw(bytes,record));}if(!noAd){parts.push(scalar(50,1));counts.inlineNoAd++;changed=true;}return{body:changed?concat(parts):bytes,changed:changed};}
+  function cleanProtoContent(bytes,budget,counts) {
+    var records=parse(bytes,budget),parts=[],changed=false;
+    var inline=knownPlayerField(records,50,0);
+    counts.inlineBefore=inline?inline.value===1?"on":inline.value===0?"off":"invalid":"absent";
+    if(counts.inlineBefore==="invalid")fail("inline-schema-mismatch");
+    for(var i=0;i<records.length;i++) {
+      var record=records[i];
+      if((record.no===12||record.no===25)&&record.wire===2) {counts.playbackAdParams++;changed=true;}
+      else if(record===inline&&inline.value!==1) {parts.push(scalar(50,1));counts.inlineNoAd++;changed=true;}
+      else parts.push(raw(bytes,record));
+    }
+    if(!inline) {parts.push(scalar(50,1));counts.inlineNoAd++;changed=true;}
+    return {body:changed?concat(parts):bytes,changed:changed};
+  }
+
   /**
-   * 功能：执行 cleanProtoPlayback 对应的内部处理步骤。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
+   * 更新时间：2026-10-05T11:28:10+08:00
    */
-  function cleanProtoPlayback(bytes,budget,counts){var records=parse(bytes,budget),parts=[],changed=false;for(var i=0;i<records.length;i++){var record=records[i];if(record.no===1&&record.wire===2){var child=cleanProtoContent(bytes.subarray(record.dataStart,record.dataEnd),budget,counts);parts.push(child.changed?message(1,child.body):raw(bytes,record));changed=changed||child.changed;}else parts.push(raw(bytes,record));}return{body:changed?concat(parts):bytes,changed:changed};}
+  function cleanProtoPlayback(bytes,budget,counts) {
+    var records=parse(bytes,budget),parts=[],changed=false,content=knownPlayerField(records,1,2);
+    counts.contentPresent=!!content;
+    for(var i=0;i<records.length;i++) {
+      var record=records[i];
+      if(record===content) {var child=cleanProtoContent(bytes.subarray(record.dataStart,record.dataEnd),budget,counts);parts.push(child.changed?message(1,child.body):raw(bytes,record));changed=changed||child.changed;}
+      else parts.push(raw(bytes,record));
+    }
+    if(!content) {parts.push(message(1,scalar(50,1)));counts.inlineBefore="absent";counts.inlineNoAd++;changed=true;}
+    return {body:changed?concat(parts):bytes,changed:changed};
+  }
+
   /**
-   * 功能：执行 cleanProtoPlayer 对应的内部处理步骤。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
+   * 更新时间：2026-10-05T11:28:10+08:00
    */
-  function cleanProtoPlayer(bytes,budget,counts){var records=parse(bytes,budget),parts=[],changed=false;for(var i=0;i<records.length;i++){var record=records[i],child=null;if(record.no===1&&record.wire===2)child=cleanProtoContext(bytes.subarray(record.dataStart,record.dataEnd),budget,counts);else if(record.no===4&&record.wire===2)child=cleanProtoPlayback(bytes.subarray(record.dataStart,record.dataEnd),budget,counts);if(child&&child.changed){parts.push(message(record.no,child.body));changed=true;}else parts.push(raw(bytes,record));}return{body:changed?concat(parts):bytes,changed:changed};}
+  function cleanProtoPlayer(bytes,budget,counts) {
+    var records=parse(bytes,budget),parts=[],changed=false;
+    var context=knownPlayerField(records,1,2),playback=knownPlayerField(records,4,2);
+    if(!context)return {body:bytes,changed:false};
+    counts.playbackPresent=!!playback;
+    for(var i=0;i<records.length;i++) {
+      var record=records[i],child=null;
+      if(record===context)child=cleanProtoContext(bytes.subarray(record.dataStart,record.dataEnd),budget,counts);
+      else if(record===playback)child=cleanProtoPlayback(bytes.subarray(record.dataStart,record.dataEnd),budget,counts);
+      if(child&&child.changed){parts.push(message(record.no,child.body));changed=true;}else parts.push(raw(bytes,record));
+    }
+    if(!playback){parts.push(message(4,message(1,scalar(50,1))));counts.contentPresent=false;counts.inlineBefore="absent";counts.inlineNoAd++;changed=true;}
+    return {body:changed?concat(parts):bytes,changed:changed};
+  }
+
   /**
-   * 功能：执行 cleanInnerBody 对应的内部处理步骤。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：沿已确认的播放器字段路径清理广告参数，诊断原始状态并保留未知字段。
+   * 更新时间：2026-10-05T11:28:10+08:00
    */
-  function cleanInnerBody(bytes,budget,counts){try{var value=JSON.parse(utf8Decode(bytes));if(!cleanPlayer(value,counts))return null;return{body:utf8Encode(JSON.stringify(value)),format:"json"};}catch(_){var result=stage("inner-protobuf-",/**
- * 功能：封装局部作用域或执行当前回调步骤。
- * 更新时间：2026-10-04T08:54:22+08:00
- */
-function(){return cleanProtoPlayer(bytes,budget,counts);});return result.changed?{body:result.body,format:"protobuf"}:null;}}
+  function cleanInnerBody(bytes,budget,counts) {
+    var value=null,json=false;
+    try {value=JSON.parse(utf8Decode(bytes));json=true;}catch(_) {}
+    counts.format=json?"json":"protobuf";
+    lastInnerDiagnostics=counts;
+    if(json) {if(!cleanPlayer(value,counts))return null;return {body:utf8Encode(JSON.stringify(value)),format:"json"};}
+    var result=cleanProtoPlayer(bytes,budget,counts);
+    return result.changed?{body:result.body,format:"protobuf"}:null;
+  }
+
   /**
    * 功能：执行 cleanEncryptedRequest 对应的内部处理步骤。
    * 更新时间：2026-10-04T08:54:22+08:00
@@ -799,7 +905,8 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
    * 功能：执行 append 对应的内部处理步骤。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
-  function append(entry,payload){var c=logConfig(),written=[];if(!c)return false;try{ytDiagnosticPurgeLegacy();var raw=$persistentStore.read(LOG_CACHE),old=raw?JSON.parse(raw):null,state=old&&old.session===c.session&&Array.isArray(old.entries)?old:{session:c.session,entries:[],captureBytes:0};if(state.entries.length>=600)return false;var serialized=payload?JSON.stringify(ytDiagnosticSanitize(payload)):null,size=serialized?utf8Size(serialized):0,budget=[16,32,64].indexOf(Number(args.capture_budget))>=0?Number(args.capture_budget)*1048576:33554432;if((state.captureBytes||0)+size>budget||size>33554432)return false;if(serialized){var chunks=[];for(var start=0;start<serialized.length;start+=131072)chunks.push(serialized.slice(start,start+131072));if(chunks.length>256)return false;var prefix="ytads.capture."+c.session+"."+payload.id+".";entry.captureRef={prefix:prefix,chunks:chunks.length,chars:serialized.length,storedBytes:size,checksum:checksum(serialized)};for(var i=0;i<chunks.length;i++){var key=prefix+i;if($persistentStore.write(chunks[i],key)!==true)fail("capture-write-failed");written.push(key);}}var next={session:c.session,entries:state.entries.concat([entry]),captureBytes:(state.captureBytes||0)+size},index=JSON.stringify(next);if(utf8Size(index)>131072||ytDiagnosticCommitEntry(next, budget)!==true)fail("index-write-failed");return true;}catch(_){for(var j=0;j<written.length;j++)try{$persistentStore.write(undefined,written[j]);}catch(_){}return false;}}
+  function append(entry,payload){var c=logConfig(),written=[];if(!c)return false;try{if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
+      ytDiagnosticPurgeLegacy();var raw=$persistentStore.read(LOG_CACHE),old=raw?JSON.parse(raw):null,state=old&&old.session===c.session&&Array.isArray(old.entries)?old:{session:c.session,entries:[],captureBytes:0};if(state.entries.length>=600)return false;var serialized=payload?JSON.stringify(ytDiagnosticSanitize(payload)):null,size=serialized?utf8Size(serialized):0,budget=[16,32,64].indexOf(Number(args.capture_budget))>=0?Number(args.capture_budget)*1048576:33554432;if((state.captureBytes||0)+size>budget||size>33554432)return false;if(serialized){var chunks=[];for(var start=0;start<serialized.length;start+=131072)chunks.push(serialized.slice(start,start+131072));if(chunks.length>256)return false;var prefix="ytads.capture."+c.session+"."+payload.id+".";entry.captureRef={prefix:prefix,chunks:chunks.length,chars:serialized.length,storedBytes:size,checksum:checksum(serialized)};for(var i=0;i<chunks.length;i++){var key=prefix+i;if($persistentStore.write(chunks[i],key)!==true)fail("capture-write-failed");written.push(key);}}var next={session:c.session,entries:state.entries.concat([entry]),captureBytes:(state.captureBytes||0)+size},index=JSON.stringify(next);if(utf8Size(index)>131072||ytDiagnosticCommitEntry(next, budget)!==true)fail("index-write-failed");return true;}catch(_){for(var j=0;j<written.length;j++)try{$persistentStore.write(undefined,written[j]);}catch(_){}return false;}}
   /**
    * 功能：记录当前配置或请求处理结果。
    * 更新时间：2026-10-04T08:54:22+08:00
@@ -824,10 +931,11 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
             else {
               var innerCleaned = cleanEncryptedRequest(directBody, activeState);
               innerStatus = innerCleaned ? "authenticated_cleaned" : "authenticated_unchanged";
+              if(!innerCleaned)innerCounts=innerDiagnosticSummary(lastInnerDiagnostics);
               if (innerCleaned) {
                 output = {headers:rewrittenHeaders($request.headers), body:innerCleaned.body};
                 innerChanged = true;
-                innerCounts = " context_ad_signals=" + innerCleaned.counts.contextAdSignals + " playback_ad_params=" + innerCleaned.counts.playbackAdParams + " inline_no_ad=" + innerCleaned.counts.inlineNoAd;
+                innerCounts = innerDiagnosticSummary(innerCleaned.counts) + " context_ad_signals=" + innerCleaned.counts.contextAdSignals + " playback_ad_params=" + innerCleaned.counts.playbackAdParams + " inline_no_ad=" + innerCleaned.counts.inlineNoAd;
               }
             }
           }
@@ -847,7 +955,7 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
         var cleaned = cleanEncryptedRequest($request.body, state);
         if (cleaned) {
           output = {headers:rewrittenHeaders($request.headers),body:cleaned.body};
-          record("changed: authenticated=true encoding=" + cleaned.encoding + " inner=" + cleaned.format + " context_ad_signals=" + cleaned.counts.contextAdSignals + " playback_ad_params=" + cleaned.counts.playbackAdParams + " inline_no_ad=" + cleaned.counts.inlineNoAd, "info", output);
+          record("changed: authenticated=true encoding=" + cleaned.encoding + " inner=" + cleaned.format + " context_ad_signals=" + cleaned.counts.contextAdSignals + " playback_ad_params=" + cleaned.counts.playbackAdParams + " inline_no_ad=" + cleaned.counts.inlineNoAd + innerDiagnosticSummary(cleaned.counts), "info", output);
         } else record("matched: local config active; inner player request unchanged", "debug", output);
         }
         else {

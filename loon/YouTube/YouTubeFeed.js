@@ -6,6 +6,23 @@
  * 运行环境：Loon JavaScript
  */
 /**
+ * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
+ * 更新时间：2026-10-05T11:28:10+08:00
+ * @param {Object} entry 事件摘要。
+ * @param {Object|null} payload 待脱敏的结构诊断。
+ * @param {string} level 主插件选择的级别。
+ * @returns {boolean} 是否保存当前事件。
+ */
+function ytDiagnosticShouldRecord(entry,payload,level) {
+  var processing=payload&&payload.processing;
+  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  if(isError)entry.level="error";
+  if(level==="error")return isError;
+  if(level==="warn")return isError||entry.level==="warn";
+  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  return true;
+}
+/**
  * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
  * 更新时间：2026-10-05T09:16:03+08:00
  * @param {Object} pending 本次待提交的索引，其末项为新事件。
@@ -283,6 +300,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     try {
       c = devConfig();
       if (!c) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read("ytads.logger.entries.v2");
       if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");

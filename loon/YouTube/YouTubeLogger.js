@@ -1,10 +1,27 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：2.4.0
+ * 版本：2.5.0
  * 更新时间：2026-10-04T08:54:22+08:00
  * 运行环境：Loon JavaScript
  */
+/**
+ * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
+ * 更新时间：2026-10-05T11:28:10+08:00
+ * @param {Object} entry 事件摘要。
+ * @param {Object|null} payload 待脱敏的结构诊断。
+ * @param {string} level 主插件选择的级别。
+ * @returns {boolean} 是否保存当前事件。
+ */
+function ytDiagnosticShouldRecord(entry,payload,level) {
+  var processing=payload&&payload.processing;
+  var isError=entry.level==="error" || !!(processing&&processing.exception) || /inner=(?:authentication_failed|compression_failed|invalid_config_key|protocol_cleanup_failed)/.test(entry.message);
+  if(isError)entry.level="error";
+  if(level==="error")return isError;
+  if(level==="warn")return isError||entry.level==="warn";
+  if(payload&&level!=="debug"&&entry.level==="debug")entry.level="info";
+  return true;
+}
 /**
  * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
  * 更新时间：2026-10-05T09:16:03+08:00
@@ -163,7 +180,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.4.0";
+  var VERSION = "2.5.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -273,6 +290,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     try {
       c = devConfig();
       if (!c) return false;
+      if (!ytDiagnosticShouldRecord(entry,payload,args.log_level)) return true;
       ytDiagnosticPurgeLegacy();
       var raw = $persistentStore.read("ytads.logger.entries.v2");
       if (raw && devUTF8Size(raw) > 131072) throw new Error("log-index-invalid");
@@ -564,9 +582,17 @@ function (row) {
    * 功能：在日志页面中读取分块并生成单个完整日志文件。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
-  async function browserExport() {
-    var status = document.getElementById("status"), save = document.getElementById("save");
+  async function browserExport(event) {
+    var status = document.getElementById("status"), save = document.getElementById("save"), download = document.getElementById("download");
+    if(download&&download.disabled)return;
+    if(download)download.disabled=true;
     try {
+      if(event) {
+        if(event.preventDefault)event.preventDefault();
+        var pause=await fetch("/pause",{method:"POST",cache:"no-store"});
+        if(!pause.ok)throw new Error("暂停失败，请检查 Loon 是否运行。");
+      }
+      status.textContent="正在生成日志文件，请保持 Loon 开启…";
       /**
        * 功能：执行 get 对应的内部处理步骤。
        * 更新时间：2026-10-04T08:54:22+08:00
@@ -659,13 +685,17 @@ function (row) {
       for(var q=0;q<data.completeness.limitations.length;q++)parts.push((q+1)+". "+data.completeness.limitations[q]+"\n");
       parts.push("All-Referenced-Samples-Readable: "+(issues.length===0)+"\n");for(q=0;q<issues.length;q++)parts.push("Issue: "+issues[q]+"\n");
       var blob = new Blob(parts, {type:"text/plain;charset=utf-8"});
+      if(save.href&&save.href.indexOf("blob:")===0)URL.revokeObjectURL(save.href);
       save.href = URL.createObjectURL(blob);
       save.download = "YouTube-" + data.exportedAt.replace(/[:.]/g, "-") + ".log";
       save.hidden = false;
-      status.textContent = "已合成一个完整 .log 文件（" + rows.length + " 条记录）。点击下方保存日志文件。";
+      status.textContent = "已生成日志文件（" + rows.length + " 条记录），正在下载；若 Safari 未弹出下载提示，可点击保存日志文件。";
+      save.click();
     } catch (error) {
       status.textContent = error.message || "导出失败，请检查 Loon 是否运行。";
       save.hidden = true;
+    } finally {
+      if(download)download.disabled=false;
     }
   }
   /**
@@ -700,24 +730,21 @@ function (row) {
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   function page(c, rows) {
-    var seen = coverage(rows);
     return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 日志</title>' +
-      '<style>body{font:17px system-ui;margin:32px auto;padding:0 24px;max-width:620px;line-height:1.7}button,a{font:inherit}button{margin:6px 0;padding:8px 16px}a{display:block;margin:22px 0}</style>' +
-      '<h1>YouTube 日志</h1><p>状态：' + (c && c.enabled === true ? '正在记录' : '已暂停') + '；保留 ' + rows.length + ' 条。保存级别：' + minimum + ' 及以上。</p>' +
-      '<p>实际记录接口：' + seen.summary + '</p>' +
-      (seen.hasPlaybackInitialization ? '<p>已记录播放初始化；版本：' + seen.initializationVersions.join('、') + '。</p>' : '<p>尚未记录 initplayback/player/get_watch，当前记录无法判断片头请求处理是否执行。缺失也可能来自缓存、未命中或并发写入，不能据此认定请求没有发生。</p>') +
+      '<style>body{font:17px system-ui;margin:32px auto;padding:0 24px;max-width:620px;line-height:1.7}button,a{font:inherit}button{margin:6px 0;padding:8px 16px}a{display:block;margin:22px 0}[hidden]{display:none!important}</style>' +
+      '<h1>YouTube 日志</h1><p>状态：' + (c && c.enabled === true ? '正在记录' : '已暂停') + '；保留 ' + rows.length + ' 条。保存级别：' + minimum + '。</p>' +
       '<form method="post" action="/start"><button>开始记录（保留本次日志）</button></form>' +
       '<form method="post" action="/pause"><button>暂停记录</button></form>' +
       '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
       '<form method="post" action="/mark-content"><button>标记：正在播放正片</button></form>' +
-      '<a href="/export">导出完整日志文件 .log（浏览、刷新、播放全链路）</a>' +
+      '<button id="download" type="button">下载日志</button><p id="status" role="status"></p><a id="save" hidden>保存日志文件</a>' +
       '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，脱敏记录另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
       '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。媒体事件仅记录响应头，不等待媒体正文；唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
-      '<p>在主插件选择日志保存级别：debug 为全部排查摘要；info 为修改结果及异常；warn 为警告及错误；error 为未预期错误。调整级别只影响新记录。</p>' +
-      '<p>开发抓包记录不受摘要级别过滤。日志无法读取 Loon 的连接、证书或脚本超时记录。抓包可能增加播放等待，复现后应关闭。</p>' +
-      '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form></html>';
+      '<p>在主插件选择日志保存级别：info 保存完整脱敏记录，包含浏览、刷新、播放及处理结果；error 只保存错误；debug 保存完整记录并保留调试级别；warn 只保存警告和错误。调整级别只影响新记录，旧记录仍保留。</p>' +
+      '<p>下载日志会自动暂停记录，在当前页面生成一个 .log 并触发下载。完整记录指脚本实际捕获的脱敏数据，不保证覆盖所有网络请求；媒体正文不保存。日志无法读取 Loon 的连接、证书或脚本超时记录。</p>' +
+      '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form><script>document.getElementById("download").onclick=' + browserExport.toString() + ';</script></html>';
   }
   /**
    * 功能：根据当前 Loon 请求或响应执行对应处理流程。
@@ -817,7 +844,7 @@ function (source) { $persistentStore.write(undefined, "ytads.logger." + source +
     }
     if (path !== "/" && path !== "/download.log") return response(404, "Not found", "text/plain; charset=utf-8");
     var rows = records(c);
-    if (path === "/") return response(200, page(c, rows));
+    if (path === "/") return response(200, page(c, rows), "text/html; charset=utf-8", {"Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"});
 
     return response(303, "", "text/plain; charset=utf-8", {Location:BASE + "export"});
   }

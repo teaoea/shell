@@ -13,7 +13,7 @@ function run(name, store, extra = {}, failingKey = '') {
   const logs = [];
   const context = {
     $persistentStore:{read:key=>store.get(key),write(value,key){if (key === failingKey) return false; if(value===undefined)store.delete(key);else store.set(key,value);return true;}},
-    $argument:{script_debug:false,log_enabled:true,log_level:'error',capture_raw:true,capture_budget:'32',ump_mode:'inspect'},
+    $argument:{script_debug:false,log_enabled:true,log_level:'info',capture_raw:true,capture_budget:'32',ump_mode:'inspect'},
     $loon:'test-device test-os test-build', $done(value){result=value;calls++;}, console:{log:value=>logs.push(value)},
     Uint8Array,ArrayBuffer,TextDecoder,TextEncoder,...extra
   };
@@ -269,7 +269,7 @@ test('large export reads bounded chunks and browser assembles exactly one comple
   const html=page(store,'export');assert.equal(html.status,200);
   assert.ok(html.headers['Content-Security-Policy'].includes("connect-src 'self'"));
   const script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
-  const status={textContent:''},save={hidden:true};let savedBlob;const sizes=[];
+  const status={textContent:''},save={hidden:true,click(){this.clicked=true;}};let savedBlob;const sizes=[];
   await vm.runInNewContext(script,{
     document:{getElementById:id=>id==='status'?status:save},Blob,
     URL:{createObjectURL(blob){savedBlob=blob;return 'blob:local-test';}},
@@ -303,7 +303,7 @@ test('browser export refuses checksum-corrupt bytes instead of offering an incom
  const manifest=JSON.parse(page(store,'export-manifest.json').body),ref=manifest.rows[0].captureRef;
  store.set(ref.prefix+'0',store.get(ref.prefix+'0').replace('privacy-structure-only','privacy-structure-onlX'));
  const html=page(store,'export'),script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
- const status={textContent:''},save={hidden:true};let blob;
+ const status={textContent:''},save={hidden:true,click(){this.clicked=true;}};let blob;
  await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:x=>{blob=x;}},async fetch(path){const r=page(store,path.slice(1));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}},{timeout:5000});
  assert.equal(blob,undefined);assert.equal(save.hidden,true);assert.ok(status.textContent.includes('校验失败'));
 });
@@ -314,7 +314,7 @@ test('single browser export includes browse, refresh, player and binary media sa
  run('YouTubeLogger',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/config',method:'POST'},$response:{status:200,headers:{'Content-Type':'application/x-protobuf'},body:new Uint8Array([8,1])}});
  run('YouTubePlayback',store,{$request:{url:media,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:new Uint8Array([21,3,1,2,3])}});
  page(store,'pause','POST');const html=page(store,'export'),script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
- const status={textContent:''},save={hidden:true};let blob;
+ const status={textContent:''},save={hidden:true,click(){this.clicked=true;}};let blob;
  await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:x=>{blob=x;return 'blob:local';}},async fetch(path){const r=page(store,path.slice(1));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}},{timeout:5000});
  assert.equal(save.hidden,false);assert.ok(save.download.startsWith('YouTube-')&&save.download.endsWith('.log'));
  const exported=await blob.text();assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/Source: YouTubeFeed/);assert.match(exported,/Source: YouTubeConfig/);assert.match(exported,/Endpoint: config/);assert.match(exported,/Source: YouTubePlayback/);assert.match(exported,/privacy-structure-only/);assert.ok(!exported.includes('FQMBAgM='));assert.match(exported,/Response-After:/);
@@ -408,4 +408,38 @@ test('all four standalone scripts use the same final-commit implementation',()=>
   const names=['YouTubeLogger','YouTubeFeed','YouTubePlayback','YouTubeConfig'];
   const helpers=names.map(name=>fs.readFileSync(new URL(name+'.js',root),'utf8').split('function ytDiagnosticCommitEntry(pending, budget) {')[1].split('\n}\n')[0]);
   for(const helper of helpers)assert.equal(helper,helpers[0]);
+});
+
+test('info records unchanged requests and responses, error omits normal samples and retains failures',()=>{
+ for(const level of ['info','error']) {
+  const store=started(),argument={log_enabled:true,log_level:level,capture_budget:'32'};
+  player(store,'{"playabilityStatus":{}}',{$argument:argument});
+  run('YouTubeLogger',store,{$argument:argument,$request:{url:media,method:'POST'}});
+  const normal=exportData(store);
+  assert.equal(normal.events.length,level==='info'?2:0);
+  if(level==='info')assert.ok(normal.events.every(x=>x.summary.level==='info'));
+  player(store,'{INVALID_PRIVATE_BODY',{$argument:argument});
+  const all=exportData(store);
+  assert.equal(all.events.length,level==='info'?3:1);
+  assert.equal(all.events.at(-1).summary.level,'error');
+  assert.ok(!JSON.stringify([...store.values()]).includes('INVALID_PRIVATE_BODY'));
+ }
+});
+
+test('main-page download pauses recording and triggers one file download without page navigation',async()=>{
+ const store=started();player(store);
+ const html=page(store,'');assert.ok(!html.body.includes('href="/export"'));
+ assert.ok(html.headers['Content-Security-Policy'].includes("script-src 'unsafe-inline'"));
+ assert.ok(html.headers['Content-Security-Policy'].includes("connect-src 'self'"));
+ assert.ok(html.body.includes('[hidden]{display:none!important}'));
+ const script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
+ const button={},status={textContent:''},save={hidden:true,clicks:0,click(){this.clicks++;}};let blob;
+ const context={document:{getElementById:id=>id==='download'?button:id==='status'?status:save},Blob,
+  URL:{createObjectURL(value){blob=value;return 'blob:local-test';},revokeObjectURL(){}},
+  async fetch(path,options={}) {let r=page(store,path.replace(/^\//,''),options.method||'GET');if(r.status===303)r=page(store,'');return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}};
+ vm.runInNewContext(script,context,{timeout:5000});
+ await button.onclick({preventDefault(){}});
+ assert.equal(JSON.parse(store.get(configKey)).enabled,false);
+ assert.equal(save.clicks,1);assert.ok(save.download.endsWith('.log'));
+ assert.match(await blob.text(),/EVENT 1/);assert.equal(save.hidden,false);
 });

@@ -262,9 +262,15 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
   assert.ok(result.logs.some(line => line.includes('background_modified=0')));
-  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlayback 2.1.0]')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlayback 2.2.0]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));
   assert.equal(run(player, { debug: false }).logs.length, 0);
+});
+
+test('player response diagnostics list only bounded field numbers and wire types',()=>{
+ const result=run(clean);
+ assert.ok(result.logs.some(line=>line.includes('player_fields=2/2,99/2')));
+ assert.equal(result.output.body,undefined);
 });

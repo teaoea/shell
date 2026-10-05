@@ -187,7 +187,7 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 
 插件界面只保留三个开关：后台播放、隐藏首页 Shorts、日志工具。播放器请求、片头/中插配置、新版 initplayback、Shorts 广告及自适应信息流广告清理均固定启用，不再显示重复开关。日志保存级别和容量是选择项，不是功能开关。
 
-普通摘要级别从低到高为 `debug → info → warn → error`：`debug` 保存全部处理摘要；`info` 保存实际清理结果、警告和错误；`warn` 保存状态/结构/大小异常和错误；`error` 保存未预期解析或运行错误。级别只影响新摘要，不删除历史记录。“日志工具”同时保存每次匹配脚本收到的脱敏结构及其处理结果，避免过滤掉未修改样本；不会为同一响应再重复写一份普通摘要。
+日志级别作用于新记录：`info` 保存完整脱敏链路，包括未修改的请求/响应、处理结果和错误；`error` 只保存错误事件及其可用的脱敏诊断，正常样本不写入缓存；`debug` 保存完整链路并保留调试级别；`warn` 保存警告和错误。改变级别不删除历史记录。“完整”指脚本实际观察到的数据，不能保证全部网络请求均被捕获。
 
 2026-10-04T06:31:09Z 导出确认，广告通过 browse 延迟更新容器 `10 → 49399797 → 32 → 1 → 1 → 1 → 153515154` 下发。2.3.0 加入该路径，使用既有 EML 模板/模型和命令识别清理完整广告条目，保留更新位置元数据及未知字段。四份原先未修改的含 pagead 响应重放后广告标记均清零；此处为日志样本重放结果，更新后的实机界面仍需验证。
 
@@ -195,7 +195,7 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 
 2026-10-05 日志写入优化：四份脚本在脱敏样本分块写完后重新读取最新共享索引，再追加本次事件并重新核对条目数和容量。这样保留样本处理期间其他脚本已提交的记录，缩短使用旧索引的窗口。提交前复核会话及记录状态；暂停或清空后到达的旧事件放弃提交并删除本次样本块，旧写入失败也不会恢复旧会话。保留一个共享缓存和一个 `.log` 导出入口，媒体响应仍只记录响应头。公开存储接口没有原子读改写，最终提交恰好同时发生时仍可能覆盖，不能保证完整网络抓包。
 
-日志页和导出文件会列出实际记录的接口数量、是否观察到 initplayback/player/get_watch，以及对应版本。范围声明不等于完整抓到所有请求；缺失可能来自缓存、未命中、日志启停时序或并发索引覆盖，不能仅凭缺失认定请求没有发生。
+下载的日志文件会列出实际记录的接口数量、是否观察到 initplayback/player/get_watch，以及对应版本；日志页面隐藏这些诊断信息。范围声明不等于完整抓到所有请求；缺失可能来自缓存、未命中、日志启停时序或并发索引覆盖，不能仅凭缺失认定请求没有发生。
 
 日志在写入缓存前脱敏；单一 `.log` 保留浏览、刷新、播放的事件时间、脚本版本、接口路径、状态、耗时、删除计数、媒体响应头和人工标记。
 
@@ -211,10 +211,10 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 ### 完整日志操作
 
 1. 更新主插件和四份 JS：`YouTubeFeed.js`、`YouTubePlayback.js`、`YouTubeConfig.js`、`YouTubeLogger.js`。文件需要发布后才能从远程地址下载；本地导入时所有条目都填写对应的本地资源名。
-2. 主插件只需开启“日志工具”，选择容量。日志工具会自动保存 API 脱敏结构及媒体响应头，不再需要第二个开关。普通摘要级别不会过滤结构诊断事件。
+2. 主插件只需开启“日志工具”，选择容量。日志工具会自动保存 API 脱敏结构及媒体响应头，不再需要第二个开关。排查完整链路选择 info；只收集错误选择 error。
 3. Safari 输入 **`http://youtube-logs.invalid/`**。地址由 Loon 在本地直接响应，不需要额外 MitM。先导出需要保留的旧记录；需要干净样本时清空，再点“开始记录”。
 4. 重现一次广告和一次正常播放。在相近时间添加广告/正片标记，减少其他播放、预览或自动播放，以便比较样本。切换 App 添加标记会有时间误差，不把它当作精确的广告边界。
-5. 回到页面暂停记录，只点击 **“导出完整日志文件 .log（浏览、刷新、播放全链路）”**。等待显示文件已生成，再点击“保存日志文件”，通过 Safari 保存到“文件”。这是唯一的用户日志出口。
+5. 回到页面点击 **“下载日志”**。页面自动暂停记录，读取分块、校验并生成唯一的 `.log` 文件，在当前页面触发下载，不跳转。Safari 若未显示下载提示，可点击生成后的“保存日志文件”链接。旧导出地址仅保留兼容已有书签。
 6. 查看文件头的 `Stopped-Reason`，每个 `EVENT` 的 `Capture-Error`、各正文的 `Available/Reason`，以及末尾 `All-Referenced-Samples-Readable`。未修改响应的正文会用 `Reference` 指向原响应；修改响应会同时保存修改前后脱敏结构。
 7. 全部停止新增时关闭“日志工具”；已有样本保留。页面清空会删除本项目索引、已索引诊断数据和旧日志缓存，保留其他脚本数据。
 
@@ -287,7 +287,11 @@ Loon 官方 [Rewrite 文档](https://nsloon.app/en/docs/Rewrite/rewrite_v2/) 支
 
 ## 本地验证
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 272 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
+2026-10-05 初始化处理 1.9.0 修正已验证内层请求缺少播放上下文时不写入无广告标志的缺口：沿 PlayerRequest 字段 4 → PlaybackContext 字段 1 → ContentPlaybackContext 字段 50 补齐已知路径，JSON 使用相同的命名字段。定义核对自 [PlayerRequest](https://github.com/LuanRT/YouTube.js/blob/main/protos/youtube/api/pfiinnertube/player_request.proto) 和 [PlaybackContext](https://github.com/LuanRT/YouTube.js/blob/main/protos/youtube/api/pfiinnertube/playback_context.proto)。字段重复、类型冲突或认证失败时保留原密文。新增日志只记录内层格式、已知路径存在状态及标志原始状态；播放器响应 2.2.0 只记录有限的根字段号和类型。自建样本测试不能证明服务端采纳这些修改，实际去广告效果仍需实机确认。
+
+日志工具 2.5.0 移除主页接口统计和初始化提示，在下载文件中保留诊断信息。info 保存完整脱敏链路，error 只保存错误；下载日志按钮在当前页面暂停记录、校验样本并触发下载。媒体正文仍不缓冲，凭据和签名仍不保存。
+
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。共 283 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
 node --check loon/YouTube/YouTubeFeed.js
