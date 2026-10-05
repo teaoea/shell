@@ -1,8 +1,8 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：2.6.0
- * 更新时间：2026-10-04T08:54:22+08:00
+ * 版本：2.9.0
+ * 更新时间：2026-10-05
  * 运行环境：Loon JavaScript
  */
 /**
@@ -307,7 +307,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.8.0";
+  var VERSION = "2.9.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -628,6 +628,16 @@ function (r) {
             !/^(player|get_watch|browse|next|search|reel_watch_sequence|log_event|config|initplayback|ad_break|ump|unknown)$/.test(r.endpoint) ||
             typeof r.message !== "string" || r.message.length > 600 || /[\r\n<>]/.test(r.message)) return;
         var row = { time:r.time, source:r.source, level:r.level, version:r.version, endpoint:r.endpoint, message:r.message };
+        // 功能：仅导出明确的非负耗时数值，旧记录缺失时不填占位 0，不复制任意索引字段。
+        // 更新时间：2026-10-05；时间不包含网络等待或最后的索引提交。
+        if (r.timing && typeof r.timing === "object") {
+          var timing = {}, timingKeys = ["capturePrepareMs","sampleWriteMs","scriptBeforeIndexCommitMs"];
+          for (var t = 0; t < timingKeys.length; t++) {
+            var timingValue = r.timing[timingKeys[t]];
+            if (typeof timingValue === "number" && Number.isFinite(timingValue) && timingValue >= 0 && timingValue <= 600000) timing[timingKeys[t]] = timingValue;
+          }
+          if (Object.keys(timing).length) row.timing = timing;
+        }
         if (r.captureRef && typeof r.captureRef.prefix === "string" &&
             /^ytads\.capture\.[a-z0-9-]+\.[a-z0-9-]+\.$/.test(r.captureRef.prefix) &&
             r.captureRef.prefix.indexOf("ytads.capture." + c.session + ".") === 0 &&
@@ -792,11 +802,12 @@ function (row) {
         if(Object.prototype.hasOwnProperty.call(v,"body"))body("  body",v.body,lines);
       }
       /**
-       * 功能：执行 eventText 对应的内部处理步骤。
-       * 更新时间：2026-10-04T08:54:22+08:00
+       * 功能：生成单条日志正文，按需包含采样计时，不将缺失耗时当作零。
+       * 更新时间：2026-10-05
        */
       function eventText(index,row,capture,captureError){
         var lines=["","================================================================================","EVENT "+(index+1),"================================================================================","Time: "+row.time,"Level: "+String(row.level).toUpperCase(),"Source: "+row.source,"Version: "+row.version,"Endpoint: "+row.endpoint,"Phase: "+value(row.phase),"Summary: "+row.message];
+        if(row.timing)structure("Capture-Timing-Ms",row.timing,lines,0);
         if(captureError)lines.push("Capture-Error: "+captureError);if(!capture){lines.push("Capture: unavailable");return lines.join("\n")+"\n";}
         lines.push("Runtime: "+value(capture.runtime));structure("Correlation",capture.correlation,lines,0);structure("Processing",capture.processing,lines,0);
         exchange("Request-Inner-Before",capture.requestInner,lines);exchange("Request-Inner-After",capture.requestInnerAfter,lines);exchange("Request-Before",capture.request,lines);exchange("Request-After",capture.requestAfter,lines);exchange("Response-Before",capture.responseBefore,lines);exchange("Response-After",capture.responseAfter,lines);

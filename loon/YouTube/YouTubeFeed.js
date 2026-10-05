@@ -1,8 +1,8 @@
 /**
  * 文件：YouTubeFeed.js
  * 功能：清理首页与推荐信息流广告，并按开关隐藏首页 Shorts 推荐区。
- * 版本：3.0.0
- * 更新时间：2026-10-04T08:54:22+08:00
+ * 版本：2.5.0
+ * 更新时间：2026-10-05
  * 运行环境：Loon JavaScript
  */
 /**
@@ -149,7 +149,7 @@ function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptke
    * 功能：将可用 API 正文及已认证的内层播放器请求转换为脱敏字段树；配置密钥和媒体正文不保存。
    * 更新时间：2026-10-05T12:09:41+08:00
    */
-  function body(v,request,inner){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(!inner&&/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  function body(v,request,inner){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(!inner&&/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.memoryBytes instanceof Uint8Array?v.memoryBytes:v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
   ['request','requestAfter','requestInner','requestInnerAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -188,7 +188,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
  */
 (function () {
   "use strict";
-  var VERSION = "2.4.0";
+  var VERSION = "2.5.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -243,24 +243,8 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     return size;
   }
   /**
-   * 功能：把二进制数据编码为 Base64 文本。
-   * 更新时间：2026-10-04T08:54:22+08:00
-   */
-  function devBase64(bytes) {
-    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var parts = [], text = "";
-    for (var i = 0; i < bytes.length; i += 3) {
-      var a = bytes[i], b = i + 1 < bytes.length ? bytes[i + 1] : 0, c = i + 2 < bytes.length ? bytes[i + 2] : 0;
-      text += alphabet[a >> 2] + alphabet[((a & 3) << 4) | (b >> 4)] +
-        (i + 1 < bytes.length ? alphabet[((b & 15) << 2) | (c >> 6)] : "=") + (i + 2 < bytes.length ? alphabet[c & 63] : "=");
-      if (text.length >= 32768) { parts.push(text); text = ""; }
-    }
-    parts.push(text);
-    return parts.join("");
-  }
-  /**
-   * 功能：把运行时正文转换为可导出的文本或二进制结构。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：生成临时正文描述；二进制直接引用原视图，避免 Base64 往返，持久化前必须脱敏。
+   * 更新时间：2026-10-05
    */
   function devBody(body) {
     if (body === undefined || body === null) return {available:false, reason:"not-provided-by-runtime"};
@@ -275,7 +259,8 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     else if (ArrayBuffer.isView(body)) bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
     else return {available:false, reason:"unsupported-runtime-body-type"};
     if (bytes.length > 8388608) throw new Error("capture-body-limit");
-    return {available:true, encoding:"base64", bytes:bytes.length, data:devBase64(bytes)};
+    // 原始视图只留在当前调用的临时内存；写入前转换为脱敏字段树。
+    return {available:true, bytes:bytes.length, memoryBytes:bytes};
   }
   /**
    * 功能：在日志容量或存储异常时暂停继续写入。
@@ -293,10 +278,11 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     if (typeof console !== "undefined") console.log("[YouTubeLogger] recording-stopped: " + reason);
   }
   /**
-   * 功能：把摘要与原始样本追加到统一日志缓存。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 功能：追加脱敏样本并记录采样准备与样本写入耗时；不将临时字节视图写入持久缓存。
+   * 更新时间：2026-10-05
    */
   function devAppend(entry, payload) {
+    var appendStarted = Date.now();
     var written = [], c = null;
     try {
       c = devConfig();
@@ -329,6 +315,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
       var next = {session:c.session, entries:state.entries.concat([entry]), captureBytes:used + size};
       var index = JSON.stringify(next);
       if (devUTF8Size(index) > 131072) { devHalt(c, "log-index-limit"); return false; }
+      var prepareFinished = Date.now();
       if (serialized) {
         for (var i = 0; i < entry.captureRef.chunks; i++) {
           var key = entry.captureRef.prefix + i;
@@ -336,6 +323,9 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
           written.push(key);
         }
       }
+      // 计时写在事件索引中，不重写样本；明确不包含最后的索引提交和网络等待。
+      var writeFinished = Date.now();
+      entry.timing = {capturePrepareMs:prepareFinished - appendStarted, sampleWriteMs:writeFinished - prepareFinished, scriptBeforeIndexCommitMs:writeFinished - devStarted};
       if (ytDiagnosticCommitEntry(next, budget) !== true) throw new Error("log-index-write-failed");
       return true;
     } catch (_) {

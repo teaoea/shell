@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
-const sources = Object.fromEntries(['YouTubeLogger','YouTubePlayback','YouTubePlayback'].map(name => [name,fs.readFileSync(new URL(name + '.js',root),'utf8')]));
+const sources = Object.fromEntries(['YouTubeLogger','YouTubePlayback','YouTubeFeed'].map(name => [name,fs.readFileSync(new URL(name + '.js',root),'utf8')]));
 const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root),'utf8');
 const configKey = 'ytads.logger.config.v1', indexKey = 'ytads.logger.entries.v2';
 const api = 'https://youtubei.googleapis.com/youtubei/v1/player?key=SIGNED';
@@ -44,6 +44,38 @@ function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":
     $response:{status:200,headers:{'Content-Type':'application/json'},body},...extra
   });
 }
+test('binary feed capture uses temporary views and persists only redacted structures',()=>{
+ const store=started();
+ const text='{"contents":[{"adSlotRenderer":{}},{"videoRenderer":{"videoId":"PRIVATE_VIDEO","title":"PRIVATE_TITLE"}}],"authorization":"PRIVATE_TOKEN"}';
+ const bytes=new TextEncoder().encode(text),padded=new Uint8Array(bytes.length+4);padded.set(bytes,2);
+ const body=new DataView(padded.buffer,2,bytes.length),before=Buffer.from(padded);
+ const exchange={$request:{url:'https://youtubei.googleapis.com/youtubei/v1/next'},$response:{status:200,headers:{'Content-Type':'application/json'},body}};
+ const enabled=run('YouTubeFeed',store,exchange).result;
+ const disabled=run('YouTubeFeed',store,{...exchange,$argument:{log_enabled:false,capture_raw:false}}).result;
+ assert.deepEqual(Buffer.from(enabled.body),Buffer.from(disabled.body));assert.deepEqual(Buffer.from(padded),before);
+ const captured=exportData(store).events[0].capture;
+ assert.equal(captured.responseBefore.body.bytes,bytes.length);
+ assert.ok(captured.responseBefore.body.structure.contents[0].adSlotRenderer);
+ assert.equal(captured.responseAfter.body.structure.contents.length,1);
+ const persisted=Array.from(store.values()).join('');
+ for(const privateValue of ['PRIVATE_VIDEO','PRIVATE_TITLE','PRIVATE_TOKEN','memoryBytes','utf8-text','base64'])assert.ok(!persisted.includes(privateValue));
+});
+
+test('feed timings include sample preparation and writes and appear in the single log download',async()=>{
+ const store=started();let clock=Date.now();
+ class DiagnosticClock extends Date {static now(){return ++clock;}}
+ run('YouTubeFeed',store,{
+  $request:{url:'https://youtubei.googleapis.com/youtubei/v1/next'},
+  $response:{status:200,headers:{'Content-Type':'application/json'},body:'{"contents":[{"adSlotRenderer":{}},{"videoRenderer":{}}]}'},Date:DiagnosticClock,
+  $persistentStore:{read:key=>store.get(key),write(value,key){clock+=50;if(value===undefined)store.delete(key);else store.set(key,value);return true;}}
+ });
+ const timing=exportData(store).events[0].summary.timing;
+ assert.ok(timing.capturePrepareMs>=0);assert.ok(timing.sampleWriteMs>=50);assert.ok(timing.scriptBeforeIndexCommitMs>=timing.capturePrepareMs+timing.sampleWriteMs);
+ page(store,'pause','POST');const script=page(store,'export').body.match(/<script>([\s\S]*)<\/script>/)[1];let blob;
+ const save={hidden:true,click(){}},status={textContent:''};
+ await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:value=>{blob=value;return 'blob:local';}},async fetch(path){const response=page(store,path.slice(1));return {ok:response.status===200,status:response.status,json:async()=>JSON.parse(response.body)};}},{timeout:5000});
+ assert.ok(blob);const log=await blob.text();assert.ok(log.includes('Capture-Timing-Ms:'));assert.ok(log.includes('sampleWriteMs: '+timing.sampleWriteMs));
+});
 test('the single log switch enables full-chain capture without buffering request bodies',()=>{
   assert.ok(!plugin.includes('capture_raw = switch'));
   const line=plugin.split('\n').find(x=>x.includes('tag=YouTube 日志记录与导出'));

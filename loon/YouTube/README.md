@@ -364,3 +364,11 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 相关请求与响应按日志哈希关联，日志标注 exactPairing=false；上述间隔不是首帧测量，也不能分别量出连接、服务器等待和整包缓冲。解析时间是在保存开发样本前记录的，不包含全部脱敏和持久化成本。时间线支持先撤销未改善体验的初始化兼容缓冲：日志关闭时，`initplayback` 和 `videoplayback` 响应均不进入正文脚本；请求侧广告清理、QUIC 拦截和 Alt-Svc 复写保留。日志开启时仍完整采样并等待响应，不能承诺开发采样与日常播放相同延迟。推荐响应整包过滤暂不改为直接放行，以免重新引入已识别的广告；若关闭日志后仍慢，继续分别对比 QUIC 回退和 next 过滤，不能以毫秒级解析数据否定整个插件带来的等待。
 
 协议依据：[Loon 协议规则](https://nsloon.app/docs/Rule/protocol_rule/)、[UMP 分片类型](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/ump_part_id.proto)、[Onesie 响应结构](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/onesie_innertube_response.proto)、[响应认证示例](https://github.com/LuanRT/googlevideo/blob/main/examples/onesie-request/utils.ts)、[客户端地区字段](https://github.com/LuanRT/YouTube.js/blob/main/protos/youtube/api/pfiinnertube/client_info.proto)。
+
+## 推荐响应采样开销与计时（2026-10-05）
+
+后续 `YouTube-2026-10-05T11-49-40-893Z.log` 开启了完整采样，两个初始化响应分别约 1.49 MB、1.41 MB；关联记录间隔约 1.862 秒、2.065 秒。`next` 请求记录 11:49:30.245 UTC，完整响应记录 11:49:31.491 UTC，间隔 1.246 秒；解析记录 10 ms、删除 2 个广告项，清理前后正文分别为 1,039,610 和 862,620 字节。初始化和推荐响应记录均比上一份日志更早完成，但没有首帧和客户端渲染时间，不能将这些间隔直接当作用户看到的黑屏时长。该记录中的 body_buffering=true 来自日志采样，不能反映日志关闭时的初始化响应交付。
+
+信息流脚本 2.5.0 的二进制开发采样直接使用当前响应的临时字节视图，删除“Base64 编码 → 解码 → 脱敏结构”的往返；持久化前仍只留下同样的脱敏字段树，不保存字节视图、令牌或原文，不改变去广告输出和分页字段。日志关闭时不执行这些采样操作，此优化不代表已解决无日志状态下的等待。
+
+日志工具 2.9.0 在同一个 `.log` 的信息流事件中导出 `Capture-Timing-Ms`：`capturePrepareMs` 是当前采样追加过程中的脱敏、序列化、分块等准备时间，`sampleWriteMs` 是样本块写入阶段时间，`scriptBeforeIndexCommitMs` 是脚本开始到最后索引提交前的时间。它们互有包含关系，不能全部相加；不包含网络或 Loon 收齐响应前的等待，也不包含最后索引提交和后续客户端渲染。旧事件缺失时不填占位 0。计时只保存白名单中的非负有限数值，不增加日志文件或下载接口。
