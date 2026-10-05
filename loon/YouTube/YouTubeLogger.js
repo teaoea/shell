@@ -1,10 +1,37 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：3.0.0
+ * 版本：3.1.0
  * 更新时间：2026-10-05
  * 运行环境：Loon JavaScript
  */
+/**
+ * 功能：记录当前 JS 和 Loon 提供的脚本起点；不读取请求内容，也不把该时间当作网络请求开始时间。
+ * 更新时间：2026-10-05
+ */
+var ytDiagnosticScriptStartedAt = Date.now();
+var ytDiagnosticRuntimeStartedAt = null;
+try {
+  var ytDiagnosticRuntimeDate = typeof $script !== "undefined" && $script ? $script.startTime : null;
+  var ytDiagnosticRuntimeValue = ytDiagnosticRuntimeDate && typeof ytDiagnosticRuntimeDate.getTime === "function" ? ytDiagnosticRuntimeDate.getTime() : null;
+  if (typeof ytDiagnosticRuntimeValue === "number" && Number.isFinite(ytDiagnosticRuntimeValue) && ytDiagnosticRuntimeValue >= 0 && ytDiagnosticRuntimeValue <= ytDiagnosticScriptStartedAt) ytDiagnosticRuntimeStartedAt = ytDiagnosticRuntimeValue;
+} catch (_) {}
+/**
+ * 功能：在最终索引提交前记录实际脚本用时，覆盖处理、脱敏和样本写入；不包含最后索引写入及后续渲染。
+ * 更新时间：2026-10-05
+ * @param {Object} entry 待提交事件，不包含原始凭据或正文。
+ * @returns {void} 只补充有效计时；缺少运行时起点时不生成占位值。
+ */
+function ytDiagnosticStampTiming(entry) {
+  var now = Date.now(), timing = entry.timing && typeof entry.timing === "object" && !Array.isArray(entry.timing) ? entry.timing : {};
+  var jsElapsed = now - ytDiagnosticScriptStartedAt;
+  if (Number.isFinite(jsElapsed) && jsElapsed >= 0 && jsElapsed <= 600000) timing.jsBeforeIndexCommitMs = jsElapsed;
+  if (ytDiagnosticRuntimeStartedAt !== null) {
+    var runtimeElapsed = now - ytDiagnosticRuntimeStartedAt;
+    if (Number.isFinite(runtimeElapsed) && runtimeElapsed >= 0 && runtimeElapsed <= 600000) timing.runtimeBeforeIndexCommitMs = runtimeElapsed;
+  }
+  if (Object.keys(timing).length) entry.timing = timing;
+}
 /**
  * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
  * 更新时间：2026-10-05T11:54:46+08:00
@@ -23,8 +50,8 @@ function ytDiagnosticShouldRecord(entry,payload,level) {
   return true;
 }
 /**
- * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
- * 更新时间：2026-10-05T09:16:03+08:00
+ * 功能：样本写完后刷新索引、补充提交前计时并追加事件，减少并发覆盖，拒绝暂停或旧会话写入。
+ * 更新时间：2026-10-05
  * @param {Object} pending 本次待提交的索引，其末项为新事件。
  * @param {number} budget 日志字节容量上限。
  * @returns {boolean} 索引提交成功；失败时抛出固定错误供调用方清理样本。
@@ -42,6 +69,7 @@ function ytDiagnosticCommitEntry(pending, budget) {
   var used = Number(state.captureBytes || 0);
   if (!Number.isFinite(used) || used < 0 || !Number.isFinite(size) || size < 0) throw Error("log-index-invalid");
   var reason = state.entries.length >= 600 ? "entry-limit" : used + size > budget ? "capture-budget-limit" : null;
+  ytDiagnosticStampTiming(entry);
   var next = JSON.stringify({session:pending.session, entries:state.entries.concat([entry]), captureBytes:used + size});
   if (!reason && unescape(encodeURIComponent(next)).length > 131072) reason = "log-index-limit";
   if (reason) {
@@ -307,7 +335,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "3.0.0";
+  var VERSION = "3.1.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -631,7 +659,7 @@ function (r) {
         // 功能：仅导出明确的非负耗时数值，旧记录缺失时不填占位 0，不复制任意索引字段。
         // 更新时间：2026-10-05；时间不包含网络等待或最后的索引提交。
         if (r.timing && typeof r.timing === "object") {
-          var timing = {}, timingKeys = ["capturePrepareMs","sampleWriteMs","scriptBeforeIndexCommitMs"];
+          var timing = {}, timingKeys = ["capturePrepareMs","sampleWriteMs","scriptBeforeIndexCommitMs","jsBeforeIndexCommitMs","runtimeBeforeIndexCommitMs"];
           for (var t = 0; t < timingKeys.length; t++) {
             var timingValue = r.timing[timingKeys[t]];
             if (typeof timingValue === "number" && Number.isFinite(timingValue) && timingValue >= 0 && timingValue <= 600000) timing[timingKeys[t]] = timingValue;

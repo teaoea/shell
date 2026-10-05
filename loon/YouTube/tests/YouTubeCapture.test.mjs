@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
-const sources = Object.fromEntries(['YouTubeLogger','YouTubePlayback','YouTubeFeed'].map(name => [name,fs.readFileSync(new URL(name + '.js',root),'utf8')]));
+const sources = Object.fromEntries(['YouTubeLogger','YouTubePlayback','YouTubeFeed','YouTubeConfig'].map(name => [name,fs.readFileSync(new URL(name + '.js',root),'utf8')]));
 const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root),'utf8');
 const configKey = 'ytads.logger.config.v1', indexKey = 'ytads.logger.entries.v2';
 const api = 'https://youtubei.googleapis.com/youtubei/v1/player?key=SIGNED';
@@ -598,4 +598,35 @@ test('single export declares selected media mode without rewriting historical bu
  const data=JSON.parse(manifest.body);
  assert.equal(data.data.settings.mediaCaptureMode,'headers');assert.equal(exportData(store).events[0].capture.processing.bodyBuffering,true);
  assert.ok(data.data.completeness.limitations.some(s=>s.includes('Each event records its actual bodyBuffering')));
+});
+
+for(const source of ['YouTubeConfig','YouTubePlayback','YouTubeFeed','YouTubeLogger'])test(`${source} timing includes sample writes and separates runtime origin from JS origin`,()=>{
+ const store=started();let clock=Date.now();const runtimeStart=clock-1000;
+ class DiagnosticClock extends Date {static now(){return ++clock;}}
+ const exchange=source==='YouTubeConfig'?{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/log_event',method:'POST',headers:{'User-Agent':'com.google.ios.youtube/21.39.4'},body:new Uint8Array([8,1])}}:
+ source==='YouTubePlayback'?{$request:{url:api,method:'POST',headers:{'Content-Type':'application/json'},body:'{"context":{"adSignalsInfo":{}},"playbackContext":{"contentPlaybackContext":{"adParams":"PRIVATE"}}}'}}:
+ source==='YouTubeFeed'?{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/next'},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"contents":[{"adSlotRenderer":{}},{"videoRenderer":{}}]}'}}:
+ {$request:{url:media},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'}}};
+ const argument={log_enabled:true,log_level:'info',media_capture_mode:'headers'};
+ const unmeasuredStore=started(),baseline=run(source,unmeasuredStore,{...exchange,$argument:argument}).result;
+ const measured=run(source,store,{...exchange,$argument:argument,Date:DiagnosticClock,$script:{startTime:new Date(runtimeStart)},
+  $persistentStore:{read:key=>store.get(key),write(value,key){clock+=50;if(value===undefined)store.delete(key);else store.set(key,value);return true;}}
+ }).result;
+ assert.deepEqual(JSON.parse(JSON.stringify(measured)),JSON.parse(JSON.stringify(baseline)),'timing must not change HTTP output');
+ const event=exportData(store).events.at(-1);
+ assert.ok(event);assert.ok(event.summary.timing.jsBeforeIndexCommitMs>=50,'includes actual diagnostic sample writes');
+ assert.ok(event.summary.timing.runtimeBeforeIndexCommitMs>=event.summary.timing.jsBeforeIndexCommitMs+1000);
+ assert.ok(Number.isFinite(event.capture.processing.elapsedMs));
+ assert.ok(event.summary.timing.jsBeforeIndexCommitMs>event.capture.processing.elapsedMs);
+ page(store,'pause','POST');const manifest=JSON.parse(page(store,'export-manifest.json').body);
+ assert.equal(manifest.rows.at(-1).timing.runtimeBeforeIndexCommitMs,event.summary.timing.runtimeBeforeIndexCommitMs);
+ assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE'));
+});
+
+for(const startTime of [undefined,new Date(NaN),new Date(Date.now()+600000),{getTime(){throw Error('PRIVATE');}}])test('unavailable or invalid runtime clock does not alter HTTP output or fabricate elapsed time',()=>{
+ const store=started();
+ const output=run('YouTubeLogger',store,{$request:{url:media},$response:{status:200,headers:{}},$argument:{log_enabled:true,log_level:'info',media_capture_mode:'headers'},$script:{startTime}}).result;
+ assert.deepEqual(Object.keys(output),[]);const event=exportData(store).events[0];
+ assert.ok(Number.isFinite(event.summary.timing.jsBeforeIndexCommitMs));assert.equal(event.summary.timing.runtimeBeforeIndexCommitMs,undefined);
+ assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE'));
 });

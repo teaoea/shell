@@ -267,7 +267,7 @@ test('logs contain counts only, and debug switch suppresses them', () => {
   const result = run(player, { url });
   assert.ok(result.logs.some(line => line.includes('removed=3')));
   assert.ok(result.logs.some(line => line.includes('background_modified=0')));
-  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlayback 2.2.0]')));
+  assert.ok(result.logs.every(line => line.startsWith('[YouTubePlayback 2.3.0]')));
   assert.ok(!result.logs.join('\n').includes('PRIVATE'));
   const invalid = run('{"PRIVATE_BODY":', { type: 'application/json' });
   assert.ok(!invalid.logs.join('\n').includes('PRIVATE_BODY'));

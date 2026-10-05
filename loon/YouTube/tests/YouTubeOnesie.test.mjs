@@ -426,6 +426,9 @@ for (const protobuf of [false,true]) test(`INFO stores authenticated ${protobuf?
  initPlayback(store,[...encryptKey],youtubeUA,{capture_raw:true,log_level:'INFO'},makeEncryptedInit(clientKey,encryptKey,player,{protobuf}));
  const entry=JSON.parse(store.get(logCacheKey)).entries.at(-1),ref=entry.captureRef;
  const payload=JSON.parse(Array.from({length:ref.chunks},(_,i)=>store.get(ref.prefix+i)).join(''));
+ assert.ok(Number.isFinite(payload.processing.elapsedMs));
+ assert.ok(entry.timing.jsBeforeIndexCommitMs>=payload.processing.elapsedMs);
+ assert.equal(entry.timing.runtimeBeforeIndexCommitMs,undefined);
  const before=payload.requestInner.body,after=payload.requestInnerAfter.body;
  assert.equal(before.redacted,true);assert.equal(after.redacted,true);assert.equal(before.data,undefined);assert.equal(after.data,undefined);
  if(protobuf){assert.ok(before.structure.some(x=>x.field===100));const content=after.structure.find(x=>x.field===4).fields.find(x=>x.field===1).fields;assert.equal(content.find(x=>x.field===50).value,1);assert.equal(content.some(x=>x.field===12),false);}

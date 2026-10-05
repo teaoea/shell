@@ -1,10 +1,37 @@
 /**
  * 文件：YouTubePlayback.js
  * 功能：统一处理播放器请求、播放器响应、片头与中插配置、Shorts 播放广告、UMP 预取提示和后台播放。
- * 版本：3.0.0
- * 更新时间：2026-10-04T08:54:22+08:00
+ * 版本：3.1.0
+ * 更新时间：2026-10-05
  * 运行环境：Loon JavaScript
  */
+/**
+ * 功能：记录当前 JS 和 Loon 提供的脚本起点；不读取请求内容，也不把该时间当作网络请求开始时间。
+ * 更新时间：2026-10-05
+ */
+var ytDiagnosticScriptStartedAt = Date.now();
+var ytDiagnosticRuntimeStartedAt = null;
+try {
+  var ytDiagnosticRuntimeDate = typeof $script !== "undefined" && $script ? $script.startTime : null;
+  var ytDiagnosticRuntimeValue = ytDiagnosticRuntimeDate && typeof ytDiagnosticRuntimeDate.getTime === "function" ? ytDiagnosticRuntimeDate.getTime() : null;
+  if (typeof ytDiagnosticRuntimeValue === "number" && Number.isFinite(ytDiagnosticRuntimeValue) && ytDiagnosticRuntimeValue >= 0 && ytDiagnosticRuntimeValue <= ytDiagnosticScriptStartedAt) ytDiagnosticRuntimeStartedAt = ytDiagnosticRuntimeValue;
+} catch (_) {}
+/**
+ * 功能：在最终索引提交前记录实际脚本用时，覆盖处理、脱敏和样本写入；不包含最后索引写入及后续渲染。
+ * 更新时间：2026-10-05
+ * @param {Object} entry 待提交事件，不包含原始凭据或正文。
+ * @returns {void} 只补充有效计时；缺少运行时起点时不生成占位值。
+ */
+function ytDiagnosticStampTiming(entry) {
+  var now = Date.now(), timing = entry.timing && typeof entry.timing === "object" && !Array.isArray(entry.timing) ? entry.timing : {};
+  var jsElapsed = now - ytDiagnosticScriptStartedAt;
+  if (Number.isFinite(jsElapsed) && jsElapsed >= 0 && jsElapsed <= 600000) timing.jsBeforeIndexCommitMs = jsElapsed;
+  if (ytDiagnosticRuntimeStartedAt !== null) {
+    var runtimeElapsed = now - ytDiagnosticRuntimeStartedAt;
+    if (Number.isFinite(runtimeElapsed) && runtimeElapsed >= 0 && runtimeElapsed <= 600000) timing.runtimeBeforeIndexCommitMs = runtimeElapsed;
+  }
+  if (Object.keys(timing).length) entry.timing = timing;
+}
 /**
  * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
  * 更新时间：2026-10-05T11:54:46+08:00
@@ -23,8 +50,8 @@ function ytDiagnosticShouldRecord(entry,payload,level) {
   return true;
 }
 /**
- * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
- * 更新时间：2026-10-05T09:16:03+08:00
+ * 功能：样本写完后刷新索引、补充提交前计时并追加事件，减少并发覆盖，拒绝暂停或旧会话写入。
+ * 更新时间：2026-10-05
  * @param {Object} pending 本次待提交的索引，其末项为新事件。
  * @param {number} budget 日志字节容量上限。
  * @returns {boolean} 索引提交成功；失败时抛出固定错误供调用方清理样本。
@@ -42,6 +69,7 @@ function ytDiagnosticCommitEntry(pending, budget) {
   var used = Number(state.captureBytes || 0);
   if (!Number.isFinite(used) || used < 0 || !Number.isFinite(size) || size < 0) throw Error("log-index-invalid");
   var reason = state.entries.length >= 600 ? "entry-limit" : used + size > budget ? "capture-budget-limit" : null;
+  ytDiagnosticStampTiming(entry);
   var next = JSON.stringify({session:pending.session, entries:state.entries.concat([entry]), captureBytes:used + size});
   if (!reason && unescape(encodeURIComponent(next)).length > 131072) reason = "log-index-limit";
   if (reason) {
@@ -894,7 +922,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
       var payload = {schema:1, id:id, time:now, source:SOURCE, version:VERSION, phase:"request", endpoint:ENDPOINT,
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:checksum(request.method + " " + request.url), exactPairing:true}, request:request,
-        processing:{executionScript:SOURCE, elapsedMs:null, messages:[message], arguments:{block_ad_break:enabled, log_level:args.log_level || "info"}},
+        processing:{executionScript:SOURCE, elapsedMs:Date.now()-ytDiagnosticScriptStartedAt, messages:[message], arguments:{block_ad_break:enabled, log_level:args.log_level || "info"}},
         responseAfter:{changed:true, synthetic:true, status:200, headerOverrides:{"Content-Type":"application/x-protobuf", "Cache-Control":"no-store"}, transportHeadersRecomputedByLoon:true,
           body:{available:true, encoding:"base64", bytes:0, data:""}}};
       append({source:SOURCE, version:VERSION, endpoint:ENDPOINT, level:"debug", time:now, phase:"request", message:"development capture: blocked=true"}, payload);
@@ -930,7 +958,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
 (function () {
   "use strict";
 
-  var VERSION = "1.1.0";
+  var VERSION = "1.2.0";
   var SOURCE = "YouTubePlayback";
   var CONFIG = "ytads.logger.config.v1";
   var CACHE = "ytads.logger.entries.v2";
@@ -1319,7 +1347,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:checksum(request.method + " " + request.url), exactPairing:true},
         request:request,
-        processing:{exception:null, executionScript:SOURCE, elapsedMs:null, messages:[message],
+        processing:{exception:null, executionScript:SOURCE, elapsedMs:Date.now()-ytDiagnosticScriptStartedAt, messages:[message],
           arguments:{suppress_player_ads:enabled, log_level:args.log_level || "info"}},
         requestAfter:{changed:!!changed, headerOverrides:changed ? output.headers || null : null,
           transportHeadersRecomputedByLoon:true, body:changed ? captureBody(output.body) : {reference:"request.body"}}};
@@ -1401,7 +1429,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "2.2.0";
+  var VERSION = "2.3.0";
   var MAX_FIELDS = 30000;
   var args = typeof $argument === "object" && $argument ? $argument : {};
   args.log_level=String(args.log_level||"info").toLowerCase();

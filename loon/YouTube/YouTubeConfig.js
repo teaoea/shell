@@ -1,10 +1,37 @@
 /**
  * 文件：YouTubeConfig.js
  * 功能：维护 YouTube Onesie 配置，并在本机验证、解密、清理和重新签名 initplayback 请求。
- * 版本：2.0.0
- * 更新时间：2026-10-04T08:54:22+08:00
+ * 版本：2.1.0
+ * 更新时间：2026-10-05
  * 运行环境：Loon JavaScript
  */
+/**
+ * 功能：记录当前 JS 和 Loon 提供的脚本起点；不读取请求内容，也不把该时间当作网络请求开始时间。
+ * 更新时间：2026-10-05
+ */
+var ytDiagnosticScriptStartedAt = Date.now();
+var ytDiagnosticRuntimeStartedAt = null;
+try {
+  var ytDiagnosticRuntimeDate = typeof $script !== "undefined" && $script ? $script.startTime : null;
+  var ytDiagnosticRuntimeValue = ytDiagnosticRuntimeDate && typeof ytDiagnosticRuntimeDate.getTime === "function" ? ytDiagnosticRuntimeDate.getTime() : null;
+  if (typeof ytDiagnosticRuntimeValue === "number" && Number.isFinite(ytDiagnosticRuntimeValue) && ytDiagnosticRuntimeValue >= 0 && ytDiagnosticRuntimeValue <= ytDiagnosticScriptStartedAt) ytDiagnosticRuntimeStartedAt = ytDiagnosticRuntimeValue;
+} catch (_) {}
+/**
+ * 功能：在最终索引提交前记录实际脚本用时，覆盖处理、脱敏和样本写入；不包含最后索引写入及后续渲染。
+ * 更新时间：2026-10-05
+ * @param {Object} entry 待提交事件，不包含原始凭据或正文。
+ * @returns {void} 只补充有效计时；缺少运行时起点时不生成占位值。
+ */
+function ytDiagnosticStampTiming(entry) {
+  var now = Date.now(), timing = entry.timing && typeof entry.timing === "object" && !Array.isArray(entry.timing) ? entry.timing : {};
+  var jsElapsed = now - ytDiagnosticScriptStartedAt;
+  if (Number.isFinite(jsElapsed) && jsElapsed >= 0 && jsElapsed <= 600000) timing.jsBeforeIndexCommitMs = jsElapsed;
+  if (ytDiagnosticRuntimeStartedAt !== null) {
+    var runtimeElapsed = now - ytDiagnosticRuntimeStartedAt;
+    if (Number.isFinite(runtimeElapsed) && runtimeElapsed >= 0 && runtimeElapsed <= 600000) timing.runtimeBeforeIndexCommitMs = runtimeElapsed;
+  }
+  if (Object.keys(timing).length) entry.timing = timing;
+}
 /**
  * 功能：按保存级别筛选新事件；info 保存完整脱敏链路，error 只保留错误并避免写入正常样本。
  * 更新时间：2026-10-05T11:54:46+08:00
@@ -23,8 +50,8 @@ function ytDiagnosticShouldRecord(entry,payload,level) {
   return true;
 }
 /**
- * 功能：样本写完后重新读取最新索引追加事件，减少长时间处理导致的并发覆盖，并拒绝暂停或旧会话写入。
- * 更新时间：2026-10-05T09:16:03+08:00
+ * 功能：样本写完后刷新索引、补充提交前计时并追加事件，减少并发覆盖，拒绝暂停或旧会话写入。
+ * 更新时间：2026-10-05
  * @param {Object} pending 本次待提交的索引，其末项为新事件。
  * @param {number} budget 日志字节容量上限。
  * @returns {boolean} 索引提交成功；失败时抛出固定错误供调用方清理样本。
@@ -42,6 +69,7 @@ function ytDiagnosticCommitEntry(pending, budget) {
   var used = Number(state.captureBytes || 0);
   if (!Number.isFinite(used) || used < 0 || !Number.isFinite(size) || size < 0) throw Error("log-index-invalid");
   var reason = state.entries.length >= 600 ? "entry-limit" : used + size > budget ? "capture-budget-limit" : null;
+  ytDiagnosticStampTiming(entry);
   var next = JSON.stringify({session:pending.session, entries:state.entries.concat([entry]), captureBytes:used + size});
   if (!reason && unescape(encodeURIComponent(next)).length > 131072) reason = "log-index-limit";
   if (reason) {
@@ -434,7 +462,7 @@ function (key) {
       var payload = {schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:phase,endpoint:endpoint,
         runtime:typeof $loon === "string" ? $loon : null,correlation:{urlMethodHash:checksum(($request.method || "GET") + " " + $request.url),exactPairing:false},
         request:{url:$request.url,method:$request.method || "GET",headers:$request.headers || {},h2_trailers:$request.h2_trailers || {},body:captureBody($request.body)},
-        processing:{exception:null,executionScript:SOURCE,elapsedMs:null,messages:[message],arguments:{onesie_enabled:true,log_level:args.log_level || "info"}}};
+        processing:{exception:null,executionScript:SOURCE,elapsedMs:Date.now()-ytDiagnosticScriptStartedAt,messages:[message],arguments:{onesie_enabled:true,log_level:args.log_level || "info"}}};
       if (typeof $response !== "undefined") { payload.responseBefore = {status:$response.status,headers:$response.headers || {},h2_trailers:$response.h2_trailers || {},body:captureBody($response.body)}; payload.responseAfter = {changed:false,status:$response.status,headerOverrides:null,transportHeadersRecomputedByLoon:true,body:{reference:"responseBefore.body"}}; }
       append({source:SOURCE,version:VERSION,endpoint:endpoint,level:"debug",time:now,phase:phase,message:"development capture: " + phase + " changed=" + !!(output && Object.keys(output).length)}, payload);
     } else {
@@ -483,7 +511,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.11.0";
+  var VERSION = "1.12.0";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -940,7 +968,7 @@ function(){return aesCtr(encodedPlain,clientKey.subarray(0,16),iv);});if(!cleane
    * 功能：记录当前配置或请求处理结果。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
-  function record(message,level,output){var now=new Date().toISOString(),changed=!!(output&&(output.response||output.body));if(flag(args.capture_raw)){var id=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,14),request={url:$request.url,method:$request.method||"GET",headers:$request.headers||{},h2_trailers:$request.h2_trailers||{},body:captureBody($request.body)};var payload={schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:"request",endpoint:"initplayback",requestInner:lastInnerBodies?{body:captureBody(lastInnerBodies.before)}:null,requestInnerAfter:lastInnerBodies&&lastInnerBodies.after?{body:captureBody(lastInnerBodies.after)}:null,runtime:typeof $loon==="string"?$loon:null,correlation:{urlMethodHash:checksum(request.method+" "+request.url),exactPairing:false},request:request,processing:{exception:null,executionScript:SOURCE,elapsedMs:null,messages:[message],arguments:{onesie_enabled:enabled,onesie_refresh_on_mismatch:refreshMismatch,log_level:args.log_level||"info"}},responseAfter:output&&output.response?{synthetic:true,status:output.response.status,headers:output.response.headers,body:captureBody(output.response.body)}:null,requestAfter:output&&output.body?{changed:true,body:captureBody(output.body)}:null};append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:"development capture: "+message+" changed="+changed},payload);}else{var ranks={debug:0,info:1,warn:2,error:3},minimum=Object.prototype.hasOwnProperty.call(ranks,args.log_level)?args.log_level:"info";if((minimum==="info"||ranks[level]>=ranks[minimum]))append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:message},null);}if(debug&&typeof console!=="undefined")console.log("["+SOURCE+" "+VERSION+"] initplayback "+message);}
+  function record(message,level,output){var now=new Date().toISOString(),changed=!!(output&&(output.response||output.body));if(flag(args.capture_raw)){var id=Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,14),request={url:$request.url,method:$request.method||"GET",headers:$request.headers||{},h2_trailers:$request.h2_trailers||{},body:captureBody($request.body)};var payload={schema:1,id:id,time:now,source:SOURCE,version:VERSION,phase:"request",endpoint:"initplayback",requestInner:lastInnerBodies?{body:captureBody(lastInnerBodies.before)}:null,requestInnerAfter:lastInnerBodies&&lastInnerBodies.after?{body:captureBody(lastInnerBodies.after)}:null,runtime:typeof $loon==="string"?$loon:null,correlation:{urlMethodHash:checksum(request.method+" "+request.url),exactPairing:false},request:request,processing:{exception:null,executionScript:SOURCE,elapsedMs:Date.now()-ytDiagnosticScriptStartedAt,messages:[message],arguments:{onesie_enabled:enabled,onesie_refresh_on_mismatch:refreshMismatch,log_level:args.log_level||"info"}},responseAfter:output&&output.response?{synthetic:true,status:output.response.status,headers:output.response.headers,body:captureBody(output.response.body)}:null,requestAfter:output&&output.body?{changed:true,body:captureBody(output.body)}:null};append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:"development capture: "+message+" changed="+changed},payload);}else{var ranks={debug:0,info:1,warn:2,error:3},minimum=Object.prototype.hasOwnProperty.call(ranks,args.log_level)?args.log_level:"info";if((minimum==="info"||ranks[level]>=ranks[minimum]))append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:level,time:now,phase:"request",message:message},null);}if(debug&&typeof console!=="undefined")console.log("["+SOURCE+" "+VERSION+"] initplayback "+message);}
 
   var output = {};
   if (enabled && typeof $request !== "undefined" && typeof $response === "undefined" && API.test($request.url || "") && isYouTubeApp()) {
