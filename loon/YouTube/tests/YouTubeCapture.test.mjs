@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
-const sources = Object.fromEntries(['YouTubeLogger','YouTubePlayback','YouTubeFeed','YouTubeConfig'].map(name => [name,fs.readFileSync(new URL(name + '.js',root),'utf8')]));
+const sources = Object.fromEntries(['YouTubeLogger','YouTubePlayback','YouTubeFeed','YouTubeConfig'].map(name => [name,fs.readFileSync(new URL('src/' + name + '.js',root),'utf8')]));
 const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root),'utf8');
 const configKey = 'ytads.logger.config.v1', indexKey = 'ytads.logger.entries.v2';
 const api = 'https://youtubei.googleapis.com/youtubei/v1/player?key=SIGNED';
@@ -291,7 +291,7 @@ test('missing runtime body is explicit; legacy JSON routes are gone; unmatched r
 
 test('feed request and before/after response samples share the one full-chain cache',()=>{
   const store=started();
-  sources.YouTubeFeed=fs.readFileSync(new URL('YouTubeFeed.js',root),'utf8');
+  sources.YouTubeFeed=fs.readFileSync(new URL('src/YouTubeFeed.js',root),'utf8');
   const url='https://youtubei.googleapis.com/youtubei/v1/browse?key=FEED';
   const body='{"contents":[{"adSlotRenderer":{"title":"Robinhood"}},{"videoRenderer":{"title":"NORMAL"}}]}';
   run('YouTubeLogger',store,{$request:{url,method:'POST',body:new Uint8Array([1,2,3])}});
@@ -355,7 +355,7 @@ test('browser export refuses checksum-corrupt bytes instead of offering an incom
 });
 
 test('single browser export includes browse, refresh, player and binary media samples from the same cache',async()=>{
- const store=started();sources.YouTubeFeed=fs.readFileSync(new URL('YouTubeFeed.js',root),'utf8');
+ const store=started();sources.YouTubeFeed=fs.readFileSync(new URL('src/YouTubeFeed.js',root),'utf8');
  player(store);run('YouTubeFeed',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/browse'},$response:{status:200,headers:{'Content-Type':'application/json'},body:'{"contents":[{"adSlotRenderer":{}}]}'}});
  run('YouTubeLogger',store,{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/config',method:'POST'},$response:{status:200,headers:{'Content-Type':'application/x-protobuf'},body:new Uint8Array([8,1])}});
  run('YouTubePlayback',store,{$request:{url:media,method:'POST'},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body:new Uint8Array([21,3,1,2,3])}});
@@ -452,7 +452,7 @@ for(const action of ['pause','clear'])test(`an in-flight capture cannot undo ${a
 
 test('all four standalone scripts use the same final-commit implementation',()=>{
   const names=['YouTubeLogger','YouTubeFeed','YouTubePlayback','YouTubeConfig'];
-  const helpers=names.map(name=>fs.readFileSync(new URL(name+'.js',root),'utf8').split('function ytDiagnosticCommitEntry(pending, budget) {')[1].split('\n}\n')[0]);
+  const helpers=names.map(name=>fs.readFileSync(new URL('src/'+name+'.js',root),'utf8').split('function ytDiagnosticCommitEntry(pending, budget) {')[1].split('\n}\n')[0]);
   for(const helper of helpers)assert.equal(helper,helpers[0]);
 });
 
@@ -492,7 +492,7 @@ test('main-page download pauses recording and triggers one file download without
 
 test('uppercase INFO captures initialization UMP response structure without reading request body',()=>{
  const store=started(),init='https://rr5.googlevideo.com/initplayback?sig=PRIVATE';
- const line=plugin.split('\n').find(x=>x.startsWith('http-response')&&x.includes('YouTubeLogger.js'));
+ const line=plugin.split('\n').find(x=>x.startsWith('http-response')&&x.includes('tag=YouTube 日志媒体响应记录'));
  assert.ok(new RegExp(line.split(' ')[1]).test(init));assert.ok(line.includes('requires-body=false'));
  const full=plugin.split('\n').find(x=>x.startsWith('response if '));
  assert.ok(full.includes('${media_capture_mode} == "full"')&&full.includes('requires_body=true, binary_body_mode=true'));

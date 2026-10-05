@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../YouTubePlayback.js',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../src/YouTubePlayback.js',import.meta.url),'utf8');
 const plugin=fs.readFileSync(new URL('../YouTubeNoAds.plugin',import.meta.url),'utf8');
 const base='https://youtubei.googleapis.com/youtubei/v1/player/ad_break';
 const configKey='ytads.logger.config.v1', cacheKey='ytads.logger.entries.v2';

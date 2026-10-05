@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 const root = new URL('../', import.meta.url);
-const configSource = fs.readFileSync(new URL('YouTubeConfig.js', root), 'utf8');
-const initSource = fs.readFileSync(new URL('YouTubeConfig.js', root), 'utf8');
+const configSource = fs.readFileSync(new URL('src/YouTubeConfig.js', root), 'utf8');
+const initSource = fs.readFileSync(new URL('src/YouTubeConfig.js', root), 'utf8');
 const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root), 'utf8');
 const stateKey = 'ytads.onesie.youtube.v1';
 const logConfigKey = 'ytads.logger.config.v1';
@@ -50,12 +50,12 @@ test('initialization and media responses have no buffering script when logs are 
   const entries = plugin.split('\n').filter(line=>line.startsWith('http-response '));
   const match = (url, logging)=>entries.find(line=>(logging||!line.includes('enable={log_enabled}'))&&new RegExp(line.split(' ')[1]).test(url));
   const init = 'https://rr5.googlevideo.com/initplayback?x=1';
-  assert.ok(match(init,true).includes('YouTubeLogger.js'));
+  assert.ok(match(init,true).includes('response.min.js'));
   assert.equal(match(init,false),undefined);
   assert.equal(match('https://rr5.googlevideo.com/videoplayback?x=1',false),undefined);
   assert.equal(match('https://rr5.googlevideo.com/initplayback/extra',false),undefined);
   assert.equal(match('https://rr5.googlevideo.com.evil/initplayback',false),undefined);
-  assert.ok(match('https://youtubei.googleapis.com/youtubei/v1/config',true).includes('YouTubeConfig.js'));
+  assert.ok(match('https://youtubei.googleapis.com/youtubei/v1/config',true).includes('response.min.js'));
 });
 
 const concat = (...parts) => {
@@ -149,10 +149,10 @@ const utilsApi={gzip:data=>new Uint8Array(zlib.gzipSync(data)),ungzip:data=>new 
 
 test('plugin uses native blank video for initialization and keeps config routing separate', () => {
   assert.ok(!plugin.includes('onesie_enabled = switch'));
-  const configLines = plugin.split('\n').filter(line => line.includes('YouTubeConfig.js'));
+  const configLines = plugin.split('\n').filter(line => /tag=YouTube (?:配置请求处理|Onesie 配置缓存)/.test(line));
   const initLine = plugin.split('\n').find(line => line.startsWith('http-request ') && line.includes('googlevideo\\.com\\/initplayback'));
   assert.equal(configLines.length, 2);
-  assert.ok(initLine && initLine.includes('YouTubeLogger.js') && initLine.includes('requires-body=false') && !initLine.includes('binary-body-mode=true'));
+  assert.ok(initLine && initLine.includes('request.min.js') && initLine.includes('requires-body=false') && !initLine.includes('binary-body-mode=true'));
   assert.ok(configLines.every(line => !new RegExp(line.split(' ')[1]).test('https://rr5.googlevideo.com/initplayback?x=1')));
   assert.ok(configLines.every(line => !line.includes('music\\.')));
   assert.ok(!initLine.includes('workers.dev'));

@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const source = fs.readFileSync(new URL('../YouTubePlayback.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../src/YouTubePlayback.js', import.meta.url), 'utf8');
 const plugin = fs.readFileSync(new URL('../YouTubeNoAds.plugin', import.meta.url), 'utf8');
 const prefix = 'https://youtubei.googleapis.com/youtubei/v1/';
 const u8 = value => Uint8Array.from(value);
@@ -63,7 +63,7 @@ test('plugin defaults media sampling to headers and buffers only explicitly sele
     allEntries.find(line => line.includes('tag=YouTube 日志媒体响应记录'))
   ];
   assert.equal(entries.length, 2);
-  assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubePlayback.js'));
+  assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/response.min.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
   assert.ok(entries[0].includes('argument=[{log_enabled},{log_level},{capture_budget},{background_playback}]'));
   const regex = new RegExp(entries[0].split(' ')[1], 'i');
@@ -79,7 +79,7 @@ test('plugin defaults media sampling to headers and buffers only explicitly sele
   assert.ok(active.includes('background_playback = switch,false,'));
   assert.ok(!active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={log_enabled}'));
-  assert.ok(entries[1].includes('YouTubeLogger.js,requires-body=false'));
+  assert.ok(entries[1].includes('response.min.js,requires-body=false'));
   assert.ok(plugin.includes('media_capture_mode = select,"headers","full"'));
   const full=plugin.split('\n').find(line=>line.startsWith('response if '));
   assert.ok(full.includes('${log_enabled} == true') && full.includes('${media_capture_mode} == "full"'));
@@ -87,7 +87,7 @@ test('plugin defaults media sampling to headers and buffers only explicitly sele
   assert.ok(plugin.indexOf(full)<plugin.indexOf(entries[1]),'full sampling must precede header fallback');
   assert.ok(!plugin.includes('ump_mode ='));
   assert.ok(entries[1].includes('argument=[{log_enabled},{log_level},{capture_budget}]'));
-  assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js'));
+  assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/response.min.js'));
   assert.ok(source.includes('function processUMP('));
   assert.ok(new RegExp(entries[1].split(' ')[1]).test('https://rr5.googlevideo.com/videoplayback?ctier=L&sabr=1'));
   assert.ok(active.includes('DOMAIN-SUFFIX,googlevideo.com'));

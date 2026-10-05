@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 const root = new URL('../', import.meta.url);
-const logger = fs.readFileSync(new URL('YouTubeLogger.js', root), 'utf8');
-const playback = fs.readFileSync(new URL('YouTubePlayback.js', root), 'utf8');
-const stream = fs.readFileSync(new URL('YouTubePlayback.js', root), 'utf8');
+const logger = fs.readFileSync(new URL('src/YouTubeLogger.js', root), 'utf8');
+const playback = fs.readFileSync(new URL('src/YouTubePlayback.js', root), 'utf8');
+const stream = fs.readFileSync(new URL('src/YouTubePlayback.js', root), 'utf8');
 const plugin = fs.readFileSync(new URL('YouTubeNoAds.plugin', root), 'utf8');
 const configKey = 'ytads.logger.config.v1';
 const cacheKey = 'ytads.logger.entries.v2';
@@ -57,11 +57,11 @@ test('main plugin exposes exactly three switches and keeps function-specific scr
   assert.ok(!plugin.includes('script_debug = switch'));
   assert.ok(!plugin.includes('capture_raw = switch'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
-  const loggerLines = plugin.split('\n').filter(x => (x.includes('script-path=') || x.startsWith('response if ')) && x.includes('YouTubeLogger.js'));
+  const loggerLines = plugin.split('\n').filter(x => (x.includes('script-path=') || x.startsWith('response if ')) && /tag=(?:"?YouTube )(?:日志记录与导出|日志媒体响应记录|完整媒体开发采样)/.test(x));
   assert.equal(loggerLines.length, 3);
-  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeConfig.js')).length, 2);
-  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubePlayback.js')).length, 2);
-  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeFeed.js')).length, 1);
+  assert.equal(plugin.split('\n').filter(x => /tag=YouTube (?:配置请求处理|Onesie 配置缓存)/.test(x)).length, 2);
+  assert.equal(plugin.split('\n').filter(x => /tag=YouTube 播放(?:请求与广告配置处理|响应与后台播放)/.test(x)).length, 2);
+  assert.equal(plugin.split('\n').filter(x => x.includes('tag=YouTube 信息流广告与首页 Shorts 处理')).length, 1);
   assert.ok(loggerLines.find(x => x.includes('日志记录与导出')).includes('requires-body=false'));
   assert.ok(plugin.includes('DOMAIN-SUFFIX,googlevideo.com'));
   const line = plugin.split('\n').find(x => x.startsWith('http-request') && x.includes('tag=YouTube 日志记录与导出'));

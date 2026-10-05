@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const source = fs.readFileSync(new URL('../YouTubePlayback.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../src/YouTubePlayback.js', import.meta.url), 'utf8');
 const context = { module: { exports: {} }, Uint8Array, ArrayBuffer };
 vm.runInNewContext(source, context);
 const { processUMP, readUMPInt, encodeUMPInt } = context.module.exports;

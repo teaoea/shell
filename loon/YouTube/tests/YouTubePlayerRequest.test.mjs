@@ -3,9 +3,9 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../YouTubePlayback.js',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../src/YouTubePlayback.js',import.meta.url),'utf8');
 const plugin=fs.readFileSync(new URL('../YouTubeNoAds.plugin',import.meta.url),'utf8');
-const logger=fs.readFileSync(new URL('../YouTubeLogger.js',import.meta.url),'utf8');
+const logger=fs.readFileSync(new URL('../src/YouTubeLogger.js',import.meta.url),'utf8');
 const u8=value=>Uint8Array.from(value);
 const concat=(...parts)=>u8(parts.flatMap(part=>Array.from(part)));
 function v(n){const out=[];do{const b=n%128;n=Math.floor(n/128);out.push(b+(n?128:0));}while(n);return out;}
