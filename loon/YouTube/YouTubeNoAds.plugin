@@ -20,6 +20,11 @@ AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,QUIC)),REJECT
 AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
+[Rewrite]
+# 功能：清除媒体源的替代连接提示，减少 QUIC 被拒绝后再次尝试的机会；只处理响应头。
+# 更新时间：2026-10-05；实际启动延迟仍需设备验证，客户端可能使用其他 HTTP/3 发现方式。
+^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-header-replace Alt-Svc clear
+
 [Script]
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$|^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget},{background_playback}],tag=YouTube 日志记录与导出
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeConfig.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 配置与片头广告请求处理
@@ -34,5 +39,5 @@ http-response ^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback
 
 [Mitm]
 hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, *.googlevideo.com
-# 媒体日志仅记录响应头，不等待媒体正文；媒体域名的 MitM 仍生效。
+# 日志工具关闭时停用完整媒体响应采样；Alt-Svc 复写仍在响应头阶段执行。
 # googlevideo 的 UDP 仅回退到 TCP，媒体请求仍正常放行。

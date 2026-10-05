@@ -343,4 +343,8 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 这两条规则不会拒绝 TCP 媒体，但实际优先级仍受主配置及其他插件影响；本地验证不等同于手机已命中规则。
 
+2026-10-05 增加 googlevideo 根域与子域响应头复写，将 `Alt-Svc` 设置为 `clear`。按照 [RFC 7838](https://www.rfc-editor.org/rfc/rfc7838.html#section-3)，这会通知支持该机制的客户端清除当前源缓存的替代服务，避免响应头持续广告 HTTP/3 后反复尝试已被规则拒绝的 QUIC。采用 Loon 的响应头复写，不调用新的 JS，不读取或等待媒体正文，日志工具关闭时也生效。当前去广告请求处理和 QUIC 拦截保持原样。
+
+这项优化尚未进行设备验证，不能据此认定几秒黑屏已解决；首次响应到达前的连接尝试、DNS 或客户端内置的 HTTP/3 发现、广告调度及初始化请求重试仍可能产生等待。更新主插件后关闭日志工具，完全退出并重新打开 YouTube，再对比首次和后续视频的启动时间；无需清除账号或重装 App。
+
 协议依据：[Loon 协议规则](https://nsloon.app/docs/Rule/protocol_rule/)、[UMP 分片类型](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/ump_part_id.proto)、[Onesie 响应结构](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/onesie_innertube_response.proto)、[响应认证示例](https://github.com/LuanRT/googlevideo/blob/main/examples/onesie-request/utils.ts)、[客户端地区字段](https://github.com/LuanRT/YouTube.js/blob/main/protos/youtube/api/pfiinnertube/client_info.proto)。
