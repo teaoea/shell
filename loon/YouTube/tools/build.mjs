@@ -15,7 +15,7 @@ const check = process.argv.includes('--check');
 if (process.argv.slice(2).some(value => value !== '--check')) throw new Error('仅支持 --check 参数');
 
 /**
- * 功能：将当前阶段需要的功能文件包在独立作用域内，按接口分派后压缩；不改变原文件内部逻辑。
+ * 功能：将当前阶段需要的功能文件包在独立作用域内，按接口分派后压缩；日志关闭时媒体直接放行。
  * 更新时间：2026-10-06
  * @param {string} phase 请求或响应阶段。
  * @returns {Promise<Object>} 合并后的压缩文本、文件地址及前后体积。
@@ -38,6 +38,9 @@ async function compileScript(phase) {
     if (typeof $done === 'function') (function(){
       if (${phase === 'request' ? "typeof $response !== 'undefined'" : "typeof $response === 'undefined'"}) return $done({});
       var url = typeof $request !== 'undefined' ? String($request.url || '') : '';
+      // 日志开关是媒体采样的总开关；关闭后不读取采样选项、媒体正文或日志缓存，也不执行日志模块。
+      var media = /^https:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?:videoplayback|initplayback)(?:\\?[^#]*)?$/i.test(url);
+      if (media && !(typeof $argument === 'object' && $argument && ($argument.log_enabled === true || $argument.log_enabled === 'true'))) return $done({});
       ${route}
     })();`;
   const hash = createHash('sha256').update(source).digest('hex');

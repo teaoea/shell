@@ -8,8 +8,8 @@
 background_playback = switch,false,tag=后台播放,desc=开启后允许普通视频在切换 App 或锁屏后继续播放音频；直播和受限内容仍由 YouTube 决定
 playback_region = select,"original","CN","HK","TW","US","JP","KR","SG","GB","DE","RU",tag=播放请求地区,desc=original 保持原地区；CN 中国大陆；仅修改客户端 gl 参数，不改变出口 IP，去广告效果待验证
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
-log_enabled = switch,false,tag=日志工具,desc=保存全链路脱敏记录；媒体默认只记响应头；完整采样可能增加等待；统一下载一个 .log 文件
-media_capture_mode = select,"headers","full",tag=媒体采样方式,desc=headers 不等待媒体正文，适合排查播放等待；full 读取初始化和 UMP 完整响应用于开发分析，可能增加等待，需 Loon Build 983+
+log_enabled = switch,false,tag=日志工具,desc=关闭时同步停用全部媒体采样；开启后保存全链路脱敏记录，统一下载一个 .log 文件；完整媒体采样可能增加等待
+media_capture_mode = select,"headers","full",tag=媒体采样方式,desc=仅日志工具开启时生效，关闭日志后自动停用；headers 只记响应头；full 读取完整响应用于开发，可能增加等待，需 Loon Build 983+
 log_level = select,"info","debug","warn","error",tag=日志保存级别,desc=info 保存完整脱敏链路；error 只保存错误；debug 保留调试级别；warn 保存警告和错误
 capture_budget = select,"32","16","64",tag=日志容量 MB,desc=达到上限停止记录，保留已有样本；导出后再清空
 
@@ -32,6 +32,7 @@ request if ${url} ~= /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?
 [Script]
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$|^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{media_capture_mode}],tag=YouTube 日志记录与导出
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 配置请求处理
+# 媒体采样受日志工具总开关控制：关闭后 headers/full 均不执行；保存的方式选项不代表正在采样。
 # 完整采样需在正文接收前选定；同一响应只执行第一条命中的脚本。默认响应头入口不传 full，避免误读正文。
 response if ${url} ~= /^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$/i && ${log_enabled} == true && ${media_capture_mode} == "full" then script("https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/response.min.js", {${log_enabled}, ${log_level}, ${capture_budget}, ${media_capture_mode}}) with requires_body=true, binary_body_mode=true, timeout=30, tag="YouTube 完整媒体开发采样"
 http-response ^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/response.min.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget}],tag=YouTube 日志媒体响应记录

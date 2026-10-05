@@ -71,3 +71,24 @@ for (const phase of ['request', 'response']) test(`${phase} entry rejects execut
   const built = fs.readFileSync(new URL(`dist/${phase}.min.js`, root), 'utf8');
   assert.deepEqual(execute(built, extra), {output:{}, logs:[], store:[]});
 });
+
+for (const phase of ['request', 'response']) test(`${phase} media sampling is fully off with logging disabled, regardless of saved mode`, () => {
+  const built = fs.readFileSync(new URL(`dist/${phase}.min.js`, root), 'utf8');
+  for (const endpoint of ['videoplayback', 'initplayback']) for (const enabled of [false, 'false', undefined]) {
+    let calls = 0, output;
+    const request = {url: `https://rr5.googlevideo.com/${endpoint}?sig=PRIVATE`, method:'POST'};
+    const response = {status:200};
+    for (const value of [request, response]) for (const field of ['body', 'headers']) Object.defineProperty(value, field, {get() {throw Error('disabled sampling must not read media');}});
+    const argument = {log_enabled:enabled, capture_raw:true};
+    Object.defineProperty(argument, 'media_capture_mode', {get() {throw Error('disabled sampling must not consult mode');}});
+    class NoClock {constructor() {throw Error('logger must not initialize');} static now() {throw Error('logger must not initialize');}}
+    const context = {
+      Date:NoClock, $request:request, $argument:argument,
+      $persistentStore:{read() {throw Error('must not read cache');}, write() {throw Error('must not write cache');}},
+      $done(value) {calls++; output = value;}
+    };
+    if (phase === 'response') context.$response = response;
+    vm.runInNewContext(built, context, {timeout:1000});
+    assert.equal(calls, 1);assert.deepEqual(Object.keys(output), []);
+  }
+});

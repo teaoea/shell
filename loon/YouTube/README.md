@@ -42,9 +42,9 @@ loon/YouTube/
 
 | 发布文件 | 同阶段未压缩合并字节 | 压缩字节 | 减少 |
 | --- | ---: | ---: | ---: |
-| request.min.js | 291,683 | 163,673 | 43.9% |
-| response.min.js | 352,268 | 194,782 | 44.7% |
-| 合计 | 643,951 | 358,455 | 44.3% |
+| request.min.js | 292,094 | 163,900 | 43.9% |
+| response.min.js | 352,679 | 195,009 | 44.7% |
+| 合计 | 644,773 | 358,909 | 44.3% |
 
 配置、播放器和日志同时服务请求与响应，两份发布包会包含这些源码的各自副本。此表比较同等两个合并入口的压缩前后体积，不能把总压缩体积与仅一份四模块源码直接比较，或将合并本身描述为执行提速。
 
@@ -347,7 +347,7 @@ Loon 官方 [Rewrite 文档](https://nsloon.app/en/docs/Rewrite/rewrite_v2/) 支
 
 日志工具 2.6.0 统一 INFO/info 等大小写，并修正旧摘要分支仍过滤未修改事件的问题。普通播放器 API 请求的可用正文现在保留修改前后脱敏结构，未知字符串、身份数据及原始字节继续排除。现有媒体响应日志规则同时覆盖 initplayback，记录其响应状态与安全传输头；正文未读取时明确写出 headers-only-not-buffered。该入口不等待媒体正文，不能据此分析初始化响应内的广告配置。ERROR/error 保留脚本错误、已识别的认证/清理失败和 HTTP 4xx/5xx；正常事件不保存。未测量的处理耗时写为 null，避免把占位 0 当成真实耗时。
 
-`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。目前每套共 337 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
+`tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。目前每套共 339 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
 node --check loon/YouTube/src/YouTubeFeed.js
@@ -427,6 +427,8 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 日志工具 2.9.0 在同一个 `.log` 的信息流事件中导出 `Capture-Timing-Ms`：`capturePrepareMs` 是当前采样追加过程中的脱敏、序列化、分块等准备时间，`sampleWriteMs` 是样本块写入阶段时间，`scriptBeforeIndexCommitMs` 是脚本开始到最后索引提交前的时间。它们互有包含关系，不能全部相加；不包含网络或 Loon 收齐响应前的等待，也不包含最后索引提交和后续客户端渲染。旧事件缺失时不填占位 0。计时只保存白名单中的非负有限数值，不增加日志文件或下载接口。
 
 ## 媒体响应头默认采样与等待诊断（2026-10-05）
+
+2026-10-06 补充总开关联动：关闭“日志工具”后，媒体请求记录、headers 响应头采样和 full 完整响应采样均停用。完整采样规则必须同时满足 `log_enabled=true` 与 `media_capture_mode=full`，响应头入口使用 `enable={log_enabled}`，在 Loon 接收正文前就决定停用；请求、响应两份合并入口另增加直接放行判断，不初始化媒体日志模块、不读取采样选项、请求/响应正文或日志缓存。即使保留 full 或旧 capture_raw=true 参数，总开关关闭后仍不采样。设置页面中的 headers/full 仅表示保存的选择，不表示采样正在运行；再次开启日志工具时按该选择恢复。参数与脚本启用绑定方式见 [Loon 插件文档](https://nsloon.app/docs/Plugin/#在脚本中使用)。
 
 日志工具 3.0.0 将“媒体采样方式”的默认值设为 `headers`。日志开启且正在记录时，初始化和 UMP 媒体响应只记录状态、安全响应头、接口与关联标识，标注 `bodyBuffering=false`、`headers-only-not-buffered`，不读取或等待媒体正文。控制接口（browse/next/player 等）仍记录可用的脱敏字段树和处理结果；INFO 不因本次调整变成仅摘要。原有 full 开发采样仍可手动选择，继续验证、解密并脱敏可用的 Onesie 播放器结构，但会等待完整媒体响应。暂停记录不能取消已经选中的 full 响应缓冲，排查启动等待应切回 headers。
 
