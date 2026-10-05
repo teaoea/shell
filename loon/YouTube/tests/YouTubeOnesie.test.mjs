@@ -15,6 +15,26 @@ const logCacheKey = 'ytads.logger.entries.v2';
 const youtubeUA = 'com.google.ios.youtube/21.39.4 (iPhone; iOS)';
 const musicUA = 'com.google.ios.youtubemusic/9.1 (iPhone; iOS)';
 
+test('native reject_video(200) guards target initialization POST and never ordinary media or other clients',()=>{
+  const rule = plugin.split('\n').find(line=>line.startsWith('request if ')&&line.endsWith(' then reject_video(200)'));
+  assert.ok(rule);assert.equal(plugin.split('\n').filter(line=>line.includes('then reject_video(')).length,1);
+  assert.ok(rule.includes('${request.method} == "POST"'));
+  const urlLiteral=rule.split('${url} ~= ')[1].split(' && ')[0];
+  const uaLiteral=rule.split("${request.header['User-Agent']} ~= ")[1].split(' then ')[0];
+  const urlGuard=new RegExp(urlLiteral.slice(1,-2),'i'),uaGuard=new RegExp(uaLiteral.slice(1,-2),'i');
+  const target='https://rr4---sn-a5mlrnl6.googlevideo.com/initplayback?ack=1&sig=PRIVATE';
+  for(const [url,method,ua,expected] of [
+    [target,'POST',youtubeUA,true],[target,'GET',youtubeUA,false],
+    [target,'POST',musicUA,false],[target,'POST','Mozilla/5.0',false],[target,'POST','',false],
+    ['https://rr4.googlevideo.com.evil/initplayback','POST',youtubeUA,false],
+    ['https://rr4.googlevideo.com/initplayback/extra','POST',youtubeUA,false],
+    ['https://rr4.googlevideo.com/videoplayback?sig=PRIVATE','POST',youtubeUA,false],
+    ['https://youtubei.googleapis.com/youtubei/v1/player','POST',youtubeUA,false]
+  ]) assert.equal(urlGuard.test(url)&&method==='POST'&&uaGuard.test(ua),expected,url+' '+method+' '+ua);
+  assert.ok(!plugin.includes('204 空响应'));
+  assert.ok(!initSource.includes('experiment=initplayback_http204'));
+});
+
 test('unhandled initialization responses pass through without touching or storing media', () => {
   for (const log_enabled of [false,true]) {
     const store = new Map();
@@ -85,7 +105,7 @@ function logEvent(store, ua=youtubeUA, headers={}) {
   return execute(configSource, {store,request:{url:'https://youtubei.googleapis.com/youtubei/v1/log_event',method:'POST',headers:{'User-Agent':ua,...headers},body:Uint8Array.from([8,1])}});
 }
 function initPlayback(store, key, ua=youtubeUA, argument={}, body=makeInit(key), cryptoApi, utilsApi) {
-  return execute(initSource, {store,request:{url:'https://rr5---sn-test.googlevideo.com/initplayback?ack=1&sig=PRIVATE',method:'POST',headers:{'User-Agent':ua,'Content-Length':'100','Content-Encoding':'br'},body},argument:{initplayback_mode:"rewrite",...argument},cryptoApi,utilsApi});
+  return execute(initSource, {store,request:{url:'https://rr5---sn-test.googlevideo.com/initplayback?ack=1&sig=PRIVATE',method:'POST',headers:{'User-Agent':ua,'Content-Length':'100','Content-Encoding':'br'},body},argument,cryptoApi,utilsApi});
 }
 
 const cryptoApi = {aes:{
@@ -127,84 +147,15 @@ const decryptPlayer = (body,clientKey,{gzip=false}={}) => {
 };
 const utilsApi={gzip:data=>new Uint8Array(zlib.gzipSync(data)),ungzip:data=>new Uint8Array(zlib.gunzipSync(data))};
 
-test('plugin routes the YouTube-only Onesie lifecycle through the merged configuration file', () => {
+test('plugin uses native blank video for initialization and keeps config routing separate', () => {
   assert.ok(!plugin.includes('onesie_enabled = switch'));
   const configLines = plugin.split('\n').filter(line => line.includes('YouTubeConfig.js'));
-  const initLine = plugin.split('\n').find(line => line.includes('googlevideo\\.com\\/initplayback'));
-  assert.equal(configLines.length, 3);
-  assert.ok(initLine && !initLine.includes('enable=') && initLine.includes('requires-body=false') && !initLine.includes('binary-body-mode=true'));
+  const initLine = plugin.split('\n').find(line => line.startsWith('http-request ') && line.includes('googlevideo\\.com\\/initplayback'));
+  assert.equal(configLines.length, 2);
+  assert.ok(initLine && initLine.includes('YouTubeLogger.js') && initLine.includes('requires-body=false') && !initLine.includes('binary-body-mode=true'));
+  assert.ok(configLines.every(line => !new RegExp(line.split(' ')[1]).test('https://rr5.googlevideo.com/initplayback?x=1')));
   assert.ok(configLines.every(line => !line.includes('music\\.')));
   assert.ok(!initLine.includes('workers.dev'));
-  const requestLines = configLines.filter(line => line.startsWith('http-request '));
-  for (const [url, needsBody] of [
-    ['https://rr5.googlevideo.com/initplayback?ack=1', false],
-    ['https://youtubei.googleapis.com/youtubei/v1/log_event', true],
-    ['https://www.youtube.com/youtubei/v1/log_event', true]
-  ]) {
-    const matches = requestLines.filter(line => new RegExp(line.split(' ')[1]).test(url));
-    assert.equal(matches.length, 1);
-    assert.ok(matches[0].includes('requires-body=' + needsBody));
-  }
-});
-
-function emptyInitRequest(overrides={}) {
-  const request = {url:'https://rr5.googlevideo.com/initplayback?sig=PRIVATE_QUERY',method:'POST',
-    headers:{'User-Agent':youtubeUA,Cookie:'PRIVATE_COOKIE',Authorization:'PRIVATE_AUTH'},...overrides};
-  Object.defineProperty(request,'body',{get(){throw Error('HTTP 204 must not read body');}});
-  return request;
-}
-
-for (const log_enabled of [false,true]) test(`default HTTP 204 completes once without body or crypto access (logs ${log_enabled})`,()=>{
-  const store = new Map([[logConfigKey,JSON.stringify({enabled:true,session:'empty-204'})]]);
-  const originalGet = store.get;
-  store.get = function(key) { if(key===stateKey)throw Error('HTTP 204 must not read Onesie keys');return originalGet.call(this,key); };
-  const unusable = new Proxy({}, {get(){throw Error('HTTP 204 must not access crypto or compression');}});
-  const result = execute(initSource,{store,request:emptyInitRequest(),cryptoApi:unusable,utilsApi:unusable,
-    argument:{log_enabled,log_level:'INFO',capture_raw:true}});
-  assert.deepEqual(JSON.parse(JSON.stringify(result.output)),{response:{status:204,headers:{'Cache-Control':'no-store'},body:''}});
-  if(!log_enabled)assert.equal(store.size,1);
-  else {
-    const entry = JSON.parse(store.get(logCacheKey)).entries[0];
-    const ref = entry.captureRef;
-    const payload = JSON.parse(Array.from({length:ref.chunks},(_,i)=>store.get(ref.prefix+i)).join(''));
-    assert.equal(entry.level,'info');assert.equal(entry.version,'1.13.0');
-    assert.ok(entry.message.includes('experiment=initplayback_http204'));
-    assert.equal(payload.request.url,'https://rr5.googlevideo.com/initplayback');
-    assert.equal(payload.request.body.reason,'not-read-http204-experiment');
-    assert.equal(payload.responseAfter.synthetic,true);assert.equal(payload.responseAfter.status,204);
-    assert.equal(payload.responseAfter.body.bytes,0);
-    assert.equal(payload.processing.requestBodyRead,false);assert.equal(payload.processing.upstreamRequested,false);
-    assert.equal(payload.processing.clientFallback,'unverified');
-    const saved = [...store.values()].join('');
-    for(const secret of ['PRIVATE_QUERY','PRIVATE_COOKIE','PRIVATE_AUTH'])assert.ok(!saved.includes(secret));
-  }
-});
-
-test('HTTP 204 experiment leaves GET, other clients, disabled and non-target requests untouched without body reads',()=>{
-  for(const [overrides,argument] of [
-    [{method:'GET'},{}],[{method:'HEAD'},{}],[{method:undefined},{}],
-    [{headers:{'User-Agent':musicUA}},{}],[{headers:{'User-Agent':'Mozilla/5.0'}},{}],[{headers:{}},{}],
-    [{url:'https://rr5.googlevideo.com.evil/initplayback'},{}],
-    [{url:'https://rr5.googlevideo.com/initplayback/extra'},{}],
-    [{url:'https://rr5.googlevideo.com/videoplayback'},{}],[{},{onesie_enabled:false}]
-  ]) {
-    const store = new Map();
-    const result = execute(initSource,{store,request:emptyInitRequest(overrides),argument:{log_enabled:true,capture_raw:true,...argument}});
-    assert.deepEqual(Object.keys(result.output),[]);assert.equal(store.size,0);
-  }
-});
-
-test('HTTP 204 log follows severity and paused state; persistence failure cannot prevent response',()=>{
-  for(const [enabled,level] of [[false,'info'],[true,'error'],[true,'warn']]) {
-    const store = new Map([[logConfigKey,JSON.stringify({enabled,session:'empty-204'})]]);
-    const result = execute(initSource,{store,request:emptyInitRequest(),argument:{capture_raw:true,log_level:level}});
-    assert.equal(result.output.response.status,204);assert.equal(store.size,1);
-  }
-  const store = new Map([[logConfigKey,JSON.stringify({enabled:true,session:'empty-204'})]]);
-  store.set = ()=>{throw Error('PRIVATE_STORE_ERROR');};
-  const result = execute(initSource,{store,request:emptyInitRequest(),argument:{capture_raw:true,log_level:'info'}});
-  assert.equal(result.output.response.status,204);assert.equal(store.size,1);
-  assert.ok(!result.logs.join('').includes('PRIVATE_STORE_ERROR'));
 });
 
 test('config response stores complete YouTube keys with a bounded lifetime and leaves response untouched', () => {
@@ -256,7 +207,7 @@ test('matching initplayback key passes through; mismatch clears state and trigge
   assert.equal(stale.has(stateKey), false);
 });
 
-test('reference rewrite mode leaves malformed requests untouched instead of returning an empty response', () => {
+test('default Onesie processing leaves malformed requests untouched instead of returning an empty response', () => {
   const result=initPlayback(new Map(),[9,8,7],youtubeUA,{script_debug:true},Uint8Array.from([255]));
   assert.deepEqual(Object.keys(result.output), []);
   assert.ok(result.logs.some(line=>line.includes('pass:')));
@@ -404,7 +355,7 @@ test('disabled, duplicate and malformed preroll flags preserve the entire reques
   }
 });
 
-test('reference rewrite request combines missing preroll flag with authenticated inner ad negotiation cleanup', () => {
+test('production request combines missing preroll flag with authenticated inner ad negotiation cleanup', () => {
  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
  const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
  const player={context:{adSignalsInfo:{params:[1]}},playbackContext:{contentPlaybackContext:{adParams:'vast',forceAdParameters:'ad'}},videoId:'KEEP'};
@@ -424,7 +375,7 @@ test('reference rewrite request combines missing preroll flag with authenticated
  assert.ok(result.logs.some(x=>x.includes('inner=authenticated_cleaned')&&x.includes('crypto_unchanged=false fallback=false')));
 });
 
-test('reference rewrite crypto mismatch or authentication failure retains the outer fix without empty fallback', () => {
+test('production crypto mismatch or authentication failure retains the outer fix without empty fallback', () => {
  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
  for (const tamper of [false,true]) {
   const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:tamper?[...encryptKey]:[4,5,6]}));
@@ -438,7 +389,7 @@ test('reference rewrite crypto mismatch or authentication failure retains the ou
  }
 });
 
-test('reference rewrite gzip request keeps playback usable when compression is unavailable and cleans when available', () => {
+test('production gzip request keeps playback usable when compression is unavailable and cleans when available', () => {
  const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]);
  const store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
  const body=makeEncryptedInit(clientKey,encryptKey,{context:{adSignalsInfo:{}},playbackContext:{contentPlaybackContext:{adParams:'vast'}},videoId:'KEEP'},{gzip:true});

@@ -1,7 +1,7 @@
 /**
  * 文件：YouTubeConfig.js
- * 功能：维护 YouTube Onesie 配置；默认对 App 初始化 POST 返回 HTTP 204，保留旧请求改写供离线对照。
- * 版本：2.2.0
+ * 功能：维护 YouTube Onesie 配置；旧初始化请求改写保留供离线回归，当前主插件使用原生空视频响应。
+ * 版本：2.2.1
  * 更新时间：2026-10-05
  * 运行环境：Loon JavaScript
  */
@@ -511,7 +511,7 @@ function (key) {
 (function () {
   "use strict";
 
-  var VERSION = "1.13.0";
+  var VERSION = "1.13.1";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -526,38 +526,6 @@ function (key) {
   var directPreroll = !flag(args.onesie_local_crypto);
   var debug = flag(args.script_debug);
   var API = /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$/i;
-
-  // 默认实验在任何正文读取、配置查找和密码学处理之前结束；旧改写模式仅供离线回归和回退。
-  if (args.initplayback_mode !== "rewrite") {
-    var emptyOutput = {};
-    if (enabled && typeof $request !== "undefined" && typeof $response === "undefined" &&
-        API.test($request.url || "") && String($request.method || "").toUpperCase() === "POST" && isYouTubeApp()) {
-      emptyOutput = {response:{status:204,headers:{"Cache-Control":"no-store"},body:""}};
-      try { recordEmpty204(); } catch (_) { /* 日志异常不改变本次合成响应。 */ }
-    }
-    $done(emptyOutput);
-    return;
-  }
-
-  /**
-   * 功能：记录 204 实验的合成状态与脱敏请求元数据；不读取正文或密钥，不推断客户端回退结果。
-   * 更新时间：2026-10-05
-   * @returns {void} 日志关闭、暂停或保存失败时直接结束。
-   */
-  function recordEmpty204() {
-    if (!flag(args.log_enabled)) return;
-    var now = new Date().toISOString();
-    var message = "experiment=initplayback_http204 synthetic_status=204 request_body_read=false upstream_requested=false client_fallback=unverified";
-    var payload = flag(args.capture_raw) ? {
-      schema:1,id:Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,14),time:now,
-      source:SOURCE,version:VERSION,phase:"request",endpoint:"initplayback",
-      request:{url:$request.url,method:$request.method,headers:$request.headers||{},body:{available:false,reason:"not-read-http204-experiment"}},
-      processing:{exception:null,executionScript:SOURCE,elapsedMs:Date.now()-ytDiagnosticScriptStartedAt,
-        experiment:"initplayback_http204",requestBodyRead:false,upstreamRequested:false,clientFallback:"unverified",messages:[message]},
-      responseAfter:{synthetic:true,status:204,headers:{"Cache-Control":"no-store"},body:{available:false,bytes:0,reason:"empty-http204"}}
-    } : null;
-    append({source:SOURCE,version:VERSION,endpoint:"initplayback",level:"info",time:now,phase:"request",message:message},payload);
-  }
 
   /**
    * 功能：把 Loon 参数转换为严格布尔值。

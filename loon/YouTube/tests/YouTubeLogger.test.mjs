@@ -59,7 +59,7 @@ test('main plugin exposes exactly three switches and keeps function-specific scr
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
   const loggerLines = plugin.split('\n').filter(x => (x.includes('script-path=') || x.startsWith('response if ')) && x.includes('YouTubeLogger.js'));
   assert.equal(loggerLines.length, 3);
-  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeConfig.js')).length, 3);
+  assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeConfig.js')).length, 2);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubePlayback.js')).length, 2);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeFeed.js')).length, 1);
   assert.ok(loggerLines.find(x => x.includes('日志记录与导出')).includes('requires-body=false'));

@@ -1,5 +1,5 @@
 #!name = YouTube去广告
-#!desc = 按功能拆分的 YouTube App 广告处理：固定启用播放器广告协商清理、Initplayback HTTP 204 空响应实验、首页/推荐/搜索赞助卡片和 Shorts 广告清理；提供后台播放、隐藏首页 Shorts、日志工具三个开关及手动播放地区选择；日志默认仅采集媒体响应头，控制接口保留脱敏开发结构；可选完整媒体采样会增加等待。完整采样选择需 Loon Build 983+。需开启 MitM 并信任证书；普通 videoplayback 媒体放行；初始化 POST 返回 204，回退效果待实测。
+#!desc = 按功能拆分的 YouTube App 广告处理：固定启用播放器广告协商清理、Initplayback 原生空视频响应实验、首页/推荐/搜索赞助卡片和 Shorts 广告清理；提供后台播放、隐藏首页 Shorts、日志工具三个开关及手动播放地区选择；日志默认仅采集媒体响应头，控制接口保留脱敏开发结构；可选完整媒体采样会增加等待。空视频实验需 Loon 3.5.1 Build 978+；完整采样选择需 Build 983+。需开启 MitM 并信任证书；普通 videoplayback 放行；初始化 POST 返回空视频，效果待实测。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/loon/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
@@ -22,16 +22,16 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,QUIC)),REJECT
 AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Rewrite]
+# 功能：仅 YouTube App 初始化 POST 返回 Loon 内置空白视频；不读取正文，不作用于普通媒体。
+# 更新时间：2026-10-05；替代已失败的 HTTP 204 实验，是否恢复播放回退需设备验证。
+request if ${url} ~= /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$/i && ${request.method} == "POST" && ${request.header['User-Agent']} ~= /(?:^|\s)com\.google\.ios\.youtube\//i then reject_video(200)
 # 功能：清除媒体源的替代连接提示，减少 QUIC 被拒绝后再次尝试的机会；只处理响应头。
 # 更新时间：2026-10-05；实际启动延迟仍需设备验证，客户端可能使用其他 HTTP/3 发现方式。
 ^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-header-replace Alt-Svc clear
 
 [Script]
-http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$|^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{media_capture_mode}],tag=YouTube 日志记录与导出
+http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$|^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{media_capture_mode}],tag=YouTube 日志记录与导出
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeConfig.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 配置请求处理
-# 功能：仅 App 初始化 POST 在请求侧返回 HTTP 204；不读取请求正文，客户端是否立即回退需实测。
-# 更新时间：2026-10-05；与 log_event 分开配置正文选项，仍使用同一份配置 JS。
-http-request ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeConfig.js,requires-body=false,timeout=10,argument=[{log_enabled},{log_level},{capture_budget}],tag=YouTube 初始化 204 空响应实验
 # 完整采样需在正文接收前选定；同一响应只执行第一条命中的脚本。默认响应头入口不传 full，避免误读正文。
 response if ${url} ~= /^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$/i && ${log_enabled} == true && ${media_capture_mode} == "full" then script("https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js", {${log_enabled}, ${log_level}, ${capture_budget}, ${media_capture_mode}}) with requires_body=true, binary_body_mode=true, timeout=30, tag="YouTube 完整媒体开发采样"
 http-response ^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget}],tag=YouTube 日志媒体响应记录
@@ -45,5 +45,5 @@ http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|musi
 
 [Mitm]
 hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, *.googlevideo.com
-# 日志关闭时初始化和普通媒体响应均无正文采样脚本；初始化 POST 在请求侧返回 204，普通播放请求仍清理广告协商。
+# 日志关闭时初始化和普通媒体响应均无正文采样脚本；初始化 POST 由原生空视频 Rewrite 处理，普通播放请求仍清理广告协商。
 # googlevideo 的 UDP 仅回退到 TCP，普通 videoplayback 媒体请求仍正常放行。
