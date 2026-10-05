@@ -6,17 +6,17 @@
 | --- | --- | --- |
 | `YouTubeFeed.js` | 清理已识别的首页、播放页推荐及搜索赞助卡片，可手动隐藏首页 Shorts 推荐区 | `/youtubei/v1/browse`、`next`、`search` 的 JSON 及部分 Protobuf 列表 |
 | `YouTubePlayback.js` | 集中处理播放器请求和响应、片头/中插配置、Shorts 播放广告、按开关允许后台播放；UMP 解析仅保留为离线研究 | `player`、`get_watch`、`player/ad_break`、`reel_watch_sequence` |
-| `YouTubeConfig.js` | 独立管理 Onesie 配置兼容逻辑，并关闭新版播放信封中的片头广告请求标志 | `config`、`log_event`、`googlevideo.com/initplayback` |
+| `YouTubeConfig.js` | 独立管理 Onesie 配置兼容逻辑；当前实验对 App 初始化 POST 直接返回 HTTP 204 | `config`、`log_event`、`googlevideo.com/initplayback` |
 | `YouTubeLogger.js` | 独立管理本地日志、开发抓包和唯一的完整 `.log` 导出页面 | 专用页面和各链路日志入口 |
 | `YouTubeNoAds.plugin` | 统一配置去广告、日志入口、参数与 MitM | 只需启用这一个插件 |
 
-主插件通过 Loon 的 `#!icon` 展示 YouTube 图标，`#!desc` 展示功能范围、默认关闭的试验/日志选项及使用条件，`#!homepage` 指向本说明。图标保存为 `assets/youtube.png`，来自 [YouTube 官方页面引用的 144×144 PNG](https://www.youtube.com/s/desktop/2b888666/img/favicon_144x144.png)（2026-10-02），随本仓库发布，不依赖其他人的图标仓库。插件信息字段见 [Loon 插件文档](https://nsloon.app/docs/Plugin/)。
+主插件通过 Loon 的 `#!icon` 展示 YouTube 图标，`#!desc` 展示功能范围、当前启用的 204 实验、日志选项及使用条件，`#!homepage` 指向本说明。图标保存为 `assets/youtube.png`，来自 [YouTube 官方页面引用的 144×144 PNG](https://www.youtube.com/s/desktop/2b888666/img/favicon_144x144.png)（2026-10-02），随本仓库发布，不依赖其他人的图标仓库。插件信息字段见 [Loon 插件文档](https://nsloon.app/docs/Plugin/)。
 
-Loon 脚本列表中的条目是执行规则，同一 JS 可以被不同阶段调用。主插件合并为 7 条规则：配置请求/响应各一条，播放请求/响应各一条，信息流响应一条，日志请求/响应各一条。日志请求同时处理记录和本地页面导出，取消重复的下载规则与手动 generic 入口；在 Safari 直接访问日志地址。媒体响应日志仍不读取正文。
+Loon 脚本列表中的条目是执行规则，同一 JS 可以被不同阶段调用。配置 JS 的 `log_event` 请求需要读取正文，而当前 `initplayback` 实验不读取正文，因此分成两条请求规则，配置响应另有一条；仍只有四份 JS。播放请求/响应、信息流响应及日志入口沿用原规则。日志请求同时处理记录和本地页面导出，在 Safari 直接访问日志地址。媒体响应默认只记录响应头，选择 full 才等待并采样完整响应。
 
 JavaScript 按职责整理为四份文件：信息流及首页 Shorts、播放广告及后台播放、配置协商、日志与导出。每份文件由内部路由根据 URL 和请求/响应阶段调用对应处理逻辑，Loon 仍可直接执行，不需要运行时模块导入。文件头及每个函数都使用中文 JSDoc 注释，包含功能说明和更新时间，便于后续维护。
 
-目标包括首页/推荐列表中的赞助卡片，以及 YouTube 插入的片头及中插广告。**当前实现清理已识别 API 响应中的广告位和普通 Player 广告协商，并关闭 Onesie 请求信封的片头广告标志。1.8.0 组合外层片头标志与本地认证后的内层广告协商清理，不强制返回空 initplayback 响应；未知结构原样放行。用户已确认退出视频后的首页广告改善，但仍报告偶发片头广告和无广告视频黑屏，新版效果尚待设备验证，不能保证所有贴片广告消失。**
+目标包括首页/推荐列表中的赞助卡片，以及 YouTube 插入的片头及中插广告。**当前保留已识别 API 广告位、普通 Player 广告协商和信息流清理；2026-10-05 切换到 Initplayback HTTP 204 实验，以对照播放启动黑屏和推荐列表等待。该实验只证明本地合成响应与不读取正文的行为，尚未证明 iOS 客户端会立即回退、停止重试或保持去广告效果。** 历史版本的初始化请求清理、认证解密和重签实现仍保留用于离线回归；当前主插件不会执行该路径。
 
 ### 从网页过滤方案迁移到 iOS API
 
@@ -32,11 +32,11 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 - Protobuf：自行实现 wire format 读取，移除已识别 Player 消息的字段 7（`adPlacements`）、字段 68（`adSlots`），并在字段 9（`playbackTracking`）中删除字段 18（`pageadViewthroughconversion`）。`get_watch` 使用已知的字段路径 `1 → 2 → Player`。保留非广告字段的原始字节、顺序及未知内容，只在嵌套消息改变时重算外层长度。
 - Ad break：`YouTubePlayback.js` 只对精确的 `player/ad_break` 请求直接返回 HTTP 200 与合法的空 Protobuf，阻止客户端取得新的片头/中插广告配置。它不匹配 `googlevideo.com`，不返回 502，也不截断广告或正片媒体流；主插件固定启用该处理。
 - Onesie 配置：`YouTubeConfig.js` 只接受 User-Agent 明确为 `com.google.ios.youtube/...` 的请求，按固定 Protobuf 路径读取 `clientKey`、`encryptKey`、有效期和热配置开关。密钥只写入 Loon 本地缓存，不进入普通日志或控制台；YouTube Music、网页和未知客户端不读写该状态。没有可用配置时，`log_event` 请求会去掉热配置哈希头，使服务端返回完整配置；已有有效配置时保留该哈希。脚本会移除 Loon 解码正文后失效的 `Content-Encoding` 请求头。
-- Initplayback：精确匹配 YouTube App 请求后，验证 Onesie 外层字段 3 中的加密信封结构，设置信封字段 13（enable_ad_placements_preroll）为 false。已有单字节 true 标志时复制正文并原位改为 0；标志缺失时仅新增该字段并更新外层长度。外层标志处理保留密文、客户端密钥、IV、HMAC 和未知字段。1.8.0 随后尝试使用有效且匹配的本地配置校验 HMAC、解密内层 PlayerRequest、清理广告信号/VAST 参数并设置不请求内联广告，再重新加密签名；失败时保留原密文和已完成的外层标志改动，不返回合成响应。重复字段、错误类型、截断、超限或未知信封原样放行。该标志的公开定义和使用方式来自 [InnertubeRequest schema](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/innertube_request.proto) 与 [Onesie 示例](https://github.com/LuanRT/googlevideo/blob/main/examples/onesie-request/main.ts)；服务端是否采纳 iOS 请求仍需实测。规则 requires-body=true 只读取小型请求正文，不读取视频媒体响应。
+- Initplayback（HTTP 204 实验）：精确匹配 `https://<主机>.googlevideo.com/initplayback`，且方法为 POST、User-Agent 明确为 `com.google.ios.youtube/...` 时，通过 Loon 的 `$done({response:{status:204,headers:{"Cache-Control":"no-store"},body:""}})` 返回本地空响应。规则设置 `requires-body=false`，分支在正文读取、Onesie 配置查找及密码学处理之前结束；不发送原初始化请求到服务端。GET/HEAD、YouTube Music、网页、未知客户端及非目标地址原样放行。该响应不是空视频或 UMP 媒体帧，客户端后续回退/重试由实机决定。返回格式参照 [Loon 请求脚本 response API](https://nsloon.app/docs/Script/script_api/)。旧请求改写通过内部 `initplayback_mode="rewrite"` 保留作离线对照，不增加 UI 开关，也不由当前主插件选择。
 - Shorts 播放广告：`YouTubePlayback.js` 只删除响应字段 2 的条目中符合 `command（1）→ reelWatchEndpoint（139608561）→ adClientParams（16）→ isAd（1）= true` 的完整条目。普通 Shorts、未知命令及结构不完整的条目保持原样。
 - 字段编号和 `get_watch` 路径来自已有逆向协议描述的核对，属于协议映射信息；未复制原脚本或其库实现。YouTube 未公开保证这些编号适用于所有客户端。脚本使用字段 2 的 playabilityStatus 及 wire type 作有限检查，不能证明所有未来协议变化都能识别。
 - 空响应、非 200、损坏数据、已检测到的结构不匹配、未知内容类型、API 上的非预期 UMP、未解压的 gzip 及超限响应原样通过。限制为 2 MiB 响应、30,000 个解析字段、20,000 个 JSON 对象节点和 64 层 JSON 深度。
-- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与媒体事件日志回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节；精确命中且结构已识别的 YouTube App `initplayback` 请求只关闭片头广告标志。关闭日志工具不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
+- 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与媒体事件日志回退到可被 MitM 的 TCP。插件不拒绝 TCP 播放媒体，不修改 `ctier`、签名或音视频字节；本轮对精确命中的 YouTube App `initplayback` POST 返回 HTTP 204。关闭日志工具不会同时撤销 `*.googlevideo.com` 的 MitM 和 UDP 回退规则。
 - 无字幕翻译、按钮隐藏、画中画或会员相关修改。后台播放仅在独立开关开启时修改明确的播放能力字段，不伪造会员状态。
 
 ### 后台播放开关
@@ -393,3 +393,13 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 四份脚本现在在同一共享索引提交前保存两项数值：`jsBeforeIndexCommitMs` 从当前 JS 执行起点计时，覆盖处理、脱敏及样本写入；`runtimeBeforeIndexCommitMs` 从可用的 `$script.startTime` 计时。两者在同一时刻读取，不能相加。后者仅在 Loon 提供有效起点时记录，不把缺失填为 0，不代表网络起点或客户端点击时间。初始化、配置与播放器请求的 `Processing.elapsedMs` 改为实际 JS 用时，不再写 null；该较早的值仍不包含全部后续采样。日志继续只导出一个 .log，不保存额外凭据或原始正文。
 
 所有计时都在最后索引序列化和写入之前结束，不包括该次索引写入、`$done()` 之后的交付或客户端渲染，不能标为完整端到端耗时。Loon 脚本起点的来源见 [Script API](https://nsloon.app/docs/Script/script_api/)。本次仅补齐测量，保持去广告、后台播放、地区、连接规则与三个开关的行为，尚未确认黑屏问题解决。
+
+## Initplayback HTTP 204 空响应对照（2026-10-05）
+
+`YouTubeConfig.js` 文件版本 2.2.0，初始化处理版本 1.13.0。默认请求路径切换为 204 空响应实验；普通播放器、信息流、后台播放、地区参数及现有 QUIC/Alt-Svc 配置保持原处理。地区参数仍应用于普通播放器请求；本轮不会解密初始化内层来改写地区。保留 `log_event/config` 的原配置兼容规则，以避免一次实验同时改变多个环节。
+
+INFO 在开启日志工具且正在记录时保存脱敏请求地址和安全传输头、合成状态 204、正文未读取原因及脚本耗时。摘要包含 `experiment=initplayback_http204`、`request_body_read=false`、`upstream_requested=false`、`client_fallback=unverified`。后者明确表示未测量客户端回退；不能把本地返回 204 当作回退成功。初始化请求正文、查询参数、令牌、Cookie 和密钥不进入记录。合成响应可能不会再次经过媒体响应规则，因此请求事件自身保存 `responseAfter.synthetic=true` 和状态 204；仍只下载一个 `.log`。ERROR 不保存这类正常实验事件。
+
+测试时更新主插件及配置 JS，确认脚本条目出现“YouTube 初始化 204 空响应实验”。选择日志级别 info、媒体采样 headers，清空旧日志后开始记录；完全退出再打开 YouTube，对比此前出现等待的同一个视频和另外几个视频。记录主视频出画面时间、下方推荐列表出现时间、是否有片头广告、加载失败或反复转圈。随后暂停并下载日志。既检查 204 实验是否命中，也检查后续 player/get_watch 和媒体请求的实际行为；未出现 initplayback 事件时不能据此判断方案有效。
+
+如果播放失败、等待变长或广告重新出现，应撤回本次 204 路径并恢复实验前的请求改写及 `requires-body=true` 规则；不在 204 上叠加空视频、404 或删除 SABR 地址，以保持本轮对照可解释。

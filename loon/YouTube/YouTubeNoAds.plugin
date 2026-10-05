@@ -1,5 +1,5 @@
 #!name = YouTube去广告
-#!desc = 按功能拆分的 YouTube App 广告处理：固定启用播放器广告协商清理、Onesie 片头广告请求标志清理、首页/推荐/搜索赞助卡片和 Shorts 广告清理；提供后台播放、隐藏首页 Shorts、日志工具三个开关及手动播放地区选择；日志默认仅采集媒体响应头，控制接口保留脱敏开发结构；可选完整媒体采样会增加等待。完整采样选择需 Loon Build 983+。需开启 MitM 并信任证书；不阻断 googlevideo 媒体。
+#!desc = 按功能拆分的 YouTube App 广告处理：固定启用播放器广告协商清理、Initplayback HTTP 204 空响应实验、首页/推荐/搜索赞助卡片和 Shorts 广告清理；提供后台播放、隐藏首页 Shorts、日志工具三个开关及手动播放地区选择；日志默认仅采集媒体响应头，控制接口保留脱敏开发结构；可选完整媒体采样会增加等待。完整采样选择需 Loon Build 983+。需开启 MitM 并信任证书；普通 videoplayback 媒体放行；初始化 POST 返回 204，回退效果待实测。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/loon/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
@@ -28,7 +28,10 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 [Script]
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$|^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{media_capture_mode}],tag=YouTube 日志记录与导出
-http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeConfig.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 配置与片头广告请求处理
+http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeConfig.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 配置请求处理
+# 功能：仅 App 初始化 POST 在请求侧返回 HTTP 204；不读取请求正文，客户端是否立即回退需实测。
+# 更新时间：2026-10-05；与 log_event 分开配置正文选项，仍使用同一份配置 JS。
+http-request ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeConfig.js,requires-body=false,timeout=10,argument=[{log_enabled},{log_level},{capture_budget}],tag=YouTube 初始化 204 空响应实验
 # 完整采样需在正文接收前选定；同一响应只执行第一条命中的脚本。默认响应头入口不传 full，避免误读正文。
 response if ${url} ~= /^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$/i && ${log_enabled} == true && ${media_capture_mode} == "full" then script("https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js", {${log_enabled}, ${log_level}, ${capture_budget}, ${media_capture_mode}}) with requires_body=true, binary_body_mode=true, timeout=30, tag="YouTube 完整媒体开发采样"
 http-response ^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget}],tag=YouTube 日志媒体响应记录
@@ -42,5 +45,5 @@ http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|musi
 
 [Mitm]
 hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, *.googlevideo.com
-# 日志关闭时初始化和普通媒体响应均无正文采样脚本；保留请求侧广告清理。
-# googlevideo 的 UDP 仅回退到 TCP，媒体请求仍正常放行。
+# 日志关闭时初始化和普通媒体响应均无正文采样脚本；初始化 POST 在请求侧返回 204，普通播放请求仍清理广告协商。
+# googlevideo 的 UDP 仅回退到 TCP，普通 videoplayback 媒体请求仍正常放行。

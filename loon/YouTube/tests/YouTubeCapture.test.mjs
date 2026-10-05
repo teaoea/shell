@@ -44,6 +44,23 @@ function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":
     $response:{status:200,headers:{'Content-Type':'application/json'},body},...extra
   });
 }
+test('HTTP 204 synthetic initialization appears in the one log download without an upstream response or body',async()=>{
+ const store=started(),request={url:'https://rr5.googlevideo.com/initplayback?sig=PRIVATE_QUERY',method:'POST',headers:{'User-Agent':'com.google.ios.youtube/21.39.4',Cookie:'PRIVATE_COOKIE'}};
+ Object.defineProperty(request,'body',{get(){throw Error('initialization body must remain unread');}});
+ const output=run('YouTubeConfig',store,{$request:request,$argument:{log_enabled:true,log_level:'info',media_capture_mode:'headers'}}).result;
+ assert.equal(output.response.status,204);
+ const event=exportData(store).events[0];
+ assert.equal(event.capture.responseAfter.status,204);assert.equal(event.capture.responseAfter.synthetic,true);
+ page(store,'pause','POST');
+ const script=page(store,'export').body.match(/<script>([\s\S]*)<\/script>/)[1];let blob,clicks=0;
+ const save={hidden:true,click(){clicks++;}},status={textContent:''};
+ await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:value=>{blob=value;return 'blob:local';}},async fetch(path){const response=page(store,path.slice(1));return {ok:response.status===200,status:response.status,json:async()=>JSON.parse(response.body)};}},{timeout:5000});
+ assert.equal(clicks,1);assert.ok(save.download.endsWith('.log'));
+ const log=await blob.text();
+ assert.ok(log.includes('experiment=initplayback_http204'));assert.ok(log.includes('Response-After:\n  status: 204\n  synthetic: true'));
+ assert.ok(log.includes('not-read-http204-experiment'));assert.ok(log.includes('client_fallback=unverified'));
+ for(const secret of ['PRIVATE_QUERY','PRIVATE_COOKIE'])assert.ok(!log.includes(secret));
+});
 test('binary feed capture uses temporary views and persists only redacted structures',()=>{
  const store=started();
  const text='{"contents":[{"adSlotRenderer":{}},{"videoRenderer":{"videoId":"PRIVATE_VIDEO","title":"PRIVATE_TITLE"}}],"authorization":"PRIVATE_TOKEN"}';
@@ -86,11 +103,11 @@ test('the single log switch enables full-chain capture without buffering request
   assert.ok(playerLine.includes('{log_enabled}')&&playerLine.includes('{capture_budget}'));
   assert.ok(new RegExp(playerLine.split(' ')[1]).test(api));
   assert.ok(!regex.test('https://youtubei.googleapis.com.evil/youtubei/v1/player'));
-  const onesie=plugin.split('\n').find(x=>x.includes('tag=YouTube 配置与片头广告请求处理'));
+  const onesie=plugin.split('\n').find(x=>x.includes('tag=YouTube 配置请求处理'));
   const init=plugin.split('\n').find(x=>x.includes('googlevideo\\.com\\/initplayback'));
   const onesieRegex=new RegExp(onesie.split(' ')[1]),initRegex=new RegExp(init.split(' ')[1]);
   assert.ok(!onesie.includes('enable=')&&onesie.includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(!init.includes('enable=')&&init.includes('requires-body=true')&&init.includes('binary-body-mode=true'));
+  assert.ok(!init.includes('enable=')&&init.includes('requires-body=false')&&!init.includes('binary-body-mode=true'));
   assert.ok(initRegex.test('https://rr5.googlevideo.com/initplayback?ack=1&oad=5500'));
   assert.ok(onesieRegex.test('https://youtubei.googleapis.com/youtubei/v1/log_event'));
   assert.ok(!initRegex.test('https://rr5.googlevideo.com/videoplayback?ack=1'));
