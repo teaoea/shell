@@ -14,7 +14,7 @@
 在 VPS 上用一条命令下载并运行 GitHub `main` 分支的脚本：
 
 ```bash
-xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh) && bash -c "$xray_script"
+bash -c 'set -e; xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh); exec bash -c "$xray_script"'
 ```
 
 首次下载需要 `curl`；若镜像只有 `wget`，可将下载部分替换为 `wget -qO-` 加同一地址。获取脚本之后的系统检测、普通用户通过 `sudo` 提权、软件源更新、必要工具安装都在脚本内完成，下载失败不会继续执行。没有 `sudo` 的镜像请登录 root 后运行。
@@ -90,7 +90,7 @@ bash install_xray.sh --outbound IPv4v6 --optimize-network --port 443 --ss-port 8
 ## Hysteria 2 + Cloudflare WARP
 
 ```bash
-hysteria_script=$(curl -fsSL --retry 3 'https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_%20hysteria2_warp.sh') && sudo bash -c "$hysteria_script"
+bash -c 'set -e; hysteria_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_%20hysteria2_warp.sh); exec sudo bash -c "$hysteria_script"'
 ```
 
 脚本会询问是否继续，只有输入小写 `y` 才会安装。它安装 Cloudflare WARP 和 Hysteria 2，配置 WARP SOCKS 代理端口 2333，将部分域名导向 WARP、其他流量直连，生成 `/etc/hysteria/config.yaml`，并在终端输出 Hysteria 2 密码。当前脚本使用自签名证书、默认域名 `bing.com`，监听 443，并为伪装站使用 80/443 端口。
@@ -102,7 +102,7 @@ hysteria_script=$(curl -fsSL --retry 3 'https://raw.githubusercontent.com/teaoea
 在 Debian/Ubuntu 或红帽系 VPS 上用一条命令运行 GitHub `main` 分支的脚本，并选择 IPv4 或 IPv6 模式：
 
 ```bash
-network_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/networt_optimization.sh) && sudo bash -c "$network_script"
+bash -c 'set -e; network_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/networt_optimization.sh); exec sudo bash -c "$network_script"'
 ```
 
 也可指定 `--ipv4` 或 `--ipv6`；非交互运行时还需加 `--yes`。`--keep-priority` 保留系统地址优先级，仅调整 TCP 与可安全修改的 DNS。两种模式均支持 Debian/Ubuntu 和红帽系 Linux；系统检查先于模式选择和 IPv6 地址输入。脚本根据全局地址和默认路由识别可用的地址族：仅 IPv6 的 VPS 使用 Cloudflare IPv6 DNS `2606:4700:4700::1111`、`2606:4700:4700::1001`；有 IPv4 的 VPS 使用 `1.1.1.1`、`1.0.0.1`，即使选择 IPv6 优先也能解析 IPv6 地址。所选优先模式缺少对应地址或默认路由时，脚本会在修改配置前停止。脚本调整 `/etc/gai.conf` 的地址选择顺序，设置 TCP Fast Open 和 MTU probing；内核支持时启用 BBR + FQ。默认使用 Xray-REALITY TCP 优化配置，`--general` 切换回原有通用优化。IPv6 模式会启用 IPv6 协议栈；脚本不修改防火墙或接口 MTU。IPv6 连接失败后的 IPv4 回退取决于应用自身是否支持多地址重试或 Happy Eyeballs。
