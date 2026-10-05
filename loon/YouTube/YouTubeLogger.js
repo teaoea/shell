@@ -76,6 +76,128 @@ function ytDiagnosticPurgeLegacy() {
   if($persistentStore.write('structure-only-v1',key)!==true)throw Error('privacy-marker-failed');
 }
 /**
+ * 功能：只读分析 UMP 分片；本地认证解密播放器响应后交由脱敏器处理，媒体和未知密文不返回原文。
+ * 更新时间：2026-10-05T12:34:24+08:00
+ * @param {Uint8Array} bytes 完整响应字节，仅在当前执行内存中使用。
+ * @param {Function} structure 将 API 正文转换为无凭据的字段树。
+ * @returns {Object} 分片目录、处理状态和可用的脱敏播放器结构。
+ */
+function ytDiagnosticUMPStructure(bytes, structure) {
+  var LIMIT=8*1048576, pos=0, header=null;
+  var out={format:'ump',bytes:bytes.length,parts:[],complete:true};
+  /**
+   * 功能：产生固定诊断代码，不将原始协议字节拼入异常消息。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function fail(code){throw Error(code);}
+  /**
+   * 功能：读取 UMP 专用整数编码，并检查剩余字节。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function umpInt(){if(pos>=bytes.length)fail('ump-truncated-integer');var first=bytes[pos++],size=first<128?1:first<192?2:first<224?3:first<240?4:5,bits=8-size,value=size===5?0:first%Math.pow(2,bits),scale=size===5?1:Math.pow(2,bits);for(var i=1;i<size;i++){if(pos>=bytes.length)fail('ump-truncated-integer');value+=bytes[pos++]*scale;scale*=256;}return value;}
+  /**
+   * 功能：读取有限大小的 Protobuf 字段；只在内存中定位认证和播放器正文。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function records(b){var p=0,fields=[];
+    /**
+     * 功能：安全读取 Protobuf 变长整数。
+     * 更新时间：2026-10-05T12:34:24+08:00
+     */
+    function integer(){var n=0,f=1;for(var i=0;i<10&&p<b.length;i++){var v=b[p++];n+=(v&127)*f;if(v<128){if(!Number.isSafeInteger(n))fail('integer-range');return n;}f*=128;}fail('protobuf-truncated');}
+    while(p<b.length){if(fields.length>=30000)fail('field-limit');var tag=integer(),wire=tag%8,no=Math.floor(tag/8),v={field:no,wire:wire};if(!no||no>536870911)fail('invalid-field');if(wire===0)v.value=integer();else if(wire===2){var n=integer();if(n>b.length-p)fail('protobuf-truncated');v.body=b.subarray(p,p+n);p+=n;}else if(wire===1||wire===5)p+=wire===1?8:4;else fail('unsupported-wire');if(p>b.length)fail('protobuf-truncated');fields.push(v);}return fields;}
+  /**
+   * 功能：拒绝重复或类型错误的认证字段，防止解析歧义。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function only(fields,no,wire){var found=null;for(var i=0;i<fields.length;i++)if(fields[i].field===no){if(found||fields[i].wire!==wire)fail('schema-mismatch');found=fields[i];}return found;}
+  /**
+   * 功能：拼接认证输入，临时字节不进入日志。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function concat(parts){var n=0,p=0;for(var i=0;i<parts.length;i++)n+=parts[i].length;var b=new Uint8Array(n);for(i=0;i<parts.length;i++){b.set(parts[i],p);p+=parts[i].length;}return b;}
+  /**
+   * 功能：读取仍有效的本地 YouTube 配置密钥，仅用于响应认证，不导出配置内容。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function localKey(){if(typeof $persistentStore==='undefined')fail('config-absent');var text=$persistentStore.read('ytads.onesie.youtube.v1'),s=text&&text.length<=8192?JSON.parse(text):null;if(!s||s.schema!==1||s.platform!=='youtube'||!Number.isFinite(s.expiresAt)||s.expiresAt<=Date.now()||typeof s.clientKey!=='string'||s.clientKey.length!==44)fail('config-absent');var alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/',a=[],v=0,bits=0;for(var i=0;i<s.clientKey.length&&s.clientKey[i]!=='=';i++){var n=alphabet.indexOf(s.clientKey[i]);if(n<0)fail('config-invalid');v=(v<<6)|n;bits+=6;if(bits>=8){bits-=8;a.push((v>>>bits)&255);}}if(a.length!==32)fail('config-invalid');return new Uint8Array(a);}
+  /**
+   * 功能：执行 rotate 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function rotate(value,bits){return (value>>>bits)|(value<<(32-bits));}
+  /**
+   * 功能：执行 sha256 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function sha256(data){var constants=[1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298];var length=data.length,total=Math.ceil((length+9)/64)*64,buffer=new Uint8Array(total),view=new DataView(buffer.buffer),bits=length*8;buffer.set(data);buffer[length]=128;view.setUint32(total-8,Math.floor(bits/4294967296));view.setUint32(total-4,bits>>>0);var hash=[1779033703,3144134277,1013904242,2773480762,1359893119,2600822924,528734635,1541459225],words=new Uint32Array(64);for(var offset=0;offset<total;offset+=64){for(var i=0;i<16;i++)words[i]=view.getUint32(offset+i*4);for(i=16;i<64;i++){var s0=rotate(words[i-15],7)^rotate(words[i-15],18)^(words[i-15]>>>3),s1=rotate(words[i-2],17)^rotate(words[i-2],19)^(words[i-2]>>>10);words[i]=(words[i-16]+s0+words[i-7]+s1)>>>0;}var a=hash[0],b=hash[1],c=hash[2],d=hash[3],e=hash[4],f=hash[5],g=hash[6],h=hash[7];for(i=0;i<64;i++){var upper=rotate(e,6)^rotate(e,11)^rotate(e,25),choice=(e&f)^(~e&g),t1=(h+upper+choice+constants[i]+words[i])>>>0,lower=rotate(a,2)^rotate(a,13)^rotate(a,22),majority=(a&b)^(a&c)^(b&c),t2=(lower+majority)>>>0;h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;}hash[0]=(hash[0]+a)>>>0;hash[1]=(hash[1]+b)>>>0;hash[2]=(hash[2]+c)>>>0;hash[3]=(hash[3]+d)>>>0;hash[4]=(hash[4]+e)>>>0;hash[5]=(hash[5]+f)>>>0;hash[6]=(hash[6]+g)>>>0;hash[7]=(hash[7]+h)>>>0;}var result=new Uint8Array(32),resultView=new DataView(result.buffer);for(i=0;i<8;i++)resultView.setUint32(i*4,hash[i]);return result;}
+  /**
+   * 功能：执行 hmac256 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function hmac256(key,data){if(key.length>64)key=sha256(key);var inner=new Uint8Array(64+data.length),outer=new Uint8Array(96);for(var i=0;i<64;i++){var value=i<key.length?key[i]:0;inner[i]=value^54;outer[i]=value^92;}inner.set(data,64);outer.set(sha256(inner),64);return sha256(outer);}
+  /**
+   * 功能：执行 equal 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function equal(a,b){if(!a||!b||a.length!==b.length)return false;var difference=0;for(var i=0;i<a.length;i++)difference|=a[i]^b[i];return difference===0;}
+  var AES_SBOX=new Uint8Array([99,124,119,123,242,107,111,197,48,1,103,43,254,215,171,118,202,130,201,125,250,89,71,240,173,212,162,175,156,164,114,192,183,253,147,38,54,63,247,204,52,165,229,241,113,216,49,21,4,199,35,195,24,150,5,154,7,18,128,226,235,39,178,117,9,131,44,26,27,110,90,160,82,59,214,179,41,227,47,132,83,209,0,237,32,252,177,91,106,203,190,57,74,76,88,207,208,239,170,251,67,77,51,133,69,249,2,127,80,60,159,168,81,163,64,143,146,157,56,245,188,182,218,33,16,255,243,210,205,12,19,236,95,151,68,23,196,167,126,61,100,93,25,115,96,129,79,220,34,42,144,136,70,238,184,20,222,94,11,219,224,50,58,10,73,6,36,92,194,211,172,98,145,149,228,121,231,200,55,109,141,213,78,169,108,86,244,234,101,122,174,8,186,120,37,46,28,166,180,198,232,221,116,31,75,189,139,138,112,62,181,102,72,3,246,14,97,53,87,185,134,193,29,158,225,248,152,17,105,217,142,148,155,30,135,233,206,85,40,223,140,161,137,13,191,230,66,104,65,153,45,15,176,84,187,22]);
+  /**
+   * 功能：执行 aesSchedule 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function aesSchedule(key){if(!key||key.length!==16)fail("invalid-aes-key");var expanded=new Uint8Array(176);expanded.set(key);var generated=16,rcon=1,temp=new Uint8Array(4);while(generated<176){for(var i=0;i<4;i++)temp[i]=expanded[generated-4+i];if(generated%16===0){var first=temp[0];temp[0]=AES_SBOX[temp[1]]^rcon;temp[1]=AES_SBOX[temp[2]];temp[2]=AES_SBOX[temp[3]];temp[3]=AES_SBOX[first];rcon=((rcon<<1)^((rcon&128)?27:0))&255;}for(i=0;i<4;i++){expanded[generated]=expanded[generated-16]^temp[i];generated++;}}return expanded;}
+  /**
+   * 功能：执行 aesBlock 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function aesBlock(input,roundKeys){var state=new Uint8Array(input),round,i,column,a0,a1,a2,a3,t;/**
+ * 功能：执行 addKey 对应的内部处理步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function addKey(offset){for(i=0;i<16;i++)state[i]^=roundKeys[offset+i];}/**
+ * 功能：执行 xtime 对应的内部处理步骤。
+ * 更新时间：2026-10-04T08:54:22+08:00
+ */
+function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(round=1;round<=10;round++){for(i=0;i<16;i++)state[i]=AES_SBOX[state[i]];t=state[1];state[1]=state[5];state[5]=state[9];state[9]=state[13];state[13]=t;t=state[2];state[2]=state[10];state[10]=t;t=state[6];state[6]=state[14];state[14]=t;t=state[3];state[3]=state[15];state[15]=state[11];state[11]=state[7];state[7]=t;if(round<10)for(column=0;column<4;column++){i=column*4;a0=state[i];a1=state[i+1];a2=state[i+2];a3=state[i+3];t=a0^a1^a2^a3;state[i]=a0^t^xtime(a0^a1);state[i+1]=a1^t^xtime(a1^a2);state[i+2]=a2^t^xtime(a2^a3);state[i+3]=a3^t^xtime(a3^a0);}addKey(round*16);}return state;}
+  /**
+   * 功能：执行 incrementCounter 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function incrementCounter(counter){for(var i=15;i>=0;i--){counter[i]=(counter[i]+1)&255;if(counter[i]!==0)return;}}
+  /**
+   * 功能：执行 aesCtr 对应的内部处理步骤。
+   * 更新时间：2026-10-04T08:54:22+08:00
+   */
+  function aesCtr(data,key,iv){if(!iv||iv.length!==16)fail("invalid-aes-iv");var roundKeys=aesSchedule(key),counter=new Uint8Array(iv),output=new Uint8Array(data.length);for(var offset=0;offset<data.length;offset+=16){var stream=aesBlock(counter,roundKeys),length=Math.min(16,data.length-offset);for(var i=0;i<length;i++)output[offset+i]=data[offset+i]^stream[i];incrementCounter(counter);}return output;}
+
+  /**
+   * 功能：认证并解析 Onesie 播放器响应；返回脱敏 API 结构，不保留响应头或密钥。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function player(b,h){var fields=records(h),type=only(fields,1,0);if(type&&type.value!==0)return {status:'non-player-onesie'};var crypto=only(fields,4,2),data=b,state='clear';if(!crypto)fail('crypto-params-absent');var params=records(crypto.body),iv=only(params,5,2),mac=only(params,4,2),compression=only(params,6,0);if(!iv||!mac)fail('crypto-params-absent');if(iv.body.length||mac.body.length){if(iv.body.length!==16||mac.body.length!==32)fail('crypto-params-invalid');var key=localKey();if(!equal(hmac256(key.subarray(16),concat([b,iv.body])),mac.body))fail('authentication-failed');data=aesCtr(b,key.subarray(0,16),iv.body);state='authenticated';}
+    if(data.length>LIMIT)fail('player-size-limit');
+    if(compression&&compression.value!==0&&compression.value!==1)fail('compression-unsupported');
+    if(compression&&compression.value===1){if(typeof $utils==='undefined'||typeof $utils.ungzip!=='function')fail('gzip-unavailable');data=$utils.ungzip(data);if(data instanceof ArrayBuffer)data=new Uint8Array(data);if(!(data instanceof Uint8Array)||data.length>LIMIT)fail('gzip-invalid');}
+    var response=records(data),http=only(response,2,0),proxy=only(response,1,0),body=only(response,4,2);var result={status:state,httpStatus:http&&http.value,proxyStatus:proxy&&proxy.value};if(body)result.player=structure(body.body);else result.status='player-body-absent';return result;
+  }
+  /**
+   * 功能：提取已确认 Cuepoint 路径上的有限类型和事件编号，用于判断广告预取、开始及结束。
+   * 更新时间：2026-10-05T13:09:46+08:00
+   */
+  function cues(b){var list=records(b),result=[];for(var i=0;i<list.length;i++){if(list[i].field!==1||list[i].wire!==2)continue;var info=records(list[i].body),cue=only(info,1,2);if(!cue)continue;var fields=records(cue.body),type=only(fields,1,0),event=only(fields,2,0);if(type&&event&&type.value>=0&&type.value<=255&&event.value>=0&&event.value<=255)result.push({type:type.value,event:event.value,ad:type.value===1,prefetch:type.value===1&&event.value===6});}return result;}
+  try {
+    while(pos<bytes.length){if(out.parts.length>=10000){out.complete=false;out.reason='part-limit';break;}var type=umpInt(),length=umpInt(),available=Math.min(length,bytes.length-pos),b=bytes.subarray(pos,pos+available);pos+=available;var item={type:type,bytes:length,observedBytes:available};out.parts.push(item);if(available!==length){item.omitted='partial-part';out.complete=false;out.reason='partial-part';break;}
+      if(type===10){header=null;if(length>LIMIT){item.omitted='metadata-size-limit';continue;}try{var f=records(b),t=only(f,1,0);item.headerType=t?t.value:0;header=b;item.cryptoPresent=!!only(f,4,2);}catch(_){item.omitted='header-invalid';}}
+      else if(type===11){if(!header){item.omitted='header-absent';continue;}if(length>LIMIT){item.omitted='metadata-size-limit';header=null;continue;}try{item.onesie=player(b,header);}catch(e){item.onesie={status:/^(config-absent|config-invalid|authentication-failed|crypto-params-absent|crypto-params-invalid|compression-unsupported|gzip-unavailable|gzip-invalid|player-size-limit|schema-mismatch|protobuf-truncated|unsupported-wire|invalid-field|field-limit|integer-range)$/.test(e.message)?e.message:'player-parse-failed'};}header=null;}
+      else if([20,22,31,35,36,37,38,42,43,44,45,46,47,48,51,54,55,58,62,66,67,68,69,70,71,72].indexOf(type)>=0){if(length>LIMIT)item.omitted='metadata-size-limit';else {item.structure=structure(b);if(type===69)try{item.cues=cues(b);}catch(_){item.cueStatus='schema-unrecognized';}}}
+      else item.omitted=type===21?'media-content':type===12?'encrypted-media':'unknown-or-sensitive-part';
+    }
+  }catch(_){out.complete=false;out.reason='ump-framing-invalid';}
+  return out;
+}
+
+/**
  * 功能：在日志落盘前移除身份信息，只保留协议字段、长度和广告结构标记；未知正文不保存原文。
  * 更新时间：2026-10-04T14:45:25+08:00
  * @param {Object} payload 原始诊断事件。
@@ -146,10 +268,15 @@ function(v){return json(v,depth+1);});if(value&&typeof value==='object'){var out
  */
 function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptkey|trackingparams|clicktracking/i.test(k)&&/^[a-zA-Z_][a-zA-Z0-9_]{0,80}$/.test(k))out[k]=json(value[k],depth+1);});return out;}return value;}
   /**
+   * 功能：将临时 API 正文字节转换为脱敏 JSON 或 Protobuf 结构；无法解析时不回退到原文。
+   * 更新时间：2026-10-05T12:34:24+08:00
+   */
+  function apiStructure(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;return text?json(JSON.parse(text),0):proto(b,0);}catch(_){return {bytes:b.length,omitted:true};}}
+  /**
    * 功能：将可用 API 正文及已认证的内层播放器请求转换为脱敏字段树；配置密钥和媒体正文不保存。
    * 更新时间：2026-10-05T12:09:41+08:00
    */
-  function body(v,request,inner){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(!inner&&/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  function body(v,request,inner){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(!inner&&/^(config|log_event)$/.test(payload.endpoint))return out;if(!inner&&/^(initplayback|ump)$/.test(payload.endpoint)){if(request)return out;try{var bytes=v.memoryBytes instanceof Uint8Array?v.memoryBytes:v.encoding==='base64'?decode(v.data):null;if(bytes)out.structure=ytDiagnosticUMPStructure(bytes,apiStructure);else out.reason='unsupported-ump-body';}catch(_){out.reason='ump-analysis-failed';}return out;}try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
   ['request','requestAfter','requestInner','requestInnerAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -180,7 +307,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.7.0";
+  var VERSION = "2.8.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -267,6 +394,12 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     if (bytes.length > 8388608) throw new Error("capture-body-limit");
     return {available:true, encoding:"base64", bytes:bytes.length, data:devBase64(bytes)};
   }
+  /**
+   * 功能：将已缓冲的 UMP 正文交给写入前脱敏器，避免 Base64 复制；原始字节不会序列化。
+   * 更新时间：2026-10-05T13:06:10+08:00
+   */
+  function devMediaBody(body,headers){if(body===undefined||body===null)return {available:false,reason:'not-provided-by-runtime'};var mime=String(headers&&(headers['Content-Type']||headers['content-type'])||'');if(!/^application\/vnd\.yt-ump(?:\s*;|$)/i.test(mime))return {available:false,reason:'unexpected-content-type'};var bytes=body instanceof Uint8Array?body:body instanceof ArrayBuffer?new Uint8Array(body):ArrayBuffer.isView(body)?new Uint8Array(body.buffer,body.byteOffset,body.byteLength):null;if(!bytes)return {available:false,reason:'unsupported-runtime-body-type'};return {available:true,bytes:bytes.length,memoryBytes:bytes};}
+
   /**
    * 功能：在日志容量或存储异常时暂停继续写入。
    * 更新时间：2026-10-04T08:54:22+08:00
@@ -368,7 +501,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       if (!c || typeof $request === "undefined") return;
       var now = new Date().toISOString();
       var id = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 14);
-      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:headersOnly ? {available:false,reason:"headers-only-not-buffered"} : devBody($request.body)};
+      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:headersOnly || /^(initplayback|ump)$/.test(endpoint) ? {available:false,reason:"request-not-buffered"} : devBody($request.body)};
       var payload = {schema:1, id:id, time:now, source:source, version:version, phase:phase, endpoint:endpoint,
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
@@ -376,13 +509,20 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, bodyBuffering:!headersOnly, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
           arguments:{development_capture:devFlag(args.capture_raw), background_playback:devFlag(args.background_playback), log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
-        payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:headersOnly ? {available:false,reason:"headers-only-not-buffered"} : devBody($response.body)};
+        payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:headersOnly ? {available:false,reason:"headers-only-not-buffered"} : /^(initplayback|ump)$/.test(endpoint)?devMediaBody($response.body,$response.headers):devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
         payload.responseAfter = {changed:!!changed, status:output && output.status !== undefined ? output.status : $response.status,
           headerOverrides:output && output.headers || null, transportHeadersRecomputedByLoon:true,
           body:changed ? devBody(output.body) : {reference:"responseBefore.body"}};
       }
-      devAppend({source:source, version:version, endpoint:endpoint, level:"debug", time:now, phase:phase,
+      var level="debug";
+      if(phase==="response"&&/^(initplayback|ump)$/.test(endpoint)){
+        payload=ytDiagnosticSanitize(payload);
+        var sample=payload.responseBefore.body.structure,issues=[];
+        if(sample&&sample.parts)for(var i=0;i<sample.parts.length;i++){var result=sample.parts[i].onesie;if(result&&result.status&&!/^(authenticated|clear|non-player-onesie|config-absent)$/.test(result.status))issues.push(result.status);}
+        if(issues.length){level="error";payload.processing.samplingErrors=issues;}
+      }
+      devAppend({source:source, version:version, endpoint:endpoint, level:level, time:now, phase:phase,
         message:"development capture: " + phase + (payload.responseAfter ? " changed=" + payload.responseAfter.changed : "")}, payload);
     } catch (error) {
       try { devHalt(c, error.message === "capture-body-limit" ? "capture-body-limit" : "capture-serialization-failed"); } catch (_) {}
@@ -664,7 +804,7 @@ function (row) {
       }
       var manifest = await get("/export-manifest.json");
       var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
-      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, request/config/media bodies and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
       for (var n = 0; n < rows.length; n++) {
         var row = rows[n], capture = null, captureError = row.captureError || null;
         status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;
@@ -743,7 +883,7 @@ function (row) {
       '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，脱敏记录另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
-      '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。媒体事件仅记录响应头，不等待媒体正文；唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
+      '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。开启日志工具时等待初始化和 UMP 完整响应，解析可用的播放器配置；暂停只停止写入，下载后应关闭主插件日志工具以停止缓冲。唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
       '<p>在主插件选择日志保存级别：info 保存完整脱敏记录，包含浏览、刷新、播放及处理结果；error 只保存错误；debug 保存完整记录并保留调试级别；warn 只保存警告和错误。调整级别只影响新记录，旧记录仍保留。</p>' +
       '<p>下载日志会自动暂停记录，在当前页面生成一个 .log 并触发下载。完整记录指脚本实际捕获的脱敏数据，不保证覆盖所有网络请求；媒体正文不保存。日志无法读取 Loon 的连接、证书或脚本超时记录。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form><script>document.getElementById("download").onclick=' + browserExport.toString() + ';</script></html>';
@@ -768,9 +908,9 @@ function (row) {
         var source = /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeed" :
           /^(log_event|config|initplayback)$/i.test(apiName) ? "YouTubeConfig" : api || apiName === "videoplayback" ? "YouTubePlayback" : "YouTubeLogger";
         var endpoint = apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName === "videoplayback" ? "ump" : apiName;
-        if (media) devMessages.push((apiName === "initplayback" ? "initialization_response" : "media") + ": headers_only=true body_buffering=false");
+        if (media) devMessages.push((apiName === "initplayback" ? "initialization_response" : "media") + (typeof $response !== "undefined" ? ": development_response=true body_buffering=true" : ": headers_only=true body_buffering=false"));
         if(media&&apiName === "initplayback"&&typeof $response !== "undefined")source="YouTubeLogger";
-        devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {}, !!media || typeof $response === "undefined");
+        devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {}, typeof $response === "undefined");
         return {};
       }
     }

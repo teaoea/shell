@@ -55,7 +55,7 @@ function passed(result) {
   assert.deepEqual(Object.keys(result.output), [], 'must return no changes');
 }
 
-test('plugin cleans API playback while media logging does not buffer streams', () => {
+test('plugin buffers media only for manually enabled development logs', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
   assert.equal(allEntries.length, 4);
   const entries = [
@@ -79,7 +79,7 @@ test('plugin cleans API playback while media logging does not buffer streams', (
   assert.ok(active.includes('background_playback = switch,false,'));
   assert.ok(!active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={log_enabled}'));
-  assert.ok(entries[1].includes('YouTubeLogger.js,requires-body=false'));
+  assert.ok(entries[1].includes('YouTubeLogger.js,requires-body=true,binary-body-mode=true'));
   assert.ok(!plugin.includes('ump_mode ='));
   assert.ok(entries[1].includes('argument=[{log_enabled},{log_level},{capture_budget}]'));
   assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js'));

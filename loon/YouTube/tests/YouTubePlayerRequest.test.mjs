@@ -12,12 +12,12 @@ function v(n){const out=[];do{const b=n%128;n=Math.floor(n/128);out.push(b+(n?12
 function msg(field,payload){return concat(v(field*8+2),v(payload.length),payload);}
 function scalar(field,value){return concat(v(field*8),v(value));}
 
-function run(body,{endpoint='player',type='application/x-protobuf',enabled=true,debug=false,raw=false,store=new Map()}={}){
+function run(body,{endpoint='player',type='application/x-protobuf',enabled=true,debug=false,raw=false,region='original',store=new Map()}={}){
   let output,calls=0;const logs=[];
   const context={
     $request:{url:`https://youtubei.googleapis.com/youtubei/v1/${endpoint}?prettyPrint=false`,method:'POST',
       headers:{'Content-Type':type,'content-encoding':'gzip','Content-Length':'99','X-Test':'kept'},body},
-    $argument:{suppress_player_ads:enabled,script_debug:debug,log_enabled:true,log_level:'info',capture_raw:raw,capture_budget:16},
+    $argument:{suppress_player_ads:enabled,script_debug:debug,log_enabled:true,log_level:'info',capture_raw:raw,capture_budget:16,playback_region:region},
     $persistentStore:{read:k=>store.get(k),write(value,key){if(value===undefined)store.delete(key);else store.set(key,value);return true;}},
     $done(value){output=value;calls++;},console:{log:value=>logs.push(value)},
     Uint8Array,ArrayBuffer,TextEncoder,TextDecoder
@@ -118,4 +118,23 @@ test('development capture stores original and modified player requests in one ev
   assert.equal(payload.requestAfter.body.reason,'privacy-structure-only');
   assert.ok(payload.request.body.bytes>payload.requestAfter.body.bytes);
   assert.equal(payload.processing.arguments.suppress_player_ads,true);
+});
+
+
+test('manual JSON playback region changes only context.client.gl and leaves language and opaque data',()=>{
+ const input={context:{client:{gl:'US',hl:'en',opaque:'KEEP'}},videoId:'KEEP',playbackContext:{contentPlaybackContext:{isInlinePlaybackNoAd:true}}};
+ const result=JSON.parse(run(JSON.stringify(input),{type:'application/json',region:'CN'}).output.body);assert.equal(result.context.client.gl,'CN');assert.equal(result.context.client.hl,'en');assert.equal(result.context.client.opaque,'KEEP');assert.equal(result.videoId,'KEEP');
+ for(const region of ['original','invalid','CN;token']){const out=run(JSON.stringify(input),{type:'application/json',region}).output;assert.equal(Object.keys(out).length,0);}
+});
+test('manual protobuf playback region changes confirmed context/client/gl and preserves sibling fields',()=>{
+ const client=concat(msg(1,new TextEncoder().encode('en')),msg(2,new TextEncoder().encode('US')),msg(90,u8([8,1]))),context=msg(1,client),input=concat(msg(1,context),msg(4,msg(1,scalar(50,1))),msg(99,u8([7,8])));
+ const expected=concat(msg(1,msg(1,concat(msg(1,new TextEncoder().encode('en')),msg(2,new TextEncoder().encode('CN')),msg(90,u8([8,1]))))),msg(4,msg(1,scalar(50,1))),msg(99,u8([7,8])));
+ assert.deepEqual(Array.from(run(input,{region:'CN'}).output.body),Array.from(expected));
+});
+test('manual region rejects duplicate or malformed gl fields rather than deleting unknown data',()=>{
+ for(const client of [concat(msg(2,u8([85,83])),msg(2,u8([74,80]))),scalar(2,1)]){const input=msg(1,msg(1,client));assert.equal(Object.keys(run(input,{region:'CN'}).output).length,0);}
+});
+test('get_watch manual region applies to both explicit outer and inner player contexts',()=>{
+ const input={context:{client:{gl:'US'}},playerRequest:{context:{client:{gl:'JP'}},playbackContext:{contentPlaybackContext:{isInlinePlaybackNoAd:true}}}};
+ const out=JSON.parse(run(JSON.stringify(input),{type:'application/json',endpoint:'get_watch',region:'CN'}).output.body);assert.equal(out.context.client.gl,'CN');assert.equal(out.playerRequest.context.client.gl,'CN');
 });

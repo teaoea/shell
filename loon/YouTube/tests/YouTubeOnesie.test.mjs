@@ -410,3 +410,13 @@ for (const protobuf of [false,true]) test(`INFO stores authenticated ${protobuf?
  const saved=[...store.entries()].filter(([key])=>key.startsWith('ytads.capture.')||key===logCacheKey).map(([,value])=>value).join('');
  for(const secret of ['PRIVATE-VIDEO-ID','PRIVATE-VAST','PRIVATE-VISITOR',Buffer.from(clientKey).toString('base64')])assert.ok(!saved.includes(secret));
 });
+
+
+for(const protobuf of [false,true])test(`manual region applies to authenticated ${protobuf?'protobuf':'JSON'} initialization without changing language or video`,()=>{
+ const clientKey=Uint8Array.from({length:32},(_,i)=>i+1),encryptKey=Uint8Array.from([9,8,7]),store=new Map();configResponse(store,makeConfig({client:[...clientKey],encrypt:[...encryptKey]}));
+ const player=protobuf?concat(message(1,message(1,concat(message(1,new TextEncoder().encode('en')),message(2,new TextEncoder().encode('US'))))),message(99,new TextEncoder().encode('KEEP'))):{context:{client:{gl:'US',hl:'en'}},videoId:'KEEP'};
+ const result=initPlayback(store,[...encryptKey],youtubeUA,{script_debug:true,playback_region:'CN'},makeEncryptedInit(clientKey,encryptKey,player,{protobuf}));
+ const decoded=decryptPlayer(result.output.body,clientKey);
+ if(protobuf){const client=field(field(decoded.playerBody,1),1);assert.equal(new TextDecoder().decode(field(client,2)),'CN');assert.equal(new TextDecoder().decode(field(client,1)),'en');assert.equal(new TextDecoder().decode(field(decoded.playerBody,99)),'KEEP');}else{assert.equal(decoded.player.context.client.gl,'CN');assert.equal(decoded.player.context.client.hl,'en');assert.equal(decoded.player.videoId,'KEEP');}
+ assert.ok(result.logs.some(x=>x.includes('region_selected=CN region_applied=1')));assert.equal(result.output.response,undefined);
+});

@@ -930,7 +930,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
 (function () {
   "use strict";
 
-  var VERSION = "1.0.0";
+  var VERSION = "1.1.0";
   var SOURCE = "YouTubePlayback";
   var CONFIG = "ytads.logger.config.v1";
   var CACHE = "ytads.logger.entries.v2";
@@ -1045,11 +1045,37 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
   function raw(bytes, record) { return bytes.subarray(record.start, record.end); }
 
   /**
+   * 功能：校验手动选择的播放请求地区；默认和无效选项均不修改地区。
+   * 更新时间：2026-10-05T13:06:10+08:00
+   * @returns {string} 已确认的两字母地区代码，或空字符串。
+   */
+  function selectedRegion(){var region=String(args.playback_region||'original').toUpperCase();return ['CN','HK','TW','US','JP','KR','SG','GB','DE','RU'].indexOf(region)>=0?region:'';}
+  /**
+   * 功能：只修改已确认的 ClientInfo.gl 字段；拒绝重复或错误线型并保留其他字段。
+   * 更新时间：2026-10-05T13:06:10+08:00
+   * @param {Uint8Array} bytes 客户端信息字段。
+   * @param {Object} budget 解析预算。
+   * @param {Object} counts 处理计数。
+   * @returns {Object} 修改后的字段及是否发生改变。
+   */
+  function regionClient(bytes,budget,counts){var region=selectedRegion();if(!region)return {body:bytes,changed:false};var fields=parse(bytes,budget),parts=[],seen=false,changed=false;for(var i=0;i<fields.length;i++){var r=fields[i];if(r.no===2){if(seen||r.wire!==2)fail('region-schema-mismatch');seen=true;var old=bytes.subarray(r.dataStart,r.dataEnd);if(old.length!==2||old[0]!==region.charCodeAt(0)||old[1]!==region.charCodeAt(1)){parts.push(message(2,new Uint8Array([region.charCodeAt(0),region.charCodeAt(1)])));changed=true;}else parts.push(raw(bytes,r));}else parts.push(raw(bytes,r));}if(!seen){parts.push(message(2,new Uint8Array([region.charCodeAt(0),region.charCodeAt(1)])));changed=true;}counts.regionApplied=(counts.regionApplied||0)+1;return {body:changed?concat(parts):bytes,changed:changed};}
+  /**
+   * 功能：定位 InnertubeContext.client，仅在手动选择地区时调用地区字段改写。
+   * 更新时间：2026-10-05T13:06:10+08:00
+   */
+  function regionContext(bytes,budget,counts){if(!selectedRegion())return {body:bytes,changed:false};var fields=parse(bytes,budget),parts=[],seen=false,changed=false;for(var i=0;i<fields.length;i++){var r=fields[i];if(r.no===1){if(seen||r.wire!==2)fail('region-context-schema-mismatch');seen=true;var c=regionClient(bytes.subarray(r.dataStart,r.dataEnd),budget,counts);parts.push(c.changed?message(1,c.body):raw(bytes,r));changed=changed||c.changed;}else parts.push(raw(bytes,r));}return {body:changed?concat(parts):bytes,changed:changed};}
+  /**
+   * 功能：只在合法的 JSON 客户端对象上设置 gl，不创建未知上下文。
+   * 更新时间：2026-10-05T13:06:10+08:00
+   */
+  function regionJson(context,counts){var region=selectedRegion();if(!region||!context||!context.client||typeof context.client!=='object'||Array.isArray(context.client))return false;counts.regionApplied=(counts.regionApplied||0)+1;if(context.client.gl===region)return false;context.client.gl=region;return true;}
+  /**
    * 功能：清理播放器上下文中的广告协商字段。
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   function cleanContext(bytes, budget, counts) {
-    var records = parse(bytes, budget), parts = [], changed = false;
+    var region=regionContext(bytes,budget,counts);bytes=region.body;
+    var records = parse(bytes, budget), parts = [], changed = region.changed;
     for (var i = 0; i < records.length; i++) {
       if (records[i].no === 9 && records[i].wire === 2) {
         counts.contextAdSignals++;
@@ -1139,6 +1165,7 @@ function (id) { return id + ":" + summary.partCounts[id]; }).join(",");
      * 更新时间：2026-10-04T08:54:22+08:00
      */
     function context(target) {
+      regionJson(target,counts);
       if (target && typeof target === "object" && Object.prototype.hasOwnProperty.call(target, "adSignalsInfo")) {
         delete target.adSignalsInfo; counts.contextAdSignals++;
       }
@@ -1344,7 +1371,7 @@ function (key) {
       }
       var changed = Object.prototype.hasOwnProperty.call(output, "body");
       var messageText = (changed ? "changed" : "pass") + ": context_ad_signals=" + counts.contextAdSignals +
-        " playback_ad_params=" + counts.playbackAdParams + " inline_no_ad=" + counts.inlineNoAd;
+        " playback_ad_params=" + counts.playbackAdParams + " inline_no_ad=" + counts.inlineNoAd+" region_selected="+(selectedRegion()||"original")+" region_applied="+(counts.regionApplied||0);
       log(messageText, changed ? "info" : "debug", kind);
       captureDevelopment(messageText, kind, output);
     } catch (error) {

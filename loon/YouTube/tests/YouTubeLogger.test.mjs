@@ -308,13 +308,13 @@ test('export ignores stale sessions and malformed records and sorts timestamps',
   assert.ok(!JSON.stringify(manifest.rows).includes('bad\\nline'));
 });
 
-test('media request and response logging never access streaming bodies', () => {
+test('media request logging does not read body while response development capture reads UMP', () => {
   const store = new Map();
   request(store, '/start', 'POST');
   const req = {url:'https://rr5.googlevideo.com/videoplayback?sig=PRIVATE', method:'POST', headers:{'Content-Encoding':'br'}};
   const res = {status:200, headers:{'Content-Type':'application/vnd.yt-ump','Content-Length':'2129022'}};
   Object.defineProperty(req, 'body', {get(){throw new Error('must not read streaming request');}});
-  Object.defineProperty(res, 'body', {get(){throw new Error('must not read streaming response');}});
+  res.body=new Uint8Array([20,2,8,0,21,3,1,2,3]);
   for (const extra of [{$request:req}, {$request:req,$response:res}]) {
     const result = execute(logger, store, extra);
     assert.deepEqual(Object.keys(result.output), []);
@@ -322,9 +322,9 @@ test('media request and response logging never access streaming bodies', () => {
   const rows = events(store);
   assert.equal(rows.length, 2);
   for (const row of rows) {
-    assert.equal(row.capture.processing.bodyBuffering, false);
+    assert.equal(row.capture.processing.bodyBuffering, row.summary.phase==='response');
     assert.equal(row.capture.processing.exception, null);
-    assert.ok(row.capture.processing.messages.includes('media: headers_only=true body_buffering=false'));
+    assert.ok(row.capture.processing.messages.includes(row.summary.phase==='response'?'media: development_response=true body_buffering=true':'media: headers_only=true body_buffering=false'));
     assert.equal(row.capture.request.body.available, false);
   }
   assert.equal(rows[1].capture.responseBefore.headers['Content-Length'], '2129022');
@@ -346,4 +346,11 @@ test('initialization coverage stays in export and is hidden from the page', () =
  assert.equal(complete.data.coverage.hasPlaybackInitialization,true);
  assert.equal(complete.data.coverage.counts.player,1);
  assert.ok(!request(store).body.includes('已记录播放初始化'));
+});
+
+
+test('googlevideo suffix explicitly rejects QUIC with UDP 443 fallback and no TCP rejection',()=>{
+ const rules=plugin.split('[Rule]')[1].split('[Script]')[0].split('\n').filter(x=>x.startsWith('AND,'));
+ const quic='AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,QUIC)),REJECT',fallback='AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT';
+ assert.equal(rules.filter(x=>x===quic).length,1);assert.ok(rules.indexOf(quic)<rules.indexOf(fallback));assert.equal(rules.filter(x=>x===fallback).length,1);assert.ok(!rules.some(x=>/PROTOCOL,(TCP|HTTPS)/.test(x)));assert.ok(!rules.some(x=>/^DOMAIN-SUFFIX,googlevideo.com,REJECT$/.test(x)));
 });

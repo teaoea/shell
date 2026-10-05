@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 const root = new URL('../', import.meta.url);
@@ -444,20 +446,20 @@ test('main-page download pauses recording and triggers one file download without
  assert.match(await blob.text(),/EVENT 1/);assert.equal(save.hidden,false);
 });
 
-test('uppercase INFO retains unchanged initialization response metadata without accessing either body',()=>{
+test('uppercase INFO captures initialization UMP response structure without reading request body',()=>{
  const store=started(),init='https://rr5.googlevideo.com/initplayback?sig=PRIVATE';
  const line=plugin.split('\n').find(x=>x.startsWith('http-response')&&x.includes('YouTubeLogger.js'));
- assert.ok(new RegExp(line.split(' ')[1]).test(init));assert.ok(line.includes('requires-body=false'));
+ assert.ok(new RegExp(line.split(' ')[1]).test(init));assert.ok(line.includes('requires-body=true,binary-body-mode=true'));
  const request={url:init,method:'POST',headers:{Authorization:'PRIVATE'}};
  const response={status:200,headers:{'Content-Type':'application/vnd.yt-ump','Transfer-Encoding':'chunked','Set-Cookie':'PRIVATE'}};
  Object.defineProperty(request,'body',{get(){throw new Error('request body should not be buffered');}});
- Object.defineProperty(response,'body',{get(){throw new Error('response body should not be buffered');}});
+ response.body=new Uint8Array([69,4,10,2,8,1,21,3,1,2,3]);
  run('YouTubeLogger',store,{$request:request,$response:response,$argument:{log_enabled:true,log_level:'INFO'}});
  const event=exportData(store).events[0];
  assert.equal(event.summary.endpoint,'initplayback');assert.equal(event.summary.phase,'response');assert.equal(event.summary.level,'info');
  assert.equal(event.capture.responseBefore.headers['Transfer-Encoding'],'chunked');
- assert.equal(event.capture.responseBefore.status,200);assert.equal(event.capture.responseBefore.body.reason,'headers-only-not-buffered');
- assert.equal(event.capture.responseAfter.changed,false);assert.equal(event.capture.processing.bodyBuffering,false);
+ assert.equal(event.capture.responseBefore.status,200);assert.equal(event.capture.responseBefore.body.structure.format,'ump');assert.equal(event.capture.responseBefore.body.structure.parts[1].omitted,'media-content');
+ assert.equal(event.capture.responseAfter.changed,false);assert.equal(event.capture.processing.bodyBuffering,true);
  assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE'));
  page(store,'pause','POST');
  const manifest=JSON.parse(page(store,'export-manifest.json').body);
@@ -480,4 +482,48 @@ test('INFO preserves safe before/after player request structure while removing r
  assert.equal(capture.requestAfter.body.structure.context.adSignalsInfo,undefined);
  assert.equal(capture.requestAfter.body.structure.playbackContext.contentPlaybackContext.isInlinePlaybackNoAd,true);
  assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE_'));
+});
+
+// 开发采样使用独立响应夹具，验证认证、结构保留及写入前去除私密信息。
+
+function diagVarint(n){const out=[];do{const b=n%128;n=Math.floor(n/128);out.push(b+(n?128:0));}while(n);return out;}
+function diagConcat(...parts){return new Uint8Array(parts.flatMap(p=>Array.from(p)));}
+function diagMessage(n,b){return diagConcat(diagVarint(n*8+2),diagVarint(b.length),b);}
+function diagScalar(n,v){return new Uint8Array([...diagVarint(n*8),...diagVarint(v)]);}
+function diagUmpInt(n){const size=n<128?1:n<16384?2:n<2097152?3:n<268435456?4:5,out=[];if(size===5)out.push(240);else{const base=2**(8-size);out.push((size===1?0:256-2**(9-size))+n%base);n=Math.floor(n/base);}for(let i=1;i<size;i++){out.push(n%256);n=Math.floor(n/256);}return out;}
+function diagPart(type,b){return diagConcat(diagUmpInt(type),diagUmpInt(b.length),b);}
+function diagOnesie({tamper=false,gzip=false,protobuf=false}={}){
+ const key=Uint8Array.from({length:32},(_,i)=>i+1),iv=new Uint8Array(16).fill(17);
+ const body=protobuf?diagConcat(diagMessage(7,diagMessage(1,new TextEncoder().encode('googleadservices.com/pagead/PRIVATE_TOKEN'))),diagMessage(99,new TextEncoder().encode('PRIVATE_VIDEO_ID'))):new TextEncoder().encode(JSON.stringify({adPlacements:[{adPlacementRenderer:{config:{kind:1}}}],videoId:'PRIVATE_VIDEO_ID',authorization:'PRIVATE_TOKEN',opaque:'PRIVATE_UNKNOWN'}));
+ const plain=diagConcat(diagScalar(1,1),diagScalar(2,200),diagMessage(3,diagMessage(2,new TextEncoder().encode('PRIVATE_COOKIE'))),diagMessage(4,body));
+ const cipher=crypto.createCipheriv('aes-128-ctr',key.subarray(0,16),iv),encrypted=new Uint8Array(Buffer.concat([cipher.update(gzip?zlib.gzipSync(plain):plain),cipher.final()]));
+ const mac=new Uint8Array(crypto.createHmac('sha256',key.subarray(16)).update(diagConcat(encrypted,iv)).digest());if(tamper)mac[0]^=1;
+ const header=diagConcat(diagScalar(1,0),diagMessage(2,new TextEncoder().encode('PRIVATE_VIDEO_ID')),diagMessage(4,diagConcat(diagMessage(4,mac),diagMessage(5,iv),diagScalar(6,gzip?1:0))));
+ return {key,bytes:diagConcat(diagPart(10,header),diagPart(11,encrypted),diagPart(21,new TextEncoder().encode('PRIVATE_MEDIA_BYTES')),diagPart(12,new TextEncoder().encode('PRIVATE_MEDIA_KEY')))};
+}
+function diagSample(store,body,extra={}){return run('YouTubeLogger',store,{$request:{url:'https://rr5.googlevideo.com/initplayback?sig=PRIVATE_SIGNATURE',method:'POST',headers:{Cookie:'PRIVATE_COOKIE'}},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body},$argument:{log_enabled:true,log_level:'INFO'},...extra});}
+for(const protobuf of [false,true])for(const gzip of [false,true])test(`development UMP locally authenticates ${gzip?'gzip':'plain'} ${protobuf?'protobuf':'JSON'} Onesie player response before persistence`,()=>{
+ const store=started(),fixture=diagOnesie({gzip,protobuf});store.set('ytads.onesie.youtube.v1',JSON.stringify({schema:1,platform:'youtube',clientKey:Buffer.from(fixture.key).toString('base64'),expiresAt:Date.now()+60000}));
+ const output=diagSample(store,fixture.bytes,{$utils:{ungzip:b=>new Uint8Array(zlib.gunzipSync(b))}}).result;
+ assert.equal(Object.keys(output).length,0,'sampling does not replace the playback response');
+ const e=exportData(store).events[0],parts=e.capture.responseBefore.body.structure.parts;
+ assert.equal(e.summary.level,'info');assert.equal(parts[1].onesie.status,'authenticated');assert.equal(parts[1].onesie.httpStatus,200);
+ if(protobuf)assert.equal(parts[1].onesie.player[0].field,7);else assert.ok(parts[1].onesie.player.adPlacements);
+ assert.equal(parts[2].omitted,'media-content');assert.equal(parts[3].omitted,'encrypted-media');
+ const saved=JSON.stringify([...store].filter(([k])=>k.startsWith('ytads.capture.')||k===indexKey));
+ for(const secret of ['PRIVATE_VIDEO_ID','PRIVATE_TOKEN','PRIVATE_UNKNOWN','PRIVATE_COOKIE','PRIVATE_SIGNATURE','PRIVATE_MEDIA_BYTES','PRIVATE_MEDIA_KEY',Buffer.from(fixture.key).toString('base64'),Buffer.from(fixture.bytes).toString('base64')])assert.ok(!saved.includes(secret));assert.ok(!saved.includes('memoryBytes'));
+});
+test('UMP authentication failure records an error and does not decode or persist player contents',()=>{
+ const store=started(),fixture=diagOnesie({tamper:true});store.set('ytads.onesie.youtube.v1',JSON.stringify({schema:1,platform:'youtube',clientKey:Buffer.from(fixture.key).toString('base64'),expiresAt:Date.now()+60000}));
+ diagSample(store,fixture.bytes);const e=exportData(store).events[0];assert.equal(e.summary.level,'error');assert.equal(e.capture.responseBefore.body.structure.parts[1].onesie.status,'authentication-failed');assert.equal(e.capture.responseBefore.body.structure.parts[1].onesie.player,undefined);assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE_VIDEO_ID'));
+});
+test('UMP sampling reports missing local configuration without persisting encrypted data',()=>{
+ const store=started();diagSample(store,diagOnesie().bytes);const p=exportData(store).events[0].capture.responseBefore.body.structure.parts;assert.equal(p[1].onesie.status,'config-absent');assert.equal(p[1].onesie.player,undefined);
+});
+test('UMP sampling preserves cue type and event but omits unknown parts and partial media',()=>{
+ const store=started(),cue=diagMessage(1,diagMessage(1,diagConcat(diagScalar(1,1),diagScalar(2,6)))),b=diagConcat(diagPart(69,cue),diagPart(99,new TextEncoder().encode('PRIVATE_UNKNOWN')),new Uint8Array([21,9,1,2]));diagSample(store,b);
+ const sample=exportData(store).events[0].capture.responseBefore.body.structure;assert.equal(sample.complete,false);assert.equal(sample.reason,'partial-part');assert.equal(sample.parts[0].cues[0].prefetch,true);assert.equal(sample.parts[0].cues[0].event,6);assert.equal(sample.parts[1].omitted,'unknown-or-sensitive-part');assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE_UNKNOWN'));
+});
+test('large media responses retain frame lengths without stopping the log or serializing media bytes',()=>{
+ const store=started(),b=diagPart(21,new Uint8Array(9*1048576));diagSample(store,b);const e=exportData(store).events[0];assert.equal(e.capture.responseBefore.body.structure.parts[0].bytes,9*1048576);assert.equal(e.capture.responseBefore.body.structure.parts[0].omitted,'media-content');assert.equal(JSON.parse(store.get(configKey)).enabled,true);assert.ok([...store].filter(([k])=>k.startsWith('ytads.capture.')).reduce((n,[,v])=>n+v.length,0)<10000);
 });
