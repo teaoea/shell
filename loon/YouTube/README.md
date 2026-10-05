@@ -91,6 +91,16 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 
 ## 安装与更新
 
+- [一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Floon%2FYouTube%2FYouTubeNoAds.plugin)
+- [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeNoAds.plugin)
+- [返回插件总览](../README.md)
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeNoAds.plugin
+```
+
+在 iPhone／iPad 上点击一键导入，在 Loon 中确认添加并启用；如浏览器没有唤起 Loon，复制安装 URL，在 Loon 插件页面添加远程插件。开启 MitM 并信任证书，按下文刷新两份发布脚本。一键导入格式见 [Loon 官方文档](https://nsloon.app/docs/Scheme/)。
+
 主插件按请求与响应阶段调用本仓库的两份压缩 JavaScript：
 
 ```text
@@ -351,7 +361,7 @@ node --test loon/YouTube/tests/*.test.mjs
 
 ## 规范参考
 
-- Maasea 两份上游构建文件的固定副本、可读还原与逻辑索引：[`vendor/Maasea/README.md`](vendor/Maasea/README.md)
+- [Maasea YouTube 项目](https://github.com/Maasea/sgmodule/tree/master/Script/Youtube)：协议核对参考；当前插件不加载该项目脚本。
 
 - 推荐接口字段描述（2025-02-18 逆向 schema）：https://github.com/davidzeng0/innertube/tree/main/protos/youtube/api/innertube
 - Protocol Buffers wire format：https://protobuf.dev/programming-guides/encoding/

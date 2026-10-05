@@ -1,0 +1,47 @@
+#!name = 闲鱼推送网络辅助
+#!desc = 将闲鱼 goofish.com 域名、网页版消息长连接、acs.m.taobao.com 共享接口网关及 Apple 推送连接设为直连，用于排查消息延迟。共享网关及 APNs 规则也影响其他 App。不能唤醒闲鱼、防止后台回收或维持卖家在线；效果需实机测试。无需 MitM。
+#!tag = 闲鱼,推送,网络排查
+#!system = iOS,iPadOS
+#!homepage = https://github.com/teaoea/shell/blob/main/loon/Xianyu/README.md
+
+[Rule]
+# 闲鱼官网及其子域名，覆盖 acs.m.goofish.com、h5api.m.goofish.com、
+# passport.goofish.com 等业务接口；按域名分流，无需解密 HTTPS URL。
+# 来源：https://www.goofish.com/
+# 接口参考：https://github.com/shaxiu/XianyuAutoAgent/blob/main/XianyuApis.py
+DOMAIN-SUFFIX,goofish.com,DIRECT
+
+# 已确认的闲鱼网页版 WebSocket 消息端点；不代表 iOS App 必然使用它。
+# 来源：https://github.com/shaxiu/XianyuAutoAgent/blob/main/main.py
+DOMAIN,wss-goofish.dingtalk.com,DIRECT
+
+# 闲鱼使用的淘宝共享接口网关；同一主机上其他 App 的请求也会直连。
+# 精确匹配主机，便于在无需 MitM 时覆盖 HTTPS；不将 taobao.com 全站直连。
+# 参考：https://github.com/Thelongdarkorg/loon-plugins
+DOMAIN,acs.m.taobao.com,DIRECT
+
+# Apple 推送域名；已有本地域名规则优先于插件规则。
+DOMAIN-SUFFIX,push.apple.com,DIRECT
+
+# 纯 IP 连接兜底，仅覆盖 Apple 公布的 APNs 网段及设备接收端口。
+# no-resolve 避免为其他域名额外解析 DNS；不保证覆盖所有 APNs 地址。
+# 来源：https://support.apple.com/zh-cn/102266
+# TCP 5223：设备的推送长连接；TCP 443：无法使用 5223 时的回退。
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.249.0.0/16,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.249.0.0/16,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.252.0.0/16,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.252.0.0/16,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.57.144.0/22,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.57.144.0/22,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.188.128.0/18,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.188.128.0/18,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.188.20.0/23,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.188.20.0/23,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2620:149:a44::/48,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2620:149:a44::/48,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2403:300:a42::/48,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2403:300:a42::/48,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2403:300:a51::/48,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2403:300:a51::/48,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2a01:b740:a42::/48,no-resolve)),DIRECT
+AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2a01:b740:a42::/48,no-resolve)),DIRECT
