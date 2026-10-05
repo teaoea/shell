@@ -27,6 +27,7 @@ PROFILE="xray-reality"
 TCP_BUFFER_MIB=16
 REALITY_SYSCTLS=()
 ASSUME_YES=false
+ALLOW_FAMILY_FALLBACK=false
 APPLYING=false
 BBR_ENABLED=false
 DNS_MODE=""
@@ -229,7 +230,9 @@ restore_backup() {
   local backup_dir=$1 failed=0
   [[ -d "$backup_dir" ]] || return 1
 
-  restore_file "$backup_dir" gai.conf "$GAI_FILE" || failed=1
+  if [[ ! -f "$backup_dir/keep-priority" ]]; then
+    restore_file "$backup_dir" gai.conf "$GAI_FILE" || failed=1
+  fi
   restore_file "$backup_dir" sysctl.conf "$SYSCTL_FILE" || failed=1
   restore_file "$backup_dir" modules.conf "$MODULES_FILE" || failed=1
   restore_file "$backup_dir" old-ipv4-sysctl.conf "$OLD_IPV4_SYSCTL" || failed=1
@@ -266,12 +269,12 @@ trap 'on_error $? $LINENO' ERR
 
 usage() {
   cat <<EOF
-用法: $SCRIPT_NAME [--ipv4|--ipv6] [--yes]
+用法: $SCRIPT_NAME [--ipv4|--ipv6|--keep-priority] [--yes]
       $SCRIPT_NAME --status
       $SCRIPT_NAME --rollback [--yes]
 
 直接运行时会询问选择 IPv4 或 IPv6 出站优先级。
-IPv4 模式支持 Debian；IPv6 模式支持 Debian 13。
+IPv4 / IPv6 模式支持 Debian/Ubuntu 和红帽系 Linux（RHEL、CentOS、Rocky、AlmaLinux、Fedora、Oracle Linux 等）。
 两种模式都保留已有地址族，DNS 可写时按可用网络设置 Cloudflare DNS；内核支持时启用 BBR + FQ。
 DNS 文件无法安全写入时保留原有 DNS，继续应用其他网络优化。
 默认应用适用于 Xray-REALITY TCP 传输的系统参数；使用 --general 保留通用优化。
@@ -282,6 +285,8 @@ DNS 文件无法安全写入时保留原有 DNS，继续应用其他网络优化
                      保留更大的现有上限，不提高每条连接的初始分配
   --ipv4       应用 IPv4 出站优先
   --ipv6       应用 IPv6 出站优先
+  --keep-priority 保留地址优先级，仅调整 TCP 和可安全修改的 DNS
+  --allow-family-fallback 首选地址族不可用时，使用另一可用地址族优化
   --ipv6-prefix PREFIX  IPv6 网络前缀，必须以 :: 结尾
   --ipv6-suffixes "S..." 后缀列表，以空格分隔；与 --ipv6-prefix 配套使用
   --ipv6-address IP[/N] 添加用户指定的 IPv6 地址；可重复传入或用空格/逗号分隔
@@ -291,7 +296,7 @@ DNS 文件无法安全写入时保留原有 DNS，继续应用其他网络优化
                        仅在无全局 IPv6 地址时添加；运行时生效，重启不保留
   --status     查看当前配置和路由
   --rollback   恢复最近一次应用前的文件及运行时参数
-  -y, --yes    跳过确认；应用时仍须指定 --ipv4 或 --ipv6
+  -y, --yes    跳过确认；应用时须指定 --ipv4、--ipv6 或 --keep-priority
   -h, --help   显示帮助
 EOF
 }
@@ -299,11 +304,13 @@ EOF
 parse_arguments() {
   while (($# > 0)); do
     case "$1" in
-      --ipv4 | --ipv6)
+      --ipv4 | --ipv6 | --keep-priority)
         [[ -z "$MODE" ]] || die "一次只能选择一种网络优先级"
         MODE=${1#--}
+        [[ "$MODE" != keep-priority ]] || MODE=keep
         ;;
       --xray-reality) PROFILE=xray-reality ;;
+      --allow-family-fallback) ALLOW_FAMILY_FALLBACK=true ;;
       --general) PROFILE=general ;;
       --tcp-buffer-mib)
         [[ $# -ge 2 && "$2" =~ ^[0-9]{1,2}$ ]] || die "--tcp-buffer-mib 需要 1 到 64 的整数"
@@ -394,18 +401,23 @@ require_commands() {
 }
 
 check_system() {
-  local os_id version_id
-
+  local ID="" ID_LIKE="" PRETTY_NAME="" VERSION_ID="" family
+  [[ "$(uname -s)" == Linux ]] || die "仅支持 Linux VPS"
   [[ -r /etc/os-release ]] || die "无法读取 /etc/os-release"
   # shellcheck disable=SC1091
   . /etc/os-release
-  os_id=${ID:-}
-  version_id=${VERSION_ID:-}
-  [[ "$os_id" == debian ]] ||
-    die "仅支持 Debian；检测到: ${PRETTY_NAME:-$os_id}"
-  if [[ "$MODE" == ipv6 && "$version_id" != 13 ]]; then
-    die "IPv6 模式仅支持 Debian 13；检测到: ${PRETTY_NAME:-Debian $version_id}"
-  fi
+  case "$ID" in
+    debian | ubuntu) family=Debian ;;
+    rhel | centos | rocky | almalinux | fedora | ol) family=RedHat ;;
+    *)
+      case " $ID_LIKE " in
+        *" debian "* | *" ubuntu "*) family=Debian ;;
+        *" rhel "* | *" centos "* | *" fedora "*) family=RedHat ;;
+        *) die "不支持的 VPS 系统: ${PRETTY_NAME:-$ID}（支持 Debian 系和红帽系）" ;;
+      esac
+      ;;
+  esac
+  log "VPS 系统: ${PRETTY_NAME:-$ID $VERSION_ID}；架构: $(uname -m)；系统家族: ${family}。"
 }
 
 detect_ip_families() {
@@ -434,6 +446,15 @@ detect_ip_families() {
 validate_ip_mode() {
   [[ "$HAS_IPV4" == true || "$HAS_IPV6" == true || -n "$IPV6_ADDRESS" ]] ||
     die "未检测到带全局地址和默认路由的 IPv4 或 IPv6 网络"
+  if [[ "$ALLOW_FAMILY_FALLBACK" == true ]]; then
+    if [[ "$MODE" == ipv4 && "$HAS_IPV4" != true && "$HAS_IPV6" == true ]]; then
+      MODE=ipv6
+      warn "IPv4 不可用，本次系统优化使用 IPv6；Xray 的出口模式保持原选择"
+    elif [[ "$MODE" == ipv6 && "$HAS_IPV6" != true && -z "$IPV6_ADDRESS" && "$HAS_IPV4" == true ]]; then
+      MODE=ipv4
+      warn "IPv6 不可用，本次系统优化使用 IPv4；Xray 的出口模式保持原选择"
+    fi
+  fi
   if [[ "$MODE" == ipv4 && "$HAS_IPV4" != true ]]; then
     die "当前没有可用的 IPv4 地址和默认路由；请选择 --ipv6"
   fi
@@ -444,7 +465,7 @@ validate_ip_mode() {
 
 prepare_ipv6_address() {
   local default_route
-  if [[ "$IPV6_SUPPORTED" == true && "$IPV6_HAS_ADDRESS" == false &&
+  if [[ "$MODE" == ipv6 && "$ALLOW_FAMILY_FALLBACK" != true && "$IPV6_SUPPORTED" == true && "$IPV6_HAS_ADDRESS" == false &&
         -z "$IPV6_PREFIX$IPV6_SUFFIXES$IPV6_ADDRESS$IPV6_INTERFACE$IPV6_GATEWAY" ]]; then
     log "检测到内核支持 IPv6，但尚未配置全局 IPv6 地址。"
     if [[ -t 0 && "$ASSUME_YES" != true ]]; then
@@ -579,7 +600,8 @@ detect_dns_mode() {
         DNS_MODE=resolved
         ;;
       *)
-        die "$RESOLV_FILE 由其他程序管理（${target}），请先配置该程序的 DNS"
+        DNS_MODE=skipped
+        warn "$RESOLV_FILE 由其他程序管理（${target}），保留 DNS；继续其他网络优化"
         ;;
     esac
   elif [[ -f "$RESOLV_FILE" ]] &&
@@ -654,7 +676,7 @@ select_mode() {
   local answer default_choice=1
   [[ -n "$MODE" ]] && return 0
   [[ "$ASSUME_YES" != true ]] ||
-    die "--yes 模式必须同时指定 --ipv4 或 --ipv6"
+    die "--yes 模式必须指定 --ipv4、--ipv6 或 --keep-priority"
   [[ -t 0 ]] ||
     die "非交互运行请指定 --ipv4 或 --ipv6，并添加 --yes"
 
@@ -732,6 +754,7 @@ create_backup() {
   mkdir -m 700 -- "$CURRENT_BACKUP"
 
   backup_file "$GAI_FILE" gai.conf
+  [[ "$MODE" != keep ]] || : >"$CURRENT_BACKUP/keep-priority"
   backup_file "$SYSCTL_FILE" sysctl.conf
   backup_file "$MODULES_FILE" modules.conf
   backup_file "$OLD_IPV4_SYSCTL" old-ipv4-sysctl.conf
@@ -942,7 +965,9 @@ verify_configuration() {
     expected=${entry#*=}
     [[ "$actual" == "$expected" ]] || { warn "参数未生效: ${entry%%=*}"; return 1; }
   done
-  grep -Fxq "$GAI_BEGIN" "$GAI_FILE"
+  if [[ "$MODE" != keep ]]; then
+    grep -Fxq "$GAI_BEGIN" "$GAI_FILE"
+  fi
   [[ "$(sysctl -n net.ipv4.tcp_fastopen)" == 3 ]]
   [[ "$(sysctl -n net.ipv4.tcp_mtu_probing)" == 1 ]]
   if [[ "$MODE" == ipv6 ]]; then
@@ -950,7 +975,7 @@ verify_configuration() {
     [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" == 0 ]]
     [[ "$(sysctl -n net.ipv6.conf.default.disable_ipv6)" == 0 ]]
     [[ "$(sysctl -n net.ipv6.conf.lo.disable_ipv6)" == 0 ]]
-  else
+  elif [[ "$MODE" == ipv4 ]]; then
     grep -Eq '^precedence[[:space:]]+::ffff:0:0/96[[:space:]]+100$' "$GAI_FILE"
   fi
   if [[ "$BBR_ENABLED" == true ]]; then
@@ -962,7 +987,9 @@ verify_configuration() {
 apply_configuration() {
   local temp_gai temp_sysctl temp_modules
 
-  confirm_action "将应用 ${MODE^^} 优先、Cloudflare DNS 和 ${PROFILE} TCP 优化（影响系统 TCP；DNS 无法写入时跳过），是否继续？"
+  local priority_label="保留地址优先级"
+  [[ "$MODE" == keep ]] || priority_label="${MODE} 优先"
+  confirm_action "将${priority_label}，应用 Cloudflare DNS 和 ${PROFILE} TCP 优化（影响系统 TCP；DNS 无法写入时跳过），是否继续？"
   check_dns_writable
   create_backup
   APPLYING=true
@@ -975,10 +1002,12 @@ apply_configuration() {
   TEMP_FILES+=("$temp_gai" "$temp_sysctl" "$temp_modules")
 
   detect_bbr
-  prepare_gai_config "$temp_gai"
+  [[ "$MODE" == keep ]] || prepare_gai_config "$temp_gai"
   prepare_sysctl_config "$temp_sysctl"
 
-  install -m 644 -o root -g root "$temp_gai" "$GAI_FILE"
+  if [[ "$MODE" != keep ]]; then
+    install -m 644 -o root -g root "$temp_gai" "$GAI_FILE"
+  fi
   install -m 644 -o root -g root "$temp_sysctl" "$SYSCTL_FILE"
   rm -f -- "$OLD_IPV4_SYSCTL" "$OLD_IPV4_MODULES" \
     "$OLD_IPV6_SYSCTL" "$OLD_IPV6_MODULES"
@@ -996,9 +1025,9 @@ apply_configuration() {
   APPLYING=false
 
   if [[ "$DNS_MODE" == skipped ]]; then
-    log "已应用 ${MODE^^} 优先；DNS 修改已跳过，保留原有 DNS。实际网络连通性见下方直连测试。"
+    log "已应用网络优化（${priority_label}）；DNS 修改已跳过，保留原有 DNS。实际网络连通性见下方直连测试。"
   else
-    log "已应用 ${MODE^^} 优先和 Cloudflare DNS；实际网络连通性见下方直连测试。"
+    log "已应用网络优化（${priority_label}）和 Cloudflare DNS；实际网络连通性见下方直连测试。"
   fi
   if [[ "$BBR_ENABLED" == true ]]; then
     log "BBR + FQ 已启用。"
@@ -1180,11 +1209,11 @@ main() {
       ;;
     apply)
       require_root
+      check_system
       require_commands
       detect_ip_families
-      prepare_ipv6_address
       select_mode
-      check_system
+      prepare_ipv6_address
       validate_ip_mode
       select_dns_servers
       detect_dns_mode

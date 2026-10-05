@@ -20,8 +20,17 @@ LOON_SERVER_IP="${LOON_SERVER_IP:-}"
 ASSUME_YES=false
 LISTEN_ADDRESS="0.0.0.0"
 NETWORK_MODE=""
+NETWORK_MODE_SET=false
 OPTIMIZE_NETWORK=""
 PREFER_IPV6=false
+OS_FAMILY=""
+PACKAGE_MANAGER=""
+ENABLE_SHADOWSOCKS=true
+SS_PORT=8443
+SS_PORT_SET=false
+SS_PASSWORD=""
+SS_LISTENER_STATUS="未检查"
+CLIENT_BUNDLE_FILE=""
 
 UUID=""
 PRIVATE_KEY=""
@@ -35,9 +44,6 @@ REPLACEMENT_PENDING=false
 PREVIOUSLY_ACTIVE=false
 NETWORK_OPTIMIZATION_APPLIED=false
 XRAY_LISTENER_STATUS="未检查"
-UFW_RULE_ADDED=false
-UFW_RULE_RESULT="未配置"
-UFW_FIREWALL_STATE="未知"
 
 die() {
   printf '错误: %s\n' "$*" >&2
@@ -71,14 +77,6 @@ cleanup() {
     fi
   fi
 
-  if ((status != 0)) && [[ "$UFW_RULE_ADDED" == true ]]; then
-    if ufw delete allow "${XRAY_PORT}/tcp" >/dev/null 2>&1; then
-      printf '已删除本次新增的 UFW TCP %s 放行规则。\n' "$XRAY_PORT" >&2
-    else
-      printf '警告: 未能删除本次新增的 UFW TCP %s 放行规则，请手动检查。\n' "$XRAY_PORT" >&2
-    fi
-  fi
-
   if ((status != 0)) && [[ "$NETWORK_OPTIMIZATION_APPLIED" == true ]]; then
     if bash "$TEMP_NETWORK_OPTIMIZER" --rollback --yes; then
       printf '已回滚本次 Xray-REALITY 网络优化。\n' >&2
@@ -98,25 +96,33 @@ trap 'on_error $? $LINENO' ERR
 
 usage() {
   cat <<'EOF'
-用法: bash install_xray.sh [--ipv4|--ipv6]
+用法: bash install_xray.sh [--outbound IPv4|IPv6|IPv4v6|IPv6v4]
        [--optimize-network|--no-optimize-network]
        [--reality-domain 域名]
-       [--yes] [--port 端口] [--loon-address IP]
-  --ipv4              Xray 出站和 Loon 地址自动检测优先 IPv4
-  --ipv6              Xray 出站和 Loon 地址自动检测优先 IPv6
+       [--yes] [--port 端口] [--client-address IP]
+       [--ss-port 端口 | --no-shadowsocks]
+  --outbound 模式     Xray 出口 IP 模式；空值或未选择时不设置
+  --ipv4 / --ipv6     仅使用对应地址族（--outbound 的简写）
+  --ipv4v6 / --ipv6v4 优先前一个地址族，另一地址族回退
   --optimize-network  应用 Xray-REALITY 系统网络优化
   --no-optimize-network
                       不修改系统网络配置
   --reality-domain 域名
                       REALITY 伪装域名，默认 www.apple.com
-  --yes               跳过安装确认；须明确指定以上两项选择
-  --port 端口         Xray 监听端口及 UFW 放行端口，默认 443
-  --loon-address IP   Loon 节点地址，默认自动检测公网 IPv4/IPv6
+  --yes               跳过安装确认；须明确是否应用网络优化
+  --port 端口         Xray REALITY 监听端口，默认 443
+  --client-address IP 所有客户端的节点地址，默认自动检测公网 IPv4/IPv6
+  --loon-address IP   --client-address 的兼容别名
+  --ss-port 端口      Shadowsocks 兼容入口，默认 8443（TCP/UDP）
+  --no-shadowsocks    只安装 REALITY，不生成圈 X / Surge 配置
   -h, --help          显示帮助
 
-必须以 root 身份运行。可设置 XRAY_PORT、LOON_SERVER_IP 和
+支持 Debian/Ubuntu 和红帽系 Linux；需要运行中的 systemd。
+普通用户自动通过 sudo 提权。可设置 XRAY_PORT、LOON_SERVER_IP 和
 REALITY_SERVER_NAME（默认 www.apple.com）。
 确认安装后会更新软件源索引，并通过 apt-get、dnf 或 yum 安装必要工具。
+默认生成 Loon、圈 X、Surge、Mihomo 配置，按标记汇总到用户家目录的 client_config。
+脚本不安装或修改防火墙，请自行放行 REALITY TCP 和 Shadowsocks TCP/UDP 端口。
 EOF
 }
 
@@ -126,9 +132,29 @@ parse_arguments() {
       -y | --yes)
         ASSUME_YES=true
         ;;
-      --ipv4 | --ipv6)
-        [[ -z "$NETWORK_MODE" ]] || die "一次只能选择一种网络优先级"
+      --ipv4 | --ipv6 | --ipv4v6 | --ipv6v4)
+        [[ "$NETWORK_MODE_SET" == false ]] || die "一次只能选择一种出口 IP 模式"
         NETWORK_MODE=${1#--}
+        NETWORK_MODE_SET=true
+        ;;
+      --outbound | --outbound=*)
+        [[ "$NETWORK_MODE_SET" == false ]] || die "一次只能选择一种出口 IP 模式"
+        if [[ "$1" == --outbound ]]; then
+          (($# >= 2)) || die "--outbound 缺少参数"
+          NETWORK_MODE=$2
+          shift
+        else
+          NETWORK_MODE=${1#*=}
+        fi
+        case "$NETWORK_MODE" in
+          IPv4 | ipv4) NETWORK_MODE=ipv4 ;;
+          IPv6 | ipv6) NETWORK_MODE=ipv6 ;;
+          IPv4v6 | ipv4v6) NETWORK_MODE=ipv4v6 ;;
+          IPv6v4 | ipv6v4) NETWORK_MODE=ipv6v4 ;;
+          "") ;;
+          *) die "出口模式只允许 IPv4、IPv6、IPv4v6、IPv6v4 或空值" ;;
+        esac
+        NETWORK_MODE_SET=true
         ;;
       --optimize-network)
         [[ -z "$OPTIMIZE_NETWORK" ]] || die "一次只能选择一种网络优化设置"
@@ -150,7 +176,20 @@ parse_arguments() {
         [[ -n "$REALITY_SERVER_NAME" ]] || die "--reality-domain 缺少参数"
         REALITY_SERVER_NAME_SET=true
         ;;
-      --port | --loon-address)
+      --no-shadowsocks)
+        ENABLE_SHADOWSOCKS=false
+        ;;
+      --ss-port | --ss-port=*)
+        if [[ "$1" == --ss-port ]]; then
+          (($# >= 2)) || die "--ss-port 缺少参数"
+          SS_PORT=$2
+          shift
+        else
+          SS_PORT=${1#*=}
+        fi
+        SS_PORT_SET=true
+        ;;
+      --port | --loon-address | --client-address)
         (($# >= 2)) || die "$1 缺少参数"
         if [[ "$1" == --port ]]; then
           XRAY_PORT=$2
@@ -165,7 +204,7 @@ parse_arguments() {
         [[ -n "$XRAY_PORT" ]] || die "--port 缺少参数"
         XRAY_PORT_SET=true
         ;;
-      --loon-address=*)
+      --loon-address=* | --client-address=*)
         LOON_SERVER_IP=${1#*=}
         ;;
       -h | --help)
@@ -180,16 +219,64 @@ parse_arguments() {
   done
 
   if [[ "$ASSUME_YES" == true ]]; then
-    [[ -n "$NETWORK_MODE" ]] ||
-      die "--yes 模式必须同时指定 --ipv4 或 --ipv6"
     [[ -n "$OPTIMIZE_NETWORK" ]] ||
       die "--yes 模式必须同时指定 --optimize-network 或 --no-optimize-network"
+  fi
+  [[ "$ENABLE_SHADOWSOCKS" == true || "$SS_PORT_SET" == false ]] ||
+    die "--ss-port 不能与 --no-shadowsocks 同时使用"
+}
+
+detect_system() {
+  local ID="" ID_LIKE="" PRETTY_NAME="" VERSION_ID=""
+  [[ "$(uname -s)" == Linux ]] || die "仅支持 Linux VPS"
+  [[ -r /etc/os-release ]] || die "无法读取 /etc/os-release，无法识别 VPS 系统"
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  case "$ID" in
+    debian | ubuntu) OS_FAMILY=debian ;;
+    rhel | centos | rocky | almalinux | fedora | ol) OS_FAMILY=redhat ;;
+    *)
+      case " $ID_LIKE " in
+        *" debian "* | *" ubuntu "*) OS_FAMILY=debian ;;
+        *" rhel "* | *" centos "* | *" fedora "*) OS_FAMILY=redhat ;;
+        *) die "不支持的 VPS 系统: ${PRETTY_NAME:-$ID}（支持 Debian 系和红帽系）" ;;
+      esac
+      ;;
+  esac
+  if [[ "$OS_FAMILY" == debian ]]; then
+    command -v apt-get >/dev/null 2>&1 || die "Debian 系系统缺少 apt-get"
+    PACKAGE_MANAGER=apt-get
+  elif command -v dnf >/dev/null 2>&1; then
+    PACKAGE_MANAGER=dnf
+  elif command -v yum >/dev/null 2>&1; then
+    PACKAGE_MANAGER=yum
+  else
+    die "红帽系系统缺少 dnf 或 yum"
+  fi
+  printf 'VPS 系统: %s；架构: %s；包管理器: %s。\n' \
+    "${PRETTY_NAME:-$ID $VERSION_ID}" "$(uname -m)" "$PACKAGE_MANAGER"
+}
+
+ensure_root() {
+  [[ "$(id -u)" -ne 0 ]] || return 0
+  command -v sudo >/dev/null 2>&1 || die "需要 root 权限；请切换 root 后运行（未安装 sudo）"
+  local -a environment=()
+  [[ "$XRAY_PORT_SET" != true ]] || environment+=("XRAY_PORT=$XRAY_PORT")
+  [[ "$REALITY_SERVER_NAME_SET" != true ]] || environment+=("REALITY_SERVER_NAME=$REALITY_SERVER_NAME")
+  [[ -z "$LOON_SERVER_IP" ]] || environment+=("LOON_SERVER_IP=$LOON_SERVER_IP")
+  [[ -z "${SSH_CONNECTION:-}" ]] || environment+=("SSH_CONNECTION=$SSH_CONNECTION")
+  printf '正在通过 sudo 获取安装所需权限...\n'
+  if [[ -n "${BASH_EXECUTION_STRING:-}" ]]; then
+    exec sudo -- env "${environment[@]}" bash -c "$BASH_EXECUTION_STRING" "$0" "$@"
+  else
+    exec sudo -- env "${environment[@]}" bash "${BASH_SOURCE[0]}" "$@"
   fi
 }
 
 check_environment() {
-  [[ "$(id -u)" -eq 0 ]] || die "请以 root 身份运行"
+  [[ "$(id -u)" -eq 0 ]] || die "需要 root 权限"
   command -v systemctl >/dev/null 2>&1 || die "需要使用 systemd 的 Linux 系统"
+  [[ -d /run/systemd/system ]] || die "systemd 未运行，无法安装和启动 Xray 服务"
 
   validate_xray_port
 
@@ -200,20 +287,13 @@ check_environment() {
 }
 
 install_required_tools() {
-  local package_manager command_name
+  local command_name
   local -a packages=(ca-certificates openssl unzip kmod gawk grep e2fsprogs)
 
-  if command -v apt-get >/dev/null 2>&1; then
-    package_manager=apt-get
+  if [[ "$PACKAGE_MANAGER" == apt-get ]]; then
     packages+=(iproute2 procps libc-bin ncurses-bin)
-  elif command -v dnf >/dev/null 2>&1; then
-    package_manager=dnf
-    packages+=(iproute procps-ng glibc-common ncurses)
-  elif command -v yum >/dev/null 2>&1; then
-    package_manager=yum
-    packages+=(iproute procps-ng glibc-common ncurses)
   else
-    die "未找到 apt-get、dnf 或 yum，无法更新软件源和安装必要工具"
+    packages+=(iproute procps-ng glibc-common ncurses)
   fi
 
   # 精简镜像可能由 curl-minimal 或 coreutils-single 提供这些命令。
@@ -226,7 +306,7 @@ install_required_tools() {
   done
 
   printf '正在更新软件源索引并安装 Xray 必要工具...\n'
-  case "$package_manager" in
+  case "$PACKAGE_MANAGER" in
     apt-get)
       apt-get update || die "apt-get 软件源更新失败，请检查网络和软件源配置"
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}" ||
@@ -246,7 +326,7 @@ install_required_tools() {
 check_required_tools() {
   local command_name
   for command_name in curl openssl unzip awk grep install mktemp cp date \
-    ip ss sysctl getent tput lsattr chattr; do
+    ip ss sysctl getent tput lsattr chattr mkdir chmod chown mv; do
     command -v "$command_name" >/dev/null 2>&1 ||
       die "安装依赖后仍缺少必需命令: $command_name"
   done
@@ -265,10 +345,23 @@ select_xray_port() {
 
   if [[ "$XRAY_PORT_SET" != true && "$ASSUME_YES" != true ]]; then
     [[ -t 0 ]] || die "非交互运行请添加 --yes 或使用 --port 指定端口"
-    read -r -p "输入 Xray 监听端口（默认 443，UFW 将放行该 TCP 端口）: " answer
+    read -r -p "输入 Xray REALITY 监听端口（默认 443）: " answer
     [[ -z "$answer" ]] || XRAY_PORT=$answer
   fi
   validate_xray_port
+  if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+    if [[ "$SS_PORT_SET" != true ]]; then
+      [[ "$XRAY_PORT" != "$SS_PORT" ]] || SS_PORT=8444
+      if [[ "$ASSUME_YES" != true ]]; then
+        read -r -p "输入圈 X / Surge 的 Shadowsocks 端口（默认 $SS_PORT，TCP/UDP）: " answer
+        [[ -z "$answer" ]] || SS_PORT=$answer
+      fi
+    fi
+    [[ "$SS_PORT" =~ ^[0-9]{1,5}$ ]] &&
+      ((10#$SS_PORT >= 1 && 10#$SS_PORT <= 65535)) || die "Shadowsocks 端口必须是 1-65535 的整数"
+    SS_PORT=$((10#$SS_PORT))
+    [[ "$SS_PORT" != "$XRAY_PORT" ]] || die "Shadowsocks 与 REALITY 必须使用不同端口"
+  fi
 }
 
 select_reality_server_name() {
@@ -286,24 +379,37 @@ select_reality_server_name() {
 }
 
 select_network_preferences() {
-  local answer default_choice=1
+  local answer
 
-  if [[ -z "$NETWORK_MODE" ]]; then
-    [[ -t 0 ]] || die "非交互运行请指定 --ipv4 或 --ipv6"
+  if [[ "$NETWORK_MODE_SET" == false && "$ASSUME_YES" != true ]]; then
+    [[ -t 0 ]] || die "非交互运行请添加 --yes 或指定 --outbound"
     while true; do
-      printf '请选择 Xray 出站网络优先级：\n'
-      printf '  1) IPv4 优先，IPv6 回退\n'
-      printf '  2) IPv6 优先，IPv4 回退\n'
-      read -r -p "输入 1 或 2（默认 ${default_choice}）: " answer
-      case "${answer:-$default_choice}" in
+      printf '请选择 Xray 出口 IP 模式（无默认值）：\n'
+      printf '  1) IPv4：仅 IPv4\n'
+      printf '  2) IPv6：仅 IPv6\n'
+      printf '  3) IPv4v6：IPv4 优先，IPv6 回退\n'
+      printf '  4) IPv6v4：IPv6 优先，IPv4 回退\n'
+      read -r -p "输入模式名称或 1-4；直接回车留空、不设置: " answer
+      case "$answer" in
+        "") NETWORK_MODE=""; break ;;
         1) NETWORK_MODE=ipv4; break ;;
         2) NETWORK_MODE=ipv6; break ;;
-        *) printf '请输入 1 或 2。\n' >&2 ;;
+        3) NETWORK_MODE=ipv4v6; break ;;
+        4) NETWORK_MODE=ipv6v4; break ;;
+        IPv4 | ipv4) NETWORK_MODE=ipv4; break ;;
+        IPv6 | ipv6) NETWORK_MODE=ipv6; break ;;
+        IPv4v6 | ipv4v6) NETWORK_MODE=ipv4v6; break ;;
+        IPv6v4 | ipv6v4) NETWORK_MODE=ipv6v4; break ;;
+        *) printf '请输入 1-4、模式名称，或直接回车。\n' >&2 ;;
       esac
     done
+    NETWORK_MODE_SET=true
   fi
 
-  [[ "$NETWORK_MODE" != ipv6 ]] || PREFER_IPV6=true
+  case "$NETWORK_MODE" in
+    ipv6 | ipv6v4) PREFER_IPV6=true ;;
+    *) PREFER_IPV6=false ;;
+  esac
 
   if [[ -z "$OPTIMIZE_NETWORK" ]]; then
     [[ -t 0 ]] ||
@@ -319,9 +425,11 @@ select_network_preferences() {
 
 network_mode_label() {
   case "$NETWORK_MODE" in
-    ipv4) printf 'IPv4' ;;
-    ipv6) printf 'IPv6' ;;
-    *) printf '未选择' ;;
+    ipv4) printf 'IPv4（仅 IPv4）' ;;
+    ipv6) printf 'IPv6（仅 IPv6）' ;;
+    ipv4v6) printf 'IPv4v6（IPv4 优先，IPv6 回退）' ;;
+    ipv6v4) printf 'IPv6v4（IPv6 优先，IPv4 回退）' ;;
+    *) printf '未设置（遵循 Xray 默认行为）' ;;
   esac
 }
 
@@ -348,7 +456,7 @@ validate_loon_address() {
 
 find_loon_address() {
   if [[ -z "$LOON_SERVER_IP" ]]; then
-    if [[ "$NETWORK_MODE" == ipv6 ]]; then
+    if [[ "$NETWORK_MODE" == ipv6 || "$NETWORK_MODE" == ipv6v4 ]]; then
       LOON_SERVER_IP=$(
         curl -6 -fsS --max-time 8 https://api64.ipify.org 2>/dev/null ||
           curl -4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null ||
@@ -371,8 +479,12 @@ confirm_installation_plan() {
   [[ -t 0 ]] || die "非交互运行请添加 --yes"
   [[ "$OPTIMIZE_NETWORK" != true ]] || optimization_text="应用 Xray-REALITY 系统网络优化"
   mode_label=$(network_mode_label)
-  printf '已选择: %s 优先；%s。\n' "$mode_label" "$optimization_text"
-  read -r -p "将先更新软件源并安装必要工具，再处理网络设置、选择监听端口并配置 UFW，最后询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
+  printf '出口 IP 模式: %s；%s。\n' "$mode_label" "$optimization_text"
+  if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+    printf '同时安装 Shadowsocks AES-128-GCM 兼容入口，供圈 X / Surge 使用；默认端口 8443，稍后可修改。\n'
+  fi
+  printf '脚本不修改防火墙；需要自行放行所选端口。\n'
+  read -r -p "将先更新软件源并安装必要工具，再处理网络设置、选择监听端口，最后询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
   [[ "$answer" =~ ^[Yy]$ ]] || {
     printf '操作已取消。\n'
     exit 0
@@ -380,8 +492,15 @@ confirm_installation_plan() {
 }
 
 apply_network_optimization() {
-  local -a optimizer_arguments=("--$NETWORK_MODE" --xray-reality)
+  local -a optimizer_arguments=(--xray-reality)
   [[ "$OPTIMIZE_NETWORK" == true ]] || return 0
+  case "$NETWORK_MODE" in
+    ipv4) optimizer_arguments+=(--ipv4) ;;
+    ipv6) optimizer_arguments+=(--ipv6) ;;
+    ipv4v6) optimizer_arguments+=(--ipv4 --allow-family-fallback) ;;
+    ipv6v4) optimizer_arguments+=(--ipv6 --allow-family-fallback) ;;
+    "") optimizer_arguments+=(--keep-priority) ;;
+  esac
 
   printf '正在下载并应用 Xray-REALITY 网络优化...\n'
   TEMP_NETWORK_OPTIMIZER=$(mktemp /tmp/network-optimizer.XXXXXX.sh)
@@ -392,55 +511,6 @@ apply_network_optimization() {
   fi
   bash "$TEMP_NETWORK_OPTIMIZER" "${optimizer_arguments[@]}"
   NETWORK_OPTIMIZATION_APPLIED=true
-}
-
-install_ufw() {
-  printf '未检测到 UFW，正在安装...\n'
-  if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get install -y ufw
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y ufw
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y ufw
-  else
-    die "系统未安装 UFW，且没有找到 apt-get、dnf 或 yum，无法自动安装"
-  fi
-  command -v ufw >/dev/null 2>&1 || die "UFW 安装完成后仍无法执行"
-}
-
-ensure_ufw() {
-  command -v ufw >/dev/null 2>&1 || install_ufw
-}
-
-ufw_rule_exists() {
-  local added_rules
-  added_rules=$(
-    trap - ERR
-    LC_ALL=C ufw show added 2>/dev/null || true
-  )
-  grep -Eq "^ufw allow ${XRAY_PORT}(/tcp)?([[:space:]]|$)" <<<"$added_rules"
-}
-
-apply_ufw_rule() {
-  local status_output
-
-  if ufw_rule_exists; then
-    UFW_RULE_RESULT="TCP ${XRAY_PORT} 放行规则已存在"
-  else
-    ufw allow "${XRAY_PORT}/tcp"
-    UFW_RULE_ADDED=true
-    UFW_RULE_RESULT="TCP ${XRAY_PORT} 放行规则已添加"
-  fi
-
-  status_output=$(
-    trap - ERR
-    LC_ALL=C ufw status 2>&1
-  ) || die "无法读取 UFW 状态: $status_output"
-  if [[ "$status_output" == *"Status: active"* ]]; then
-    UFW_FIREWALL_STATE="已启用，规则立即生效"
-  else
-    UFW_FIREWALL_STATE="未启用，规则已保存；脚本未自动启用 UFW"
-  fi
 }
 
 backup_existing_config() {
@@ -474,6 +544,10 @@ generate_credentials() {
   PUBLIC_KEY=$(printf '%s\n' "$key_output" |
     awk -F': ' '/^(Password( \(PublicKey\))?|Public key):/ {print $2; exit}')
   SHORT_ID=$(openssl rand -hex 8)
+  if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+    SS_PASSWORD=$(openssl rand -hex 32)
+    [[ "$SS_PASSWORD" =~ ^[0-9a-f]{64}$ ]] || die "无法生成 Shadowsocks 密码"
+  fi
 
   [[ -n "$UUID" && -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" &&
     "$SHORT_ID" =~ ^[0-9a-f]{16}$ ]] ||
@@ -481,14 +555,49 @@ generate_credentials() {
 }
 
 write_xray_config() {
-  local tcp_fast_open_json=""
+  local tcp_fast_open_json="" shadowsocks_json="" outbound_json='"protocol": "freedom"' routing_json="" block_json="" dns_json=""
   mkdir -p "$XRAY_CONFIG_DIR"
   TEMP_CONFIG=$(mktemp /tmp/xray-config.XXXXXX.json)
   [[ "$OPTIMIZE_NETWORK" != true ]] || tcp_fast_open_json=', "tcpFastOpen": true'
+  case "$NETWORK_MODE" in
+    ipv4 | ipv6)
+      local query_strategy=UseIPv4 blocked_family='::/0'
+      if [[ "$NETWORK_MODE" == ipv6 ]]; then
+        query_strategy=UseIPv6
+        blocked_family='0.0.0.0/0'
+      fi
+      dns_json="\"dns\": {\"servers\": [\"localhost\"], \"queryStrategy\": \"$query_strategy\"},"
+      outbound_json="\"protocol\": \"freedom\", \"streamSettings\": {\"sockopt\": {\"domainStrategy\": \"ForceIP\", \"happyEyeballs\": {\"tryDelayMs\": 250, \"prioritizeIPv6\": $PREFER_IPV6, \"interleave\": 1, \"maxConcurrentTry\": 4}}}"
+      # domainStrategy 只约束域名解析；显式阻止另一地址族的 IP 字面量目标。
+      routing_json="\"routing\": {\"rules\": [{\"type\": \"field\", \"ip\": [\"$blocked_family\"], \"outboundTag\": \"block-other-family\"}]},"
+      block_json=', {"tag": "block-other-family", "protocol": "blackhole"}'
+      ;;
+    ipv4v6 | ipv6v4)
+      outbound_json="\"protocol\": \"freedom\", \"streamSettings\": {\"sockopt\": {\"domainStrategy\": \"UseIP\", \"happyEyeballs\": {\"tryDelayMs\": 250, \"prioritizeIPv6\": $PREFER_IPV6, \"interleave\": 1, \"maxConcurrentTry\": 4}}}"
+      ;;
+  esac
+  if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+    shadowsocks_json=$(cat <<EOF
+  ,{
+    "tag": "shadowsocks-compatible",
+    "listen": "$LISTEN_ADDRESS",
+    "port": $SS_PORT,
+    "protocol": "shadowsocks",
+    "settings": {
+      "method": "aes-128-gcm",
+      "password": "$SS_PASSWORD",
+      "network": "tcp,udp"
+    },
+    "streamSettings": {"sockopt": {"v6only": false$tcp_fast_open_json}}
+  }
+EOF
+)
+  fi
 
   cat >"$TEMP_CONFIG" <<EOF
 {
   "log": {"loglevel": "warning"},
+  $dns_json
   "inbounds": [{
     "listen": "$LISTEN_ADDRESS",
     "port": $XRAY_PORT,
@@ -504,25 +613,14 @@ write_xray_config() {
         "target": "$REALITY_SERVER_NAME:443",
         "serverNames": ["$REALITY_SERVER_NAME"],
         "privateKey": "$PRIVATE_KEY",
+        "minClientVer": "1.8.2",
         "shortIds": ["$SHORT_ID"]
       },
       "sockopt": {"v6only": false$tcp_fast_open_json}
     }
-  }],
-  "outbounds": [{
-    "protocol": "freedom",
-    "streamSettings": {
-      "sockopt": {
-        "domainStrategy": "UseIP",
-        "happyEyeballs": {
-          "tryDelayMs": 250,
-          "prioritizeIPv6": $PREFER_IPV6,
-          "interleave": 1,
-          "maxConcurrentTry": 4
-        }
-      }
-    }
-  }]
+  }$shadowsocks_json],
+  $routing_json
+  "outbounds": [{$outbound_json}$block_json]
 }
 EOF
 
@@ -559,6 +657,20 @@ verify_xray_installation() {
     done
     [[ "$XRAY_LISTENER_STATUS" != "未检查" ]] ||
       die "安装状态检查失败：未发现 TCP $XRAY_PORT 监听端口"
+    if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+      for attempt in {1..10}; do
+        if ss -H -ltn 2>/dev/null |
+          awk -v port="$SS_PORT" '$4 ~ (":" port "$") {found=1} END {exit !found}' &&
+          ss -H -lun 2>/dev/null |
+          awk -v port="$SS_PORT" '$4 ~ (":" port "$") {found=1} END {exit !found}'; then
+          SS_LISTENER_STATUS="TCP/UDP ${SS_PORT}（已监听）"
+          break
+        fi
+        sleep 0.2
+      done
+      [[ "$SS_LISTENER_STATUS" != "未检查" ]] ||
+        die "安装状态检查失败：未发现 Shadowsocks TCP/UDP $SS_PORT 监听端口"
+    fi
   else
     XRAY_LISTENER_STATUS="TCP ${XRAY_PORT}（未检查，系统缺少 ss）"
   fi
@@ -566,7 +678,84 @@ verify_xray_installation() {
   REPLACEMENT_PENDING=false
 }
 
-print_loon_config() {
+write_client_configs() {
+  local endpoint=$LOON_SERVER_IP owner entry user_home bundle_temp backup
+  [[ "$endpoint" != *:* ]] || endpoint="[$endpoint]"
+  # 写入调用者的家目录；sudo 的调用者仍能读取自己的配置副本。
+  owner=${SUDO_USER:-$(id -un)}
+  entry=$(getent passwd "$owner") || die "无法获取用户 $owner 的家目录"
+  IFS=: read -r _ _ _ _ _ user_home _ <<<"$entry"
+  [[ "$user_home" == /* && -d "$user_home" ]] || die "用户家目录无效: $user_home"
+  CLIENT_BUNDLE_FILE="$user_home/client_config"
+  [[ ! -L "$CLIENT_BUNDLE_FILE" ]] || die "$CLIENT_BUNDLE_FILE 是符号链接，拒绝覆盖"
+  [[ ! -e "$CLIENT_BUNDLE_FILE" || -f "$CLIENT_BUNDLE_FILE" ]] || die "$CLIENT_BUNDLE_FILE 不是普通文件"
+  bundle_temp=$(mktemp "$user_home/.client_config.XXXXXX")
+  [[ -z "$TEMP_CONFIG" ]] || rm -f -- "$TEMP_CONFIG"
+  TEMP_CONFIG=$bundle_temp
+
+  cat >"$bundle_temp" <<EOF
+[loon]
+Xray-REALITY = VLESS,$LOON_SERVER_IP,$XRAY_PORT,"$UUID",transport=tcp,flow=xtls-rprx-vision,public-key="$PUBLIC_KEY",short-id=$SHORT_ID,over-tls=true,sni=$REALITY_SERVER_NAME,tls-profile=chrome,udp=true,block-quic=false
+EOF
+
+  if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+    cat >>"$bundle_temp" <<EOF
+
+[quantumult-x]
+shadowsocks=$endpoint:$SS_PORT, method=aes-128-gcm, password=$SS_PASSWORD, udp-relay=true, tag=Xray-SS
+
+[surge]
+Xray-SS = ss, $endpoint, $SS_PORT, encrypt-method=aes-128-gcm, password=$SS_PASSWORD, udp-relay=true
+EOF
+  fi
+
+  # Mihomo 使用 REALITY；新 Xray 的版本门槛已在服务端显式兼容。
+  cat >>"$bundle_temp" <<EOF
+
+[mihomo]
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: true
+proxies:
+  - name: "Xray-REALITY"
+    type: vless
+    server: "$LOON_SERVER_IP"
+    port: $XRAY_PORT
+    uuid: "$UUID"
+    network: tcp
+    tls: true
+    udp: true
+    flow: xtls-rprx-vision
+    servername: "$REALITY_SERVER_NAME"
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: "$PUBLIC_KEY"
+      short-id: "$SHORT_ID"
+      support-x25519mlkem768: true
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies: ["Xray-REALITY", "DIRECT"]
+rules:
+  - MATCH,PROXY
+
+EOF
+  chmod 600 "$bundle_temp"
+  chown "$(id -u "$owner"):$(id -g "$owner")" "$bundle_temp"
+  if [[ -f "$CLIENT_BUNDLE_FILE" ]]; then
+    backup="$CLIENT_BUNDLE_FILE.before-install.$(date +%Y%m%d-%H%M%S).$$"
+    cp -p -- "$CLIENT_BUNDLE_FILE" "$backup"
+    chmod 600 "$backup"
+    chown "$(id -u "$owner"):$(id -g "$owner")" "$backup"
+    printf '原 client_config 已备份到: %s\n' "$backup"
+  fi
+  mv -f -- "$bundle_temp" "$CLIENT_BUNDLE_FILE"
+  TEMP_CONFIG=""
+}
+
+print_client_configs() {
   local mode_label
   mode_label=$(network_mode_label)
   printf '\nXray 安装状态：\n'
@@ -574,23 +763,29 @@ print_loon_config() {
   printf '  服务端配置: 校验通过（%s）\n' "$XRAY_CONFIG_FILE"
   printf '  开机启动: 已启用\n'
   printf '  运行状态: 正在运行\n'
-  printf '  监听状态: %s\n' "$XRAY_LISTENER_STATUS"
-  printf '  UFW 端口规则: %s\n' "$UFW_RULE_RESULT"
-  printf '  UFW 防火墙状态: %s\n' "$UFW_FIREWALL_STATE"
-  printf '\nLoon 节点配置（粘贴到 [Proxy] 段）：\n'
-  printf 'Xray-REALITY = VLESS,%s,%s,"%s",transport=tcp,flow=xtls-rprx-vision,public-key="%s",short-id=%s,over-tls=true,sni=%s,tls-profile=chrome,udp=true,block-quic=false\n' \
-    "$LOON_SERVER_IP" "$XRAY_PORT" "$UUID" "$PUBLIC_KEY" "$SHORT_ID" "$REALITY_SERVER_NAME"
+  printf '  REALITY 监听: %s\n' "$XRAY_LISTENER_STATUS"
+  if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+    printf '  Shadowsocks 监听: %s\n' "$SS_LISTENER_STATUS"
+  fi
   printf 'REALITY 伪装域名: %s。\n' "$REALITY_SERVER_NAME"
-  printf 'Xray 出站网络: %s 优先，另一地址族回退。\n' "$mode_label"
+  printf 'Xray 出口 IP 模式: %s。\n' "$mode_label"
   if [[ "$OPTIMIZE_NETWORK" == true ]]; then
     printf 'Xray-REALITY 系统网络优化: 已应用。\n'
   else
     printf 'Xray-REALITY 系统网络优化: 未应用。\n'
   fi
+  printf '请自行在系统防火墙和云安全组放行 TCP %s；脚本未配置防火墙。\n' "$XRAY_PORT"
+  if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
+    printf '同时放行 Shadowsocks TCP/UDP %s。\n' "$SS_PORT"
+  fi
+  printf '\n客户端配置已保存到: %s（权限 600）\n\n' "$CLIENT_BUNDLE_FILE"
+  cat "$CLIENT_BUNDLE_FILE"
 }
 
 main() {
   parse_arguments "$@"
+  detect_system
+  ensure_root "$@"
   check_environment
   select_network_preferences
   confirm_installation_plan
@@ -599,18 +794,16 @@ main() {
   apply_network_optimization
   find_loon_address
   select_xray_port
-  ensure_ufw
   select_reality_server_name
   backup_existing_config
   install_xray
   generate_credentials
-  apply_ufw_rule
   write_xray_config
   verify_xray_installation
   # Xray 安装状态已核验，此后即使终端输出失败也不回滚已完成的系统配置。
   NETWORK_OPTIMIZATION_APPLIED=false
-  UFW_RULE_ADDED=false
-  print_loon_config
+  write_client_configs
+  print_client_configs
 }
 
 main "$@"

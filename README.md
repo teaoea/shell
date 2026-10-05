@@ -1,47 +1,91 @@
 # VPS 安装、网络优化与安全配置脚本
 
-本仓库提供 Xray、Hysteria 2 + Cloudflare WARP 的安装脚本，以及 Debian 的 IPv4/IPv6 出站优先级调整和 Debian/Ubuntu 的 SSH、UFW 安全配置脚本。运行前请阅读对应脚本，并确认 VPS 的系统、端口和防火墙配置符合要求。需要修改系统配置的操作均应以 root 身份执行；如果已经登录 root，以下命令可省略 `sudo`。
+本仓库提供 Xray、Hysteria 2 + Cloudflare WARP 的安装脚本，以及 Debian 系和红帽系的 IPv4/IPv6 出站优先级调整和 Debian/Ubuntu 的 SSH、UFW 安全配置脚本。运行前请阅读对应脚本，并确认 VPS 的系统、端口和防火墙配置符合要求。需要修改系统配置的操作均应以 root 身份执行；如果已经登录 root，以下命令可省略 `sudo`。
 
 | 脚本 | 用途 | 适用系统 |
 | --- | --- | --- |
-| [`install_xray.sh`](install_xray.sh) | 安装 Xray，配置 VLESS + REALITY + XTLS Vision，生成 Loon 节点信息 | 使用 systemd 的 Debian、Ubuntu、CentOS、RHEL、Fedora、Rocky Linux、AlmaLinux 或 Oracle Linux |
+| [`install_xray.sh`](install_xray.sh) | 安装 Xray，配置 REALITY 与 Shadowsocks 兼容入口，生成 Loon、圈 X、Surge、Mihomo 配置 | 使用 systemd 的 Debian、Ubuntu、CentOS、RHEL、Fedora、Rocky Linux、AlmaLinux 或 Oracle Linux |
 | [`install_ hysteria2_warp.sh`](install_%20hysteria2_warp.sh) | 安装 Hysteria 2 和 Cloudflare WARP，生成服务端配置 | 脚本包含 Debian、Ubuntu、CentOS、RHEL、Fedora 的安装分支；还要求系统具备 UFW |
-| [`networt_optimization.sh`](networt_optimization.sh) | 选择 IPv4 或 IPv6 出站优先，保留双栈并应用 Xray-REALITY TCP 系统优化 | IPv4 模式支持 Debian；IPv6 模式支持 Debian 13 |
+| [`networt_optimization.sh`](networt_optimization.sh) | 选择 IPv4 或 IPv6 出站优先，保留双栈并应用 Xray-REALITY TCP 系统优化 | Debian/Ubuntu 和红帽系 Linux；IPv4、IPv6 均支持 |
 | [`security_hardening.sh`](security_hardening.sh) | 修改 SSH 端口、可选关闭密码登录、配置 UFW，提供确认和自动回滚 | Debian/Ubuntu，使用 systemd 和常驻 OpenSSH 服务；不支持 SSH socket 激活模式 |
 
 ## Xray
 
-在 VPS 上用一条命令运行 GitHub `main` 分支的脚本：
+在 VPS 上用一条命令下载并运行 GitHub `main` 分支的脚本：
 
 ```bash
-bash -c 'set -e; runner=(); if [ "$(id -u)" -ne 0 ]; then runner=(sudo); fi; if ! command -v curl >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then "${runner[@]}" apt-get update; "${runner[@]}" apt-get install -y ca-certificates curl; elif command -v dnf >/dev/null 2>&1; then "${runner[@]}" dnf install -y ca-certificates curl; elif command -v yum >/dev/null 2>&1; then "${runner[@]}" yum install -y ca-certificates curl; else echo "缺少 curl，且未找到支持的包管理器" >&2; exit 1; fi; fi; xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh); "${runner[@]}" bash -c "$xray_script"'
+xray_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/install_xray.sh) && bash -c "$xray_script"
 ```
 
-上面的命令会在缺少 `curl` 时先安装 CA 证书和 `curl`，再下载脚本；已登录 root 时直接运行，普通用户通过 `sudo` 提权。下载失败不会继续安装。
+首次下载需要 `curl`；若镜像只有 `wget`，可将下载部分替换为 `wget -qO-` 加同一地址。获取脚本之后的系统检测、普通用户通过 `sudo` 提权、软件源更新、必要工具安装都在脚本内完成，下载失败不会继续执行。没有 `sudo` 的镜像请登录 root 后运行。
 
-脚本要求 root 权限，默认使用 TCP 443 和 `www.apple.com` 作为 REALITY 伪装域名。交互安装会先询问 Xray 出站使用 IPv4 优先还是 IPv6 优先，并询问是否应用 Xray-REALITY 针对性系统网络优化；选择优化时先完成网络优化。随后脚本明确询问 Xray 监听端口，直接回车使用 443，并通过 UFW 放行相同的 TCP 端口。脚本在真正安装 Xray 前最后询问 REALITY 伪装域名，直接回车使用默认值；用户输入其他域名时，脚本会校验格式，并把同一域名写入 REALITY `target`、`serverNames` 和 Loon `sni`。Xray 使用 Happy Eyeballs 优先连接所选地址族，连接不通时回退到另一地址族；自动检测 Loon 节点公网地址时也按相同顺序尝试。
+### 系统检测与安装流程
 
-确认安装后，脚本先更新软件源索引，再安装必要工具。Debian/Ubuntu 使用 `apt-get update` 和 `apt-get install`；使用 DNF 或 YUM 的系统分别执行 `dnf makecache --refresh` 或 `yum makecache`，随后安装对应依赖包。工具包括 CA 证书、`curl`、OpenSSL、`unzip`、`ip`/`ss`、`sysctl`、`kmod`、`awk`、`grep`、基础文件工具、`getent`、`tput` 和用于处理 DNS 文件锁定的 `lsattr`/`chattr`（`e2fsprogs`）。更新范围是软件源索引和这些依赖包；软件源更新或依赖安装失败时，脚本会停止并给出原因。
+脚本在提问和安装依赖前读取 `/etc/os-release`，显示系统名称、版本、架构和包管理器，识别 Debian/Ubuntu，以及 RHEL、CentOS、Rocky Linux、AlmaLinux、Fedora、Oracle Linux；衍生系统按 `ID_LIKE` 判断家族。Debian 系使用 APT，红帽系优先使用 DNF、其次使用 YUM。不支持的系统、缺少对应包管理器或没有运行中的 systemd 时，提前停止。
 
-选择网络优化后，脚本从本仓库 GitHub `main` 分支下载 `networt_optimization.sh`，按所选地址族运行 `--xray-reality` 配置，并在 Xray 配置中启用 TCP Fast Open。该操作会修改系统 TCP、Cloudflare DNS 和地址优先级，仅支持网络优化脚本声明的系统范围：IPv4 模式支持 Debian，IPv6 模式支持 Debian 13。若后续 Xray 安装失败，安装脚本会尝试回滚本次网络优化。选择不优化时，不修改系统网络配置，Xray 配置仍会保留所选地址族的优先级与回退。
+交互流程依次为：
 
-若系统没有 UFW，脚本会使用 `apt-get`、`dnf` 或 `yum` 尝试安装；它会添加所选端口的 TCP 放行规则，但不会自动启用一个原本未启用的 UFW，避免改变现有防火墙策略并导致 SSH 中断。安装失败时只删除本次新增的规则，不删除原来已有的规则。它随后调用 Xray 官方安装器，生成 VLESS + REALITY + XTLS Vision 服务端配置并启动服务。只有程序文件、当前配置校验、服务开机启动、服务运行状态全部通过检查，且在系统提供 `ss` 时确认目标 TCP 端口已监听，才会报告 Xray 已安装并输出可粘贴到 Loon `[Proxy]` 段的节点；任何一项失败都会报告具体状态并尝试恢复安装前的配置。已有的 Xray 服务端配置会在安装前备份。
+1. 选择 Xray 出口 IP 模式（IPv4、IPv6、IPv4v6、IPv6v4；无默认值，回车留空），以及是否应用系统网络优化，确认安装计划。
+2. 更新软件源索引，安装 CA 证书、OpenSSL、`curl`、解压、网络查询和 DNS 文件属性等必要工具。只更新索引和依赖包，不执行整机升级。
+3. 选择优化时下载本仓库的 `networt_optimization.sh`，按所选地址族应用 REALITY TCP 参数、地址优先级和可安全修改的 Cloudflare DNS。DNS 无法写入时保留原配置并继续其他优化；后续安装失败会尝试回滚本次优化。
+4. 输入 REALITY 监听端口（默认 **TCP 443**），以及圈 X / Surge 的 Shadowsocks 兼容端口（默认 **TCP/UDP 8443**）。两者必须不同；输入 REALITY 8443 时，未指定的兼容端口默认改为 8444。
+5. 最后输入 REALITY 伪装域名（默认 `www.apple.com`），随后安装 Xray、生成凭据、校验配置并启动服务。
+6. 检查开机启动、服务运行和两个入口的监听状态，在用户目录的 `client_config` 中写入所有客户端配置并显示输出。
 
-`--yes` 跳过安装确认，但必须同时用 `--ipv4` / `--ipv6` 明确网络优先级，并用 `--optimize-network` / `--no-optimize-network` 明确是否优化。例如：
+出口模式没有默认值，直接回车或非交互时不传模式参数，会保持留空，生成的出站只有 `protocol: freedom`，不写 `domainStrategy` 或 Happy Eyeballs 策略。四种模式如下：
+
+| 模式 | 出口行为 |
+| --- | --- |
+| IPv4 | `ForceIP + happyEyeballs`，DNS `UseIPv4`；阻止 IPv6 字面量目标，不回退到 IPv6 |
+| IPv6 | `ForceIP + happyEyeballs`，DNS `UseIPv6`；阻止 IPv4 字面量目标，不回退到 IPv4 |
+| IPv4v6 | `UseIP + happyEyeballs`，`prioritizeIPv6: false`；优先 IPv4，IPv6 回退 |
+| IPv6v4 | `UseIP + happyEyeballs`，`prioritizeIPv6: true`；优先 IPv6，IPv4 回退 |
+| 留空 | 不设置出口模式，遵循 Xray 自身默认行为 |
+
+四种已选择模式的 Happy Eyeballs 都设置 `tryDelayMs: 250`、`interleave: 1`、`maxConcurrentTry: 4`。Happy Eyeballs 用于 TCP 域名连接；直接传入的 IP 不会自动变成双栈目标，UDP 发送失败也不保证自动切换地址族。
+
+出口策略作用于代理目标，不限制 VPS 监听地址，也不固定某一个公网出口 IP；实际出站源地址由路由决定。客户端入口公网地址独立检测，IPv6 / IPv6v4 模式优先探测 IPv6，其他模式先探测 IPv4，必要时回退。
+
+网络优化支持的系统范围与安装脚本一致，具体优化能力以本机内核和命令检查为准。有明确出口模式时，优化脚本使用其首选地址族；IPv4v6 / IPv6v4 会传入 `--allow-family-fallback`，首选地址族没有可用地址和路由时改用另一可用地址族优化，Xray 的双栈回退模式保持原选择；出口留空时使用 `--keep-priority`，只应用 TCP 和可安全修改的 DNS，保留 `/etc/gai.conf` 和系统地址优先级。IPv4 模式不再因为缺少全局 IPv6 地址而询问添加 IPv6 前缀。
+
+**Xray 安装脚本不安装、启用或修改任何防火墙。** 请自行在系统防火墙和云安全组放行所选端口：默认 REALITY 为 TCP 443，Shadowsocks 为 TCP/UDP 8443。独立的 `security_hardening.sh` 仍提供 SSH 与 UFW 配置功能。
+
+### 客户端配置
+
+所有配置保存到同一个无后缀文件 `client_config`，用以下标记区分；复制时不包含这些分段标记：
+
+| 标记 | 客户端 / 格式 | 入口 | 使用方式 |
+| --- | --- | --- | --- |
+| `[loon]` | Loon | VLESS + REALITY + XTLS Vision | 将节点行粘贴到已有配置的 `[Proxy]` 段 |
+| `[quantumult-x]` | 圈 X（Quantumult X） | Shadowsocks AES-128-GCM | 将节点行粘贴到 `[server_local]` 段 |
+| `[surge]` | Surge | Shadowsocks AES-128-GCM | 将节点行粘贴到 `[Proxy]` 段 |
+| `[mihomo]` | Mihomo（如 Clash Verge Rev、FlClash） | VLESS + REALITY + XTLS Vision | 复制该段 YAML 导入，或合并节点、策略组和规则到现有配置 |
+
+`[mihomo]` 段直接使用 `type: vless`、`flow: xtls-rprx-vision`、`reality-opts` 和 `client-fingerprint: chrome`。为兼容 Mihomo 上报的 REALITY 版本，服务端显式设置 `minClientVer: "1.8.2"`，客户端设置 `support-x25519mlkem768: true`。参考 [Mihomo REALITY 参数](https://wiki.metacubex.one/config/proxies/tls/)及 [Xray 官方仓库中的版本兼容说明](https://github.com/XTLS/Xray-core/issues/6477)。这些设置处理已知握手差异，实际互通仍需在所用客户端版本上验证。
+
+圈 X 和 Surge 使用 Xray 内置的 Shadowsocks 入口，不额外部署 WireGuard。该入口使用随机生成的密码，与 REALITY 共用同一 Xray 服务和出站策略。协议加密与 REALITY 的 TLS 伪装不同；节点格式参见 [圈 X 官方示例](https://github.com/crossutility/Quantumult-X/blob/master/server-complete.snippet)和 [Surge Shadowsocks 文档](https://manual.nssurge.com/policies/shadowsocks.html)。
+
+**唯一的客户端输出文件是执行用户家目录中的 `client_config`，没有后缀**：root 执行时是 `/root/client_config`，普通用户通过 sudo 执行时是该用户家目录中的 `client_config`，归属该用户、权限 `600`。安装结束同时在终端打印各段内容。文件汇总不同客户端的格式，按标记选择内容使用，不应整体导入某一个客户端。不会另外生成 `mihomo.yaml` 等单独文件。文件包含连接凭据，请妥善保管。
+
+重跑时会生成新的 UUID、密钥、Short ID 和 Shadowsocks 密码，替换服务端及 `client_config`；原有服务端配置和 `client_config` 会先备份。所有客户端都应更新到新输出。配置校验与本机监听检查不等于客户端到 VPS 的公网连通性测试。
+
+### 参数
+
+`--yes` 跳过交互确认，须明确是否优化；出口模式省略时留空，端口等参数省略时使用默认值。例如：
 
 ```bash
-sudo bash install_xray.sh --ipv4 --optimize-network --port 443 --yes
-sudo bash install_xray.sh --ipv6 --no-optimize-network \
-  --reality-domain www.example.com --yes
+bash install_xray.sh --outbound IPv4v6 --optimize-network --port 443 --ss-port 8443 --yes
 ```
 
-`--reality-domain` 主动指定伪装域名；省略时默认使用 `www.apple.com`。`--port` 同时设置 Xray 监听端口、Loon 节点端口和 UFW TCP 放行端口；`--loon-address` 指定要写入 Loon 节点的 IPv4 或 IPv6 地址。也可用 `XRAY_PORT`、`LOON_SERVER_IP` 和 `REALITY_SERVER_NAME` 环境变量设置对应参数。使用本地脚本时，可运行 `sudo bash install_xray.sh --help` 查看完整用法。
+- `--outbound IPv4|IPv6|IPv4v6|IPv6v4`：出口模式；支持传空值。简写分别是 `--ipv4`、`--ipv6`、`--ipv4v6`、`--ipv6v4`，前两项表示仅使用对应地址族。
+- `--optimize-network` / `--no-optimize-network`：是否应用系统网络优化。
+- `--port`：REALITY 端口，供 Loon 与 Mihomo 使用。
+- `--ss-port`：圈 X 与 Surge 的 Shadowsocks 端口。
+- `--no-shadowsocks`：仅保留 REALITY，只写入 Loon 和 Mihomo 段落；不能与 `--ss-port` 同用。
+- `--reality-domain`：伪装域名，同时写入服务端 `target`、`serverNames` 和客户端 SNI。
+- `--client-address`：所有客户端使用的公网 IPv4 / IPv6 地址；保留 `--loon-address` 作为兼容别名。
 
-脚本仅校验 Xray 服务端配置及服务状态，不测试客户端到 VPS 的公网连通性。Loon 节点配置只打印在终端，不再写入 `/root/xray-reality-client.txt`；请自行保存输出并妥善保管连接凭据。脚本只管理所选 TCP 端口对应的 UFW 放行规则，不修改云安全组，也不会自动开放服务商控制台中的端口。
-
-安装结果会逐项显示程序文件、配置校验、开机启动、运行状态、监听端口、UFW 端口规则和 UFW 启用状态；安装后也可用 `systemctl status xray` 再次查看服务状态。
-
-如需重跑脚本，新的 UUID、密钥和 Short ID 会替换旧配置，Loon 中也要更新为最新输出。
+仍兼容 `XRAY_PORT`、`LOON_SERVER_IP`、`REALITY_SERVER_NAME` 环境变量，自动提权时也会保留相应设置。完整用法可通过 `bash install_xray.sh --help` 查看。
 
 ## Hysteria 2 + Cloudflare WARP
 
@@ -55,13 +99,13 @@ hysteria_script=$(curl -fsSL --retry 3 'https://raw.githubusercontent.com/teaoea
 
 ## IPv4 / IPv6 网络优化
 
-在 Debian VPS 上用一条命令运行 GitHub `main` 分支的脚本，并选择 IPv4 或 IPv6 模式：
+在 Debian/Ubuntu 或红帽系 VPS 上用一条命令运行 GitHub `main` 分支的脚本，并选择 IPv4 或 IPv6 模式：
 
 ```bash
 network_script=$(curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/networt_optimization.sh) && sudo bash -c "$network_script"
 ```
 
-也可指定 `--ipv4` 或 `--ipv6`；非交互运行时还需加 `--yes`。IPv4 模式支持 Debian，IPv6 模式仅支持 Debian 13。脚本根据全局地址和默认路由识别可用的地址族：仅 IPv6 的 VPS 使用 Cloudflare IPv6 DNS `2606:4700:4700::1111`、`2606:4700:4700::1001`；有 IPv4 的 VPS 使用 `1.1.1.1`、`1.0.0.1`，即使选择 IPv6 优先也能解析 IPv6 地址。所选优先模式缺少对应地址或默认路由时，脚本会在修改配置前停止。脚本调整 `/etc/gai.conf` 的地址选择顺序，设置 TCP Fast Open 和 MTU probing；内核支持时启用 BBR + FQ。默认使用 Xray-REALITY TCP 优化配置，`--general` 切换回原有通用优化。IPv6 模式会启用 IPv6 协议栈；脚本不修改防火墙或接口 MTU。IPv6 连接失败后的 IPv4 回退取决于应用自身是否支持多地址重试或 Happy Eyeballs。
+也可指定 `--ipv4` 或 `--ipv6`；非交互运行时还需加 `--yes`。`--keep-priority` 保留系统地址优先级，仅调整 TCP 与可安全修改的 DNS。两种模式均支持 Debian/Ubuntu 和红帽系 Linux；系统检查先于模式选择和 IPv6 地址输入。脚本根据全局地址和默认路由识别可用的地址族：仅 IPv6 的 VPS 使用 Cloudflare IPv6 DNS `2606:4700:4700::1111`、`2606:4700:4700::1001`；有 IPv4 的 VPS 使用 `1.1.1.1`、`1.0.0.1`，即使选择 IPv6 优先也能解析 IPv6 地址。所选优先模式缺少对应地址或默认路由时，脚本会在修改配置前停止。脚本调整 `/etc/gai.conf` 的地址选择顺序，设置 TCP Fast Open 和 MTU probing；内核支持时启用 BBR + FQ。默认使用 Xray-REALITY TCP 优化配置，`--general` 切换回原有通用优化。IPv6 模式会启用 IPv6 协议栈；脚本不修改防火墙或接口 MTU。IPv6 连接失败后的 IPv4 回退取决于应用自身是否支持多地址重试或 Happy Eyeballs。
 
 默认 REALITY 配置适用于本仓库的 VLESS + REALITY + XTLS Vision TCP 传输，修改的是整个系统的 TCP 参数：
 
@@ -80,7 +124,7 @@ sudo bash networt_optimization.sh --ipv4 --xray-reality --tcp-buffer-mib 4 --yes
 
 Xray 使用自己的解析/连接策略，`/etc/gai.conf` 不能保证控制 Xray 的出站地址族；若需要 Xray 明确选择 IPv4/IPv6，需配置其 `domainStrategy` / Happy Eyeballs。系统设置 `tcp_fastopen=3` 只允许 TCP Fast Open，Xray 还需要相应 `sockopt.tcpFastOpen` 配置，并且客户端及线路支持才可能受益。参考 [Xray Sockopt 文档](https://xtls.github.io/en/config/transports/sockopt.html)和 [Linux TCP 参数文档](https://kernel.org/doc/html/latest/networking/ip-sysctl.html)。
 
-内核支持 IPv6、但没有全局 IPv6 地址时，交互输入分为两步：第一步输入以 `::` 结尾的网络前缀，直接回车默认不添加；第二步输入一个或多个后缀，用空格分隔。脚本根据前缀中完整十六进制段的数量计算前缀长度。例如 `2a0c:9a40:8aa3:13c8::` 有四段，因此生成 `/64` 地址；后缀只允许 1 到 4 位十六进制，`1 2 a` 有效，`fhwjhf` 会被拒绝。
+选择 IPv6 模式且内核支持 IPv6、但没有全局 IPv6 地址时，交互输入分为两步：第一步输入以 `::` 结尾的网络前缀，直接回车默认不添加；第二步输入一个或多个后缀，用空格分隔。脚本根据前缀中完整十六进制段的数量计算前缀长度。例如 `2a0c:9a40:8aa3:13c8::` 有四段，因此生成 `/64` 地址；后缀只允许 1 到 4 位十六进制，`1 2 a` 有效，`fhwjhf` 会被拒绝。
 
 输入后自动选择 IPv6 默认路由所在网卡，没有则选择 IPv4 默认路由网卡。`--ipv6-interface` 可覆盖自动选择，`--ipv6-gateway` 仅在用户明确指定时添加网关。仅添加地址不会创建默认路由；选择 IPv6 优先仍需 IPv6 默认路由。非交互运行示例（将示例值替换为服务商实际分配的信息）：
 
@@ -103,7 +147,7 @@ sudo bash networt_optimization.sh --ipv4 --yes \
 
 新增地址和路由仅在运行时生效，重启或网络管理服务重新配置后可能丢失；持久化需写入本机使用的网络管理程序。脚本不会推算或申请服务商地址，也不会覆盖已有全局 IPv6 地址或默认路由。添加时会等待地址重复检测完成，失败会自动回滚；新增地址、默认路由和接口 IPv6 开关也纳入 `--rollback`。内核支持 IPv6 并不代表服务商提供了 IPv6 网络，实际连接结果仍以下方直连测试为准。
 
-DNS 修改会保留普通 `/etc/resolv.conf` 中的搜索域等设置，并原位写入已有文件，兼容可写的单文件挂载。若文件设置了 immutable（`i`）或 append-only（`a`）属性，脚本会临时解除锁定，并在成功或失败后尝试恢复保护状态；恢复失败会明确报错。锁定属性也纳入备份与回滚。修改其他网络配置前会先检查 DNS 文件能否写入；只读挂载、宿主机不允许解锁或缺少锁定检查工具时，会警告并跳过本次 DNS 修改，保留原有 DNS，继续应用地址优先级、TCP 和 BBR 等其他网络优化，Xray 安装也会继续。跳过状态会写入备份记录，回滚时不覆盖 DNS，也不重启 DNS 服务；完成提示会明确说明 DNS 已跳过。解锁需要 `e2fsprogs` 提供的工具及相应系统权限；运行中的 `systemd-resolved` 会通过配置片段设置 DNS。遇到由其他程序管理的符号链接时，脚本会停止并提示先修改对应程序的配置。部分 VPS 会在续租或重启时重新生成普通 `resolv.conf`，此时需在其网络管理程序中设置持久 DNS。
+DNS 修改会保留普通 `/etc/resolv.conf` 中的搜索域等设置，并原位写入已有文件，兼容可写的单文件挂载。若文件设置了 immutable（`i`）或 append-only（`a`）属性，脚本会临时解除锁定，并在成功或失败后尝试恢复保护状态；恢复失败会明确报错。锁定属性也纳入备份与回滚。修改其他网络配置前会先检查 DNS 文件能否写入；只读挂载、宿主机不允许解锁或缺少锁定检查工具时，会警告并跳过本次 DNS 修改，保留原有 DNS，继续应用地址优先级、TCP 和 BBR 等其他网络优化，Xray 安装也会继续。跳过状态会写入备份记录，回滚时不覆盖 DNS，也不重启 DNS 服务；完成提示会明确说明 DNS 已跳过。解锁需要 `e2fsprogs` 提供的工具及相应系统权限；运行中的 `systemd-resolved` 会通过配置片段设置 DNS。遇到由其他程序管理的符号链接时，保留 DNS 并继续其他优化。NetworkManager、DHCP 或 cloud-init 等可能在续租或重启时重新生成普通 `resolv.conf`，此时需在其网络管理程序中设置持久 DNS。
 
 应用前会把现有配置和运行时参数备份到 `/var/lib/network-optimizer/backups/`。脚本还支持 `--status` 查看状态并用 `curl` 向 Cloudflare 固定 IP 发出带正确响应格式的 HTTPS DoH 请求，测试已配置地址族的直连；失败时会保留 HTTP 或 curl 错误，`--rollback` 恢复最近一次修改。直连测试不经过 DNS 或代理；脚本不额外验证 Cloudflare DNS 的解析可用性。已有长期运行的进程可能需要重启，才会重新读取地址选择策略。
 
