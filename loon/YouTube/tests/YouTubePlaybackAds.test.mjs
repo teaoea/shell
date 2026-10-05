@@ -55,7 +55,7 @@ function passed(result) {
   assert.deepEqual(Object.keys(result.output), [], 'must return no changes');
 }
 
-test('plugin buffers initialization and media responses only for optional development sampling', () => {
+test('plugin defaults media sampling to headers and buffers only explicitly selected full sampling', () => {
   const allEntries = plugin.split('\n').filter(line => /^http-response /.test(line));
   assert.equal(allEntries.length, 4);
   const entries = [
@@ -79,7 +79,12 @@ test('plugin buffers initialization and media responses only for optional develo
   assert.ok(active.includes('background_playback = switch,false,'));
   assert.ok(!active.includes('ump_enabled = switch,false,'));
   assert.ok(entries[1].includes('enable={log_enabled}'));
-  assert.ok(entries[1].includes('YouTubeLogger.js,requires-body=true,binary-body-mode=true'));
+  assert.ok(entries[1].includes('YouTubeLogger.js,requires-body=false'));
+  assert.ok(plugin.includes('media_capture_mode = select,"headers","full"'));
+  const full=plugin.split('\n').find(line=>line.startsWith('response if '));
+  assert.ok(full.includes('${log_enabled} == true') && full.includes('${media_capture_mode} == "full"'));
+  assert.ok(full.includes('requires_body=true, binary_body_mode=true'));
+  assert.ok(plugin.indexOf(full)<plugin.indexOf(entries[1]),'full sampling must precede header fallback');
   assert.ok(!plugin.includes('ump_mode ='));
   assert.ok(entries[1].includes('argument=[{log_enabled},{log_level},{capture_budget}]'));
   assert.ok(entries[1].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeLogger.js'));

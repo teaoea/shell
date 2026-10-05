@@ -1,7 +1,7 @@
 /**
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：2.9.0
+ * 版本：3.0.0
  * 更新时间：2026-10-05
  * 运行环境：Loon JavaScript
  */
@@ -307,7 +307,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "2.9.0";
+  var VERSION = "3.0.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -490,8 +490,8 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
     return devChecksum(method + " " + url);
   }
   /**
-   * 功能：记录脱敏诊断样本；仅响应头模式不读取请求或媒体正文。
-   * 更新时间：2026-10-04T15:35:00+08:00
+   * 功能：记录脱敏诊断样本；响应头模式不读取媒体正文，完整模式记录可用脱敏结构。
+   * 更新时间：2026-10-05
    */
   function devCapture(source, phase, endpoint, version, output, headersOnly) {
     if (!devFlag(args.capture_raw)) return;
@@ -709,10 +709,10 @@ function (row) {
     });
     return {schema:1, exportedAt:new Date().toISOString(), session:c && c.session || null,
       recording:!!(c && c.enabled), stoppedReason:c && c.haltReason || null, coverage:coverage(rows),
-      settings:{rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
+      settings:{mediaCaptureMode:args.media_capture_mode === "full" ? "full" : "headers", rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
       completeness:{allReferencedSamplesReadable:issues.length === 0, stoppedDueToLimitOrError:!!(c && c.haltReason), issues:issues,
         limitations:["Only matched player/get_watch/browse/next/search/reel_watch_sequence/log_event/config/initplayback/player/ad_break and enabled UMP response scripts; not all YouTube traffic.",
-          "Media logging records headers only and does not buffer media bodies.",
+          "Media headers mode does not buffer media bodies; full mode waits for complete bodies. Each event records its actual bodyBuffering value.",
           "Runtime bodies may already be decoded; these are not TLS/HTTP wire bytes.",
           "Missing runtime bodies are marked unavailable; before/after transport headers are not reconstructed.",
           "URL/method hashes are grouping hints, not guaranteed request/response pairs.",
@@ -815,7 +815,7 @@ function (row) {
       }
       var manifest = await get("/export-manifest.json");
       var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
-      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Media-Capture-Mode-At-Export: "+value(data.settings.mediaCaptureMode),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
       for (var n = 0; n < rows.length; n++) {
         var row = rows[n], capture = null, captureError = row.captureError || null;
         status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;
@@ -891,10 +891,10 @@ function (row) {
       '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
       '<form method="post" action="/mark-content"><button>标记：正在播放正片</button></form>' +
       '<button id="download" type="button">下载日志</button><p id="status" role="status"></p><a id="save" hidden>保存日志文件</a>' +
-      '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。' +
+      '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。媒体采样：' + (args.media_capture_mode === 'full' ? 'full，等待完整媒体响应' : 'headers，仅记录媒体响应头') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，脱敏记录另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
-      '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。开启日志工具时等待初始化和 UMP 完整响应，解析可用的播放器配置；暂停只停止写入，下载后应关闭主插件日志工具以停止缓冲。唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
+      '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。媒体采样默认 headers：只记录初始化和 UMP 响应头，不等待媒体正文。需要分析媒体内播放器配置时选择 full，Loon 会等待完整响应；暂停只停止写入，切回 headers 才能停止后续媒体缓冲。浏览、刷新和播放控制接口仍保存可用的脱敏结构。唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
       '<p>在主插件选择日志保存级别：info 保存完整脱敏记录，包含浏览、刷新、播放及处理结果；error 只保存错误；debug 保存完整记录并保留调试级别；warn 只保存警告和错误。调整级别只影响新记录，旧记录仍保留。</p>' +
       '<p>下载日志会自动暂停记录，在当前页面生成一个 .log 并触发下载。完整记录指脚本实际捕获的脱敏数据，不保证覆盖所有网络请求；媒体正文不保存。日志无法读取 Loon 的连接、证书或脚本超时记录。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form><script>document.getElementById("download").onclick=' + browserExport.toString() + ';</script></html>';
@@ -919,9 +919,10 @@ function (row) {
         var source = /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeed" :
           /^(log_event|config|initplayback)$/i.test(apiName) ? "YouTubeConfig" : api || apiName === "videoplayback" ? "YouTubePlayback" : "YouTubeLogger";
         var endpoint = apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName === "videoplayback" ? "ump" : apiName;
-        if (media) devMessages.push((apiName === "initplayback" ? "initialization_response" : "media") + (typeof $response !== "undefined" ? ": development_response=true body_buffering=true" : ": headers_only=true body_buffering=false"));
+        var headersOnly = typeof $response === "undefined" || !!media && args.media_capture_mode !== "full";
+        if (media) devMessages.push((apiName === "initplayback" ? "initialization_response" : "media") + (headersOnly ? ": headers_only=true body_buffering=false" : ": development_response=true body_buffering=true"));
         if(media&&apiName === "initplayback"&&typeof $response !== "undefined")source="YouTubeLogger";
-        devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {}, typeof $response === "undefined");
+        devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {}, headersOnly);
         return {};
       }
     }

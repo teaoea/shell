@@ -25,7 +25,7 @@ function execute(source, store = new Map(), extra = {}, failure = '') {
     $done(value) { output = value; calls++; },
     console: { log(value) { logs.push(value); } },
     Uint8Array, ArrayBuffer, TextDecoder, TextEncoder,
-    $argument: {log_enabled:true, log_level:"debug"},
+    $argument: {log_enabled:true, log_level:"debug", media_capture_mode:"full"},
     ...extra
   };
   vm.runInNewContext(source, context, { timeout: 1000 });
@@ -57,8 +57,8 @@ test('main plugin exposes exactly three switches and keeps function-specific scr
   assert.ok(!plugin.includes('script_debug = switch'));
   assert.ok(!plugin.includes('capture_raw = switch'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));
-  const loggerLines = plugin.split('\n').filter(x => x.includes('script-path=') && x.includes('YouTubeLogger.js'));
-  assert.equal(loggerLines.length, 2);
+  const loggerLines = plugin.split('\n').filter(x => (x.includes('script-path=') || x.startsWith('response if ')) && x.includes('YouTubeLogger.js'));
+  assert.equal(loggerLines.length, 3);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeConfig.js')).length, 2);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubePlayback.js')).length, 2);
   assert.equal(plugin.split('\n').filter(x => x.includes('YouTubeFeed.js')).length, 1);

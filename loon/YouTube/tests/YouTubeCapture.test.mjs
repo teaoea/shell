@@ -15,7 +15,7 @@ function run(name, store, extra = {}, failingKey = '') {
   const logs = [];
   const context = {
     $persistentStore:{read:key=>store.get(key),write(value,key){if (key === failingKey) return false; if(value===undefined)store.delete(key);else store.set(key,value);return true;}},
-    $argument:{script_debug:false,log_enabled:true,log_level:'info',capture_raw:true,capture_budget:'32',ump_mode:'inspect'},
+    $argument:{script_debug:false,log_enabled:true,log_level:'info',capture_raw:true,capture_budget:'32',ump_mode:'inspect',media_capture_mode:'full'},
     $loon:'test-device test-os test-build', $done(value){result=value;calls++;}, console:{log:value=>logs.push(value)},
     Uint8Array,ArrayBuffer,TextDecoder,TextEncoder,...extra
   };
@@ -475,18 +475,20 @@ test('main-page download pauses recording and triggers one file download without
  await button.onclick({preventDefault(){}});
  assert.equal(JSON.parse(store.get(configKey)).enabled,false);
  assert.equal(save.clicks,1);assert.ok(save.download.endsWith('.log'));
- assert.match(await blob.text(),/EVENT 1/);assert.equal(save.hidden,false);
+ assert.match(await blob.text(),/EVENT 1/);assert.match(await blob.text(),/Media-Capture-Mode-At-Export: full/);assert.equal(save.hidden,false);
 });
 
 test('uppercase INFO captures initialization UMP response structure without reading request body',()=>{
  const store=started(),init='https://rr5.googlevideo.com/initplayback?sig=PRIVATE';
  const line=plugin.split('\n').find(x=>x.startsWith('http-response')&&x.includes('YouTubeLogger.js'));
- assert.ok(new RegExp(line.split(' ')[1]).test(init));assert.ok(line.includes('requires-body=true,binary-body-mode=true'));
+ assert.ok(new RegExp(line.split(' ')[1]).test(init));assert.ok(line.includes('requires-body=false'));
+ const full=plugin.split('\n').find(x=>x.startsWith('response if '));
+ assert.ok(full.includes('${media_capture_mode} == "full"')&&full.includes('requires_body=true, binary_body_mode=true'));
  const request={url:init,method:'POST',headers:{Authorization:'PRIVATE'}};
  const response={status:200,headers:{'Content-Type':'application/vnd.yt-ump','Transfer-Encoding':'chunked','Set-Cookie':'PRIVATE'}};
  Object.defineProperty(request,'body',{get(){throw new Error('request body should not be buffered');}});
  response.body=new Uint8Array([69,4,10,2,8,1,21,3,1,2,3]);
- run('YouTubeLogger',store,{$request:request,$response:response,$argument:{log_enabled:true,log_level:'INFO'}});
+ run('YouTubeLogger',store,{$request:request,$response:response,$argument:{log_enabled:true,log_level:'INFO',media_capture_mode:'full'}});
  const event=exportData(store).events[0];
  assert.equal(event.summary.endpoint,'initplayback');assert.equal(event.summary.phase,'response');assert.equal(event.summary.level,'info');
  assert.equal(event.capture.responseBefore.headers['Transfer-Encoding'],'chunked');
@@ -533,7 +535,7 @@ function diagOnesie({tamper=false,gzip=false,protobuf=false}={}){
  const header=diagConcat(diagScalar(1,0),diagMessage(2,new TextEncoder().encode('PRIVATE_VIDEO_ID')),diagMessage(4,diagConcat(diagMessage(4,mac),diagMessage(5,iv),diagScalar(6,gzip?1:0))));
  return {key,bytes:diagConcat(diagPart(10,header),diagPart(11,encrypted),diagPart(21,new TextEncoder().encode('PRIVATE_MEDIA_BYTES')),diagPart(12,new TextEncoder().encode('PRIVATE_MEDIA_KEY')))};
 }
-function diagSample(store,body,extra={}){return run('YouTubeLogger',store,{$request:{url:'https://rr5.googlevideo.com/initplayback?sig=PRIVATE_SIGNATURE',method:'POST',headers:{Cookie:'PRIVATE_COOKIE'}},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body},$argument:{log_enabled:true,log_level:'INFO'},...extra});}
+function diagSample(store,body,extra={}){return run('YouTubeLogger',store,{$request:{url:'https://rr5.googlevideo.com/initplayback?sig=PRIVATE_SIGNATURE',method:'POST',headers:{Cookie:'PRIVATE_COOKIE'}},$response:{status:200,headers:{'Content-Type':'application/vnd.yt-ump'},body},$argument:{log_enabled:true,log_level:'INFO',media_capture_mode:'full'},...extra});}
 for(const protobuf of [false,true])for(const gzip of [false,true])test(`development UMP locally authenticates ${gzip?'gzip':'plain'} ${protobuf?'protobuf':'JSON'} Onesie player response before persistence`,()=>{
  const store=started(),fixture=diagOnesie({gzip,protobuf});store.set('ytads.onesie.youtube.v1',JSON.stringify({schema:1,platform:'youtube',clientKey:Buffer.from(fixture.key).toString('base64'),expiresAt:Date.now()+60000}));
  const output=diagSample(store,fixture.bytes,{$utils:{ungzip:b=>new Uint8Array(zlib.gunzipSync(b))}}).result;
@@ -558,4 +560,42 @@ test('UMP sampling preserves cue type and event but omits unknown parts and part
 });
 test('large media responses retain frame lengths without stopping the log or serializing media bytes',()=>{
  const store=started(),b=diagPart(21,new Uint8Array(9*1048576));diagSample(store,b);const e=exportData(store).events[0];assert.equal(e.capture.responseBefore.body.structure.parts[0].bytes,9*1048576);assert.equal(e.capture.responseBefore.body.structure.parts[0].omitted,'media-content');assert.equal(JSON.parse(store.get(configKey)).enabled,true);assert.ok([...store].filter(([k])=>k.startsWith('ytads.capture.')).reduce((n,[,v])=>n+v.length,0)<10000);
+});
+
+for (const selected of [undefined, 'headers', 'unknown']) test(`media ${selected ?? 'default'} sampling never reads request or response bodies`,()=>{
+ const store=started();
+ for(const path of ['initplayback','videoplayback']){
+  const request={url:`https://rr5.googlevideo.com/${path}?sig=PRIVATE`,method:'POST',headers:{Cookie:'PRIVATE'}};
+  const response={status:200,headers:{'Content-Type':'application/vnd.yt-ump','Content-Length':'1048576','Set-Cookie':'PRIVATE'}};
+  Object.defineProperty(request,'body',{get(){throw Error('request must remain streaming');}});
+  Object.defineProperty(response,'body',{get(){throw Error('response must remain streaming');}});
+  const output=run('YouTubeLogger',store,{$request:request,$response:response,$argument:{log_enabled:true,log_level:'INFO',media_capture_mode:selected}}).result;
+  assert.deepEqual(Object.keys(output),[]);
+ }
+ const events=exportData(store).events;
+ assert.equal(events.length,2);
+ for(const {capture,summary} of events){
+  assert.equal(summary.level,'info');assert.equal(capture.processing.bodyBuffering,false);
+  assert.equal(capture.responseBefore.body.reason,'headers-only-not-buffered');
+  assert.equal(capture.responseBefore.headers['Content-Length'],'1048576');assert.equal(capture.responseAfter.changed,false);
+  assert.equal(capture.processing.exception,null);
+ }
+ assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE'));
+});
+
+test('paused and disabled full media sampling do not read bodies or create new samples',()=>{
+ for(const enabled of [true,false]){
+  const store=started();page(store,'pause','POST');
+  const response={status:200,headers:{}};Object.defineProperty(response,'body',{get(){throw Error('inactive capture must not read');}});
+  const output=run('YouTubeLogger',store,{$request:{url:media,method:'POST'},$response:response,$argument:{log_enabled:enabled,log_level:'info',media_capture_mode:'full'}}).result;
+  assert.deepEqual(Object.keys(output),[]);assert.equal(exportData(store).events.length,0);
+ }
+});
+
+test('single export declares selected media mode without rewriting historical buffering evidence',()=>{
+ const store=started();diagSample(store,diagPart(21,new Uint8Array([1,2,3])));page(store,'pause','POST');
+ const manifest=run('YouTubeLogger',store,{$request:{url:'http://youtube-logs.invalid/export-manifest.json',method:'GET'},$argument:{log_enabled:true,log_level:'info',media_capture_mode:'headers'}}).result.response;
+ const data=JSON.parse(manifest.body);
+ assert.equal(data.data.settings.mediaCaptureMode,'headers');assert.equal(exportData(store).events[0].capture.processing.bodyBuffering,true);
+ assert.ok(data.data.completeness.limitations.some(s=>s.includes('Each event records its actual bodyBuffering')));
 });
