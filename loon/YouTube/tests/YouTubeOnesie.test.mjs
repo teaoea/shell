@@ -15,6 +15,30 @@ const logCacheKey = 'ytads.logger.entries.v2';
 const youtubeUA = 'com.google.ios.youtube/21.39.4 (iPhone; iOS)';
 const musicUA = 'com.google.ios.youtubemusic/9.1 (iPhone; iOS)';
 
+test('initialization response compatibility is independent of logging and never touches or stores media', () => {
+  for (const log_enabled of [false,true]) {
+    const store = new Map();
+    const response = {status:200,headers:{'Content-Type':'application/vnd.yt-ump'}};
+    Object.defineProperty(response,'body',{get(){throw Error('media must remain untouched');}});
+    const result = execute(configSource,{store,request:{url:'https://rr5.googlevideo.com/initplayback?x=1'},response,argument:{log_enabled}});
+    assert.deepEqual(Object.keys(result.output),[]);
+    assert.equal(store.size,0);
+  }
+});
+
+test('initialization uses development sampling first when enabled and compatibility when disabled; media remains streaming when logs are off', () => {
+  const entries = plugin.split('\n').filter(line=>line.startsWith('http-response '));
+  const match = (url, logging)=>entries.find(line=>(logging||!line.includes('enable={log_enabled}'))&&new RegExp(line.split(' ')[1]).test(url));
+  const init = 'https://rr5.googlevideo.com/initplayback?x=1';
+  assert.ok(match(init,true).includes('YouTubeLogger.js'));
+  assert.ok(match(init,false).includes('YouTubeConfig.js'));
+  assert.ok(match(init,false).includes('requires-body=true'));
+  assert.equal(match('https://rr5.googlevideo.com/videoplayback?x=1',false),undefined);
+  assert.equal(match('https://rr5.googlevideo.com/initplayback/extra',false),undefined);
+  assert.equal(match('https://rr5.googlevideo.com.evil/initplayback',false),undefined);
+  assert.ok(match('https://youtubei.googleapis.com/youtubei/v1/config',true).includes('YouTubeConfig.js'));
+});
+
 const concat = (...parts) => {
   const flat = parts.flat();
   const result = new Uint8Array(flat.reduce((sum, part) => sum + part.length, 0));

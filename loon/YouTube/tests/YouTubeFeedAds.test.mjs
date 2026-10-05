@@ -18,6 +18,12 @@ const ad=msg(424701016,[255,1]); // opaque ad body must never be guessed as prot
 const normal=msg(50195462,msg(1,msg(99,[255,254,0])));
 const tracking=msg(4,[1,2,3]);
 const initial=list=>msg(9,msg(49399797,list));
+test('next logging does not alter recommendations, continuations or response cleanup',()=>{
+ const payload=JSON.stringify({contents:{sectionListRenderer:{contents:[{adSlotRenderer:{}},{videoRenderer:{videoId:'KEEP'}}],continuations:[{nextContinuationData:{continuation:'KEEP'}}]}}});
+ const results=[false,true].map(log_enabled=>run(payload,{endpoint:'next',extra:{$argument:{log_enabled},$persistentStore:{read(){return null;},write(){throw Error('paused session must not write');}}}}).output.body);
+ assert.equal(results[0],results[1]);
+ assert.equal(JSON.parse(results[0]).contents.sectionListRenderer.continuations[0].nextContinuationData.continuation,'KEEP');
+});
 test('main plugin routes all feed endpoints exclusively to its own standalone script',()=>{
  const entry=plugin.split('\n').find(x=>x.startsWith('http-response ')&&x.includes('YouTubeFeed.js'));
  const re=new RegExp(entry.split(' ')[1]);

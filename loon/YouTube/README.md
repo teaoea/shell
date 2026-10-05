@@ -347,4 +347,8 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 这项优化尚未进行设备验证，不能据此认定几秒黑屏已解决；首次响应到达前的连接尝试、DNS 或客户端内置的 HTTP/3 发现、广告调度及初始化请求重试仍可能产生等待。更新主插件后关闭日志工具，完全退出并重新打开 YouTube，再对比首次和后续视频的启动时间；无需清除账号或重装 App。
 
+用户随后确认：日志工具开启但页面暂停记录时，主视频也不黑屏，而整个下方推荐列表会暂时空白。这支持继续区分响应交付与写入日志的影响，不能单凭现象认定缓冲是唯一原因。当前增加初始化响应兼容：仅 `googlevideo /initplayback` 在日志关闭时也由 Loon 收齐正文后交给客户端，`YouTubeConfig.js` 原样放行，不读取、改写或保存该正文；普通 `videoplayback` 只有开发日志开启时才缓冲。开发采样规则先匹配，日志关闭时使用同一配置脚本的兼容分支，脚本条目和文件数量不增加。
+
+兼容缓冲仍可能增加首帧等待，是针对上述设备反馈的有限尝试，效果需更新后验证。下方推荐列表由 `next` 响应处理，与该初始化兼容分支无关；目前没有本轮 `next` 日志，不能确认是网络等待、响应整包处理、客户端渲染，还是去除首张广告后的刷新。先不更改推荐过滤及分页字段，复现空白后导出同一个 `.log` 再分析。
+
 协议依据：[Loon 协议规则](https://nsloon.app/docs/Rule/protocol_rule/)、[UMP 分片类型](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/ump_part_id.proto)、[Onesie 响应结构](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/onesie_innertube_response.proto)、[响应认证示例](https://github.com/LuanRT/googlevideo/blob/main/examples/onesie-request/utils.ts)、[客户端地区字段](https://github.com/LuanRT/YouTube.js/blob/main/protos/youtube/api/pfiinnertube/client_info.proto)。
