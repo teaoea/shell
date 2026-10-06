@@ -19,7 +19,7 @@ class InstallerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'home').mkdir()
         for name in ('install_xray.sh', 'networt_optimization.sh'):
-            source = (REPO / name).read_text()
+            source = (REPO / ('install' if name == 'install_xray.sh' else 'optimize') / name).read_text()
             self.assertTrue(source.endswith('main "$@"\n'))
             source = source.removesuffix('main "$@"\n')
             source = re.sub(r'^export PATH=.*\n', '', source, flags=re.M)
@@ -290,7 +290,7 @@ apply_configuration
 ''', 'networt_optimization.sh')
 
     def test_no_firewall_commands_remain(self):
-        source = (REPO / 'install_xray.sh').read_text()
+        source = (REPO / 'install' / 'install_xray.sh').read_text()
         self.assertNotRegex(source, r'(?i)\bufw\b|firewall-cmd|firewall-offline-cmd|iptables|nft |firewalld')
 
 

@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPT = REPO / 'security_hardening.sh'
+SCRIPT = REPO / 'security' / 'security_hardening.sh'
 SSHD = shutil.which('sshd') or '/usr/sbin/sshd'
 KEYGEN = shutil.which('ssh-keygen')
 if not Path(SSHD).is_file() or not KEYGEN:

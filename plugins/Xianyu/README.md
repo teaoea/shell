@@ -10,12 +10,12 @@
 
 ## 安装与更新
 
-- [一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Floon%2FXianyu%2FXianyuPushNetwork.plugin)
-- [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/loon/Xianyu/XianyuPushNetwork.plugin)
+- [一键导入 Loon](https://www.nsloon.com/openplugins/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FXianyu%2FXianyuPushNetwork.plugin)
+- [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin)
 - [返回插件总览](../README.md)
 
 ```text
-https://raw.githubusercontent.com/teaoea/shell/main/loon/Xianyu/XianyuPushNetwork.plugin
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin
 ```
 
 在 iPhone／iPad 上点击一键导入，在 Loon 中确认添加并启用；如浏览器没有唤起 Loon，复制上面的安装 URL，在 Loon 插件页面添加远程插件。需要 **Loon 3.5.1 Build 983 或更新版本**。使用分流模式；仅使用直连规则不需要开启 MitM，采集 HTTPS 请求头和正文则需要启用 MitM 并安装、信任 Loon 证书。不需要向插件填写账号凭据。
@@ -90,7 +90,7 @@ JSON、JSONP、表单和 UTF-8 文本保存可分析结构，遮盖已知 Cookie
 离线验证命令：
 
 ```sh
-node --test loon/Xianyu/tests/XianyuLogger.test.mjs
+node --test plugins/Xianyu/tests/XianyuLogger.test.mjs
 ```
 
 当前自动化用**合成请求头**验证来源过滤、普通与 IP URL、正文保存／省略、脱敏、暂停和容量保留、存储异常、交错写入、校验及单文件导出。它不证明真实闲鱼版本的 User-Agent、Loon 配置解析、Safari 下载或手机采集完整率；这些仍待实机测试。

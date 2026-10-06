@@ -25,14 +25,14 @@ JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台�
 
 供插件作者直接引用的发布地址只有两份，所有功能与平台适配都已打包，不需要额外运行库：
 
-- [request.min.js](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js)：请求修改、字幕目标语言、广告配置响应和日志页面。
-- [response.min.js](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/response.min.js)：信息流、播放器响应、后台播放、配置缓存和媒体日志。
+- [request.min.js](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js)：请求修改、字幕目标语言、广告配置响应和日志页面。
+- [response.min.js](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/response.min.js)：信息流、播放器响应、后台播放、配置缓存和媒体日志。
 
 | 平台 | 可引用配置 | 验证范围 |
 | --- | --- | --- |
-| Loon | [YouTubeNoAds.plugin](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeNoAds.plugin) | 原去广告方案已有用户实测；本次适配与字幕功能仅离线验证 |
-| Quantumult X | [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/configs/YouTubeNoAds.snippet) | 二进制、参数、路径改写、echo 响应和存储已模拟验证；未做实机验证 |
-| Surge | [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/configs/YouTubeNoAds.sgmodule) | 参数、存储、字幕入口与媒体头已模拟验证；未做实机验证 |
+| Loon | [YouTubeNoAds.plugin](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin) | 原去广告方案已有用户实测；本次适配与字幕功能仅离线验证 |
+| Quantumult X | [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/configs/YouTubeNoAds.snippet) | 二进制、参数、路径改写、echo 响应和存储已模拟验证；未做实机验证 |
+| Surge | [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/configs/YouTubeNoAds.sgmodule) | 参数、存储、字幕入口与媒体头已模拟验证；未做实机验证 |
 
 圈 X 将 snippet 加入复写资源，并在 MitM 的 hostname 追加文件底部列出的域名；Surge 添加 sgmodule 并开启 MitM。证书需要安装并信任。不要同时启用另一套匹配相同请求的 YouTube 复写，以免规则覆盖。三平台均不能通过网络脚本向原生 YouTube App 注入悬浮按钮。
 
@@ -60,7 +60,7 @@ Loon 在插件设置中调整；Surge 编辑规则 `argument="key=value&key=valu
 ## 源码目录与压缩发布（2026-10-06）
 
 ```text
-loon/YouTube/
+plugins/YouTube/
 ├── YouTubeNoAds.plugin       # Loon 插件入口
 ├── configs/                 # 圈 X 复写资源和 Surge 模块
 ├── src/                     # 原始源码，保留中文 JSDoc 和更新时间
@@ -143,12 +143,12 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 
 ## 安装与更新
 
-- [一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Floon%2FYouTube%2FYouTubeNoAds.plugin)
-- [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeNoAds.plugin)
+- [一键导入 Loon](https://www.nsloon.com/openplugins/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FYouTube%2FYouTubeNoAds.plugin)
+- [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin)
 - [返回插件总览](../README.md)
 
 ```text
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeNoAds.plugin
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin
 ```
 
 在 iPhone／iPad 上点击一键导入，在 Loon 中确认添加并启用；如浏览器没有唤起 Loon，复制安装 URL，在 Loon 插件页面添加远程插件。开启 MitM 并信任证书，按下文刷新两份发布脚本。一键导入格式见 [Loon 官方文档](https://nsloon.app/docs/Scheme/)。
@@ -156,8 +156,8 @@ https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeNoAds.pl
 主插件按请求与响应阶段调用本仓库的两份压缩 JavaScript：
 
 ```text
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js
-https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/response.min.js
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/response.min.js
 ```
 
 **本地新建或修改文件不会自动发布到该地址。发布前直接导入当前远程版配置，可能遇到脚本下载失败或仍取得旧文件。**
@@ -402,11 +402,11 @@ Loon 官方 [Rewrite 文档](https://nsloon.app/en/docs/Rewrite/rewrite_v2/) 支
 `tests/YouTubeFeedAds.test.mjs`、`tests/YouTubePlayerRequest.test.mjs`、`tests/YouTubePlaybackAds.test.mjs`、`tests/YouTubeAdBreak.test.mjs`、`tests/YouTubeShortsAds.test.mjs`、`tests/YouTubeStreamAds.test.mjs`、`tests/YouTubeOnesie.test.mjs`、`tests/YouTubeLogger.test.mjs` 和 `tests/YouTubeCapture.test.mjs` 使用 Node 模拟 Loon 环境，不需要下载其他 JS。目前每套共 339 项测试，覆盖：播放器请求广告信号、VAST/强制广告参数和不请求内联广告字段；播放器响应的广告位、配置和 pagead 追踪清理；播放页独立赞助卡片与 pagead 覆盖层；精确 `player/ad_break` 匹配；后台播放；Shorts；信息流；Onesie 配置字段、有期限缓存、`log_event` 刷新、initplayback 原位片头标志清理、未知请求不强制回退、密钥匹配/失配、HMAC 验证、AES-CTR 解密与重签、gzip 内层请求解压及重新压缩、JSON 与二进制 Protobuf 播放器正文、未知 Protobuf group/字段原字节保留、YouTube Music 隔离和共享抓包/导出。另验证 UMP 预取提示清理、异常数据原样通过，以及日志分级、分块单文件导出、容量、写入失败、跨会话隔离及人工标记。
 
 ```sh
-node --check loon/YouTube/src/YouTubeFeed.js
-node --check loon/YouTube/src/YouTubePlayback.js
-node --check loon/YouTube/src/YouTubeConfig.js
-node --check loon/YouTube/src/YouTubeLogger.js
-node --test loon/YouTube/tests/*.test.mjs
+node --check plugins/YouTube/src/YouTubeFeed.js
+node --check plugins/YouTube/src/YouTubePlayback.js
+node --check plugins/YouTube/src/YouTubeConfig.js
+node --check plugins/YouTube/src/YouTubeLogger.js
+node --test plugins/YouTube/tests/*.test.mjs
 ```
 
 这些验证不包含真实 Loon 配置解析器、设备脚本引擎或实际视频广告。本地修改不会自动上传，发布版本以仓库远程分支中的提交为准。

@@ -5,7 +5,7 @@ umask 077
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 readonly XRAY_INSTALL_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
-readonly NETWORK_OPTIMIZER_URL="https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/networt_optimization.sh"
+readonly NETWORK_OPTIMIZER_URL="https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/optimize/networt_optimization.sh"
 readonly XRAY_BIN="/usr/local/bin/xray"
 readonly XRAY_CONFIG_DIR="/usr/local/etc/xray"
 readonly XRAY_CONFIG_FILE="$XRAY_CONFIG_DIR/config.json"

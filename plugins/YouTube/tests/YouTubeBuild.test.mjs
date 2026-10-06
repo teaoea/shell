@@ -18,7 +18,7 @@ test('every plugin rule uses the bundle for its actual phase', () => {
   assert.equal(lines.length, 9);
   for (const line of lines) {
     const phase = line.startsWith('http-request ') ? 'request' : 'response';
-    assert.ok(line.includes(`https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/${phase}.min.js`));
+    assert.ok(line.includes(`https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/${phase}.min.js`));
   }
 });
 
