@@ -1,0 +1,67 @@
+name: YouTube 去广告（Stash 日志调试版）
+author: 可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
+homepage: https://github.com/teaoea/shell/blob/main/plugins/YouTube/README.md
+desc: 共享请求响应脚本；字幕与 API 清理。业务日志开启；请在本地日志页面开始／暂停记录；initplayback 放行，尚未完成 Stash 实机验证。
+# 日志调试版：先停用普通 YouTube 覆写，再启用此文件；访问 http://youtube-logs.invalid/ 开始／暂停／下载日志。
+# 不要同时启用另一套匹配相同请求的 YouTube 覆写。
+rules:
+  - DOMAIN,youtube-logs.invalid,DIRECT
+http:
+  force-http-engine:
+    - 'youtube-logs.invalid:80'
+  mitm:
+    - 'youtubei.googleapis.com'
+    - 'youtubei-att.googleapis.com'
+    - 'youtube.com'
+    - 'www.youtube.com'
+    - 'm.youtube.com'
+    - 'music.youtube.com'
+    - '*.googlevideo.com'
+  script:
+    - name: youtube-shared-request
+      match: '^https://(?:www\.|m\.)?youtube\.com/api/timedtext\?[^#]+$'
+      type: request
+      require-body: false
+      timeout: 10
+      argument: &youtube-options 'background_playback=false&hide_home_shorts=false&translation_enabled=false&translation_target=zh-CN&playback_region=original&log_enabled=true&log_level=info&capture_budget=16'
+    - name: youtube-shared-request
+      match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch|player/ad_break|log_event)(?:\?[^#]*)?$'
+      type: request
+      require-body: true
+      binary-mode: true
+      max-size: 2097152
+      timeout: 10
+      argument: *youtube-options
+    - name: youtube-shared-response
+      match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:browse|next|search|player|get_watch|config|log_event|reel/reel_watch_sequence)(?:\?[^#]*)?$'
+      type: response
+      require-body: true
+      binary-mode: true
+      max-size: 2097152
+      timeout: 10
+      argument: *youtube-options
+    - name: youtube-shared-response
+      match: '^https://[\w-]+\.googlevideo\.com/(?:videoplayback|initplayback)(?:\?[^#]*)?$'
+      type: response
+      require-body: false
+      timeout: 10
+      argument: *youtube-options
+    - name: youtube-shared-request
+      match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:browse|next|search|reel/reel_watch_sequence)(?:\?[^#]*)?$'
+      type: request
+      require-body: false
+      timeout: 10
+      argument: *youtube-options
+    - name: youtube-shared-request
+      match: '^http://youtube-logs\.invalid(?::80)?(?:/[^#]*)?$'
+      type: request
+      require-body: false
+      timeout: 10
+      argument: 'background_playback=false&hide_home_shorts=false&translation_enabled=false&translation_target=zh-CN&playback_region=original&log_enabled=true&log_level=info&capture_budget=16'
+script-providers:
+  youtube-shared-request:
+    url: https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js
+    interval: 86400
+  youtube-shared-response:
+    url: https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/response.min.js
+    interval: 86400

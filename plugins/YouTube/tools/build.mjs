@@ -1,6 +1,6 @@
 /**
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
- * 功能：从保留中文注释的源码生成三平台独立运行的压缩文件；固定工具版本和参数，支持检查产物是否过期。
+ * 功能：从保留中文注释的源码生成四平台独立运行的压缩文件；固定工具版本和参数，支持检查产物是否过期。
  * 更新时间：2026-10-06
  */
 import fs from 'node:fs/promises';
@@ -86,3 +86,15 @@ for (const result of results) {
   }
   console.log(`${result.name}: ${result.before} → ${result.after} 字节，减少 ${(100 * (1 - result.after / result.before)).toFixed(1)}%${check ? '，产物一致' : ''}`);
 }
+
+// 功能：从普通 Stash 覆写生成日志调试安装入口，避免远程安装用户手工修改参数。更新时间：2026-10-06。
+const stashSource = await fs.readFile(new URL('YouTubeNoAds.stoverride', root), 'utf8');
+const loggingOverride = stashSource
+  .replace('name: YouTube 去广告', 'name: YouTube 去广告（Stash 日志调试版）')
+  .replace('日志默认关闭', '业务日志开启；请在本地日志页面开始／暂停记录')
+  .replace('# 在下方 &youtube-options 处统一修改功能参数；日志关闭时媒体采样也关闭。', '# 日志调试版：先停用普通 YouTube 覆写，再启用此文件；访问 http://youtube-logs.invalid/ 开始／暂停／下载日志。')
+  .replace(/log_enabled=false/g, 'log_enabled=true');
+const loggingTarget = new URL('YouTubeNoAdsLogging.stoverride', root);
+if (check) {
+  if (await fs.readFile(loggingTarget, 'utf8').catch(() => null) !== loggingOverride) throw new Error('Stash 日志调试覆写缺失或过期，请重新构建');
+} else await fs.writeFile(loggingTarget, loggingOverride);

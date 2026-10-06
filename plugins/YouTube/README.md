@@ -42,6 +42,16 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds
 
 圈 X 请直接使用原生 `.snippet`，不要让转换器处理 Loon `.plugin` 或 Surge `.sgmodule`。转换 Loon 文件时出现 `AND` 逻辑规则或 `response if` 无法转换，属于配置语法不兼容；拆开逻辑条件会改变匹配范围。转换成功也不代表初始化播放与去广告效果等同。Surge 模块成功添加同样不能证明脚本已命中或广告已清理，需要设备日志确认。
 
+### Stash 通过 URL 开启日志
+
+远程覆写预览页不提供本插件的独立参数开关。需要采集时，先停用普通版 `YouTubeNoAds.stoverride`，再添加并启用日志调试版：
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAdsLogging.stoverride
+```
+
+此版本由普通版自动生成，只开启业务日志，后台播放、字幕翻译仍关闭；媒体只采集响应头，不读取完整媒体正文。打开 `http://youtube-logs.invalid/`，点击开始记录，然后返回 YouTube 刷新首页并播放视频。页面可以暂停、标记和下载日志。两版应只启用一个，防止同一请求脚本重复或被覆盖。测试结束停用调试版、恢复普通版，即关闭业务日志与媒体采样；已有记录可在调试版停用前下载。
+
 ## 四平台共享底层接口（1.0.0）
 
 供插件作者直接引用的发布地址只有两份，所有功能与平台适配都已打包，不需要额外运行库：

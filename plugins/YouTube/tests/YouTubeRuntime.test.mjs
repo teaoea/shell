@@ -55,3 +55,13 @@ test('Stash request scripts return nested synthetic responses for ad breaks and 
  run(bundle('request'),c);assert.equal(c.outputs.length,1);assert.equal(c.outputs[0].response.status,200);assert.ok(c.outputs[0].response.body);
  }
 });
+
+test('Stash logging URL enables business sampling without enabling captions or background playback',()=>{
+ const normal=fs.readFileSync(new URL('../YouTubeNoAds.stoverride',import.meta.url),'utf8');
+ const diagnostic=fs.readFileSync(new URL('../YouTubeNoAdsLogging.stoverride',import.meta.url),'utf8');
+ assert.ok(normal.includes('log_enabled=false'));
+ assert.ok(!diagnostic.includes('log_enabled=false'));
+ assert.ok(diagnostic.includes('background_playback=false'));
+ assert.ok(diagnostic.includes('translation_enabled=false'));
+ assert.equal((diagnostic.match(/url: https:/g)||[]).length,2);
+});

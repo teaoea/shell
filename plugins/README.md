@@ -50,6 +50,12 @@ Stash 覆写插件：
 https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.stoverride
 ```
 
+Stash 日志调试版（采集时停用上面的普通版，测试后恢复）：
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAdsLogging.stoverride
+```
+
 圈 X 请使用原生复写资源，无需转换 Loon 插件或 Surge 模块。
 
 **闲鱼推送网络辅助**
