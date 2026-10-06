@@ -3,6 +3,7 @@
 # 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
 #!desc=共享请求响应脚本；字幕与 API 清理。initplayback 放行，未完成 Surge 实机验证。
 # 修改各规则 argument 中参数；不要启用两个相同 URL 的同阶段正文脚本。
+# Surge 请直接添加本模块；圈 X 使用同目录的 YouTubeNoAds.snippet。
 [Script]
 YouTube字幕 = type=http-request,pattern=^https://(?:www\.|m\.)?youtube\.com/api/timedtext\?[^#]+$,requires-body=false,timeout=10,script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,argument="background_playback=false&hide_home_shorts=false&translation_target=zh-CN&playback_region=original&log_enabled=false&log_level=info&capture_budget=16"
 YouTube播放请求 = type=http-request,pattern=^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch|player/ad_break|log_event)(?:\?[^#]*)?$,requires-body=true,binary-body-mode=true,max-size=2097152,timeout=10,script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,argument="background_playback=false&hide_home_shorts=false&translation_target=zh-CN&playback_region=original&log_enabled=false&log_level=info&capture_budget=16"

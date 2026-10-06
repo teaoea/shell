@@ -29,6 +29,14 @@ JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台�
 
 已经在 Apple TV 导入旧版本的用户，请先停用或删除本插件，再完全退出并重开 YouTube；核对关闭插件后的连接情况。更新系统声明不能替代这个恢复步骤，旧版 Loon 如何处理系统声明仍需设备确认。若关闭后恢复，请提供 Loon/tvOS/YouTube 版本，以及失败时的请求域名、TLS/证书错误或连接错误；不要提供 Cookie、令牌或证书私钥。修正声明只限制发布支持范围，不代表已经修复 Apple TV 的播放链路。
 
+## 按软件选择安装入口
+
+- **Loon**：安装 [YouTubeNoAds.plugin](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin)。
+- **Quantumult X（圈 X）**：在「复写资源」添加 [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.snippet)，启用资源，并将文件底部列出的域名追加到 MitM 的 hostname，安装并信任证书。资源中的规则也可手动合并到 `[rewrite_local]`。
+- **Surge**：在模块中添加 [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.sgmodule)，启用模块和 MitM，安装并信任证书。
+
+圈 X 请直接使用原生 `.snippet`，不要让转换器处理 Loon `.plugin` 或 Surge `.sgmodule`。转换 Loon 文件时出现 `AND` 逻辑规则或 `response if` 无法转换，属于配置语法不兼容；拆开逻辑条件会改变匹配范围。转换成功也不代表初始化播放与去广告效果等同。Surge 模块成功添加同样不能证明脚本已命中或广告已清理，需要设备日志确认。
+
 ## 三平台共享底层接口（1.0.0）
 
 供插件作者直接引用的发布地址只有两份，所有功能与平台适配都已打包，不需要额外运行库：
