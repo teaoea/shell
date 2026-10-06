@@ -15,7 +15,7 @@ function harness(args = {}, options = {}) {
   const settings = {log_enabled:true, capture_budget:'32', body_limit_kb:'1024', raw_binary:true, media_body:false, ...args};
   function run(request = baseRequest, response) {
     const completed = [];
-    const context = {$argument:settings, $persistentStore:{read:k=>store.get(k), write:(value,k)=>{
+    const context = {$argument:options.stash ? new URLSearchParams(settings).toString() : settings, $environment:options.stash ? {"stash-version":"3"} : {}, $persistentStore:{read:k=>store.get(k), write:(value,k)=>{
       if (hook && hook(value,k) === false) return false;
       if (value == null) store.delete(k); else store.set(k,value);
       return true;
@@ -231,4 +231,21 @@ test('plugin filters by client marker before buffering, and keeps portal availab
   assert.ok(rules[3].includes('requires_body=false'));assert.ok(rules[4].includes('binary_body_mode=true'));
   assert.ok(!plugin.includes('capture_all'));assert.ok(!code.includes('$dns'));assert.ok(!code.includes('$httpClient'));
   assert.ok(!plugin.split('[Mitm]')[1].includes('push.apple.com'));
+});
+
+test('Stash string arguments preserve start, markers, pause and export workflow',()=>{
+ const h=harness({raw_binary:false},{stash:true});
+ assert.equal(h.get('/').status,200);
+ assert.equal(h.post('/start').status,303);
+ h.run();assert.equal(h.events().length,1);
+ assert.equal(h.post('/mark-ad').status,303);
+ assert.equal(h.events()[1].label,'ad-visible');
+ assert.equal(h.post('/pause').status,303);
+ const manifest=JSON.parse(h.get('/manifest').body);assert.equal(manifest.meta.events,2);
+ const ref=h.config().entries[0];assert.equal(h.get('/event/'+h.config().session+'/'+ref.id).status,200);
+});
+test('Stash disabled logger never reads traffic body or initializes storage',()=>{
+ const h=harness({log_enabled:false},{stash:true});
+ const request={...baseRequest};Object.defineProperty(request,'body',{get(){throw Error('body read');}});
+ assert.deepEqual(h.run(request),{});assert.equal(h.store.size,0);
 });

@@ -19,11 +19,27 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNet
 
 复制上面的安装 URL，在 Loon 插件页面添加远程插件并启用。使用分流模式；仅使用直连规则不需要开启 MitM，采集 HTTPS 请求头和正文则需要启用 MitM 并安装、信任 Loon 证书。不需要向插件填写账号凭据。
 
-`XianyuPushNetwork.plugin` 是唯一安装入口，自动引用 `XianyuLogger.js` 和 `assets/xianyu.jpg`，无需另装日志插件。安装 URL 指向 GitHub `main` 分支；更新时刷新插件，再刷新／重新下载日志脚本缓存。插件中已登记可解密的已知主机，这些主机是否被解密由全局 MitM 设置决定，与日志开关独立。
+`XianyuPushNetwork.plugin` 是 Loon 安装入口，自动引用 `XianyuLogger.js` 和 `assets/xianyu.jpg`，无需另装日志插件。安装 URL 指向 GitHub `main` 分支；更新时刷新插件，再刷新／重新下载日志脚本缓存。插件中已登记可解密的已知主机，这些主机是否被解密由全局 MitM 设置决定，与日志开关独立。
 
 关闭「开发日志」会停用四条业务采样脚本，但保留本地导出入口和原直连规则。停用／删除整个插件会关闭采样、日志页和本插件的直连规则；已有日志数据不会自动删除，需要在停用前从日志页导出并清空。若之前手动复制过规则到本地配置，需要单独删除那些规则。
 
 当前没有 iPhone 实机验证结果，不能宣称修复了消息延迟。
+
+## Stash 安装与日志
+
+在 Stash「覆写」中添加并启用以下安装 URL：
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.stoverride
+```
+
+覆写保留相同的闲鱼业务域名及 APNs 地址、TCP 端口组合直连条件；不会将 Apple 整个地址范围直连。自动引用 `XianyuLogger.js`，业务日志与未知二进制保存默认关闭，业务请求、响应默认只采集头部。仅本地控制页面读取 POST 正文，便于开始、暂停、标记和清空。现有节点、策略组与其他插件配置通过覆写合并保留。
+
+使用日志时，将文件中 `&xianyu-options` 的 `log_enabled=false` 改为 `true`，重新加载覆写，访问 `http://xianyu-logs.invalid/` 并点击开始。三个入口共用同一组参数，记录中可标记，暂停后导出已保存样本。业务采集仍检查 User-Agent 的闲鱼标识，没有标识的请求不保存。Stash URL 匹配不能代替请求头条件，脚本在所有匹配的 HTTP 请求上检查标识，但默认不缓冲正文。
+
+需要完整正文开发采样时，手动将两条业务规则的 `require-body` 改为 `true`，添加 `binary-mode: true` 和 `max-size: 4194304`。这会在脚本筛选客户端标记之前缓冲匹配的 HTTP 正文，可能影响其他 App 请求；仅短时调试使用，结束后恢复头部模式。默认不保存媒体与未知二进制，可通过 `media_body`、`raw_binary` 明确开启。HTTPS 采样需开启 MitM 并信任证书；APNs 不参与解密。
+
+Stash 配置、参数和日志流程仅离线验证，尚无实机消息提醒验证。配置依据 [Stash 规则文档](https://stash.wiki/rules/rule-types) 和 [HTTP 脚本文档](https://stash.wiki/script/rewrite-requests)。
 
 ## 日志使用方法
 

@@ -1,0 +1,69 @@
+name: 闲鱼推送网络辅助
+author: 可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
+icon: https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/assets/xianyu.jpg
+homepage: https://github.com/teaoea/shell/blob/main/plugins/Xianyu/README.md
+desc: 闲鱼与 Apple 推送直连辅助；开发日志默认关闭，仅识别闲鱼客户端标记，默认只采集 HTTP 头部。不能唤醒 App 或维持在线。
+rules:
+  - DOMAIN-SUFFIX,goofish.com,DIRECT
+  - DOMAIN,wss-goofish.dingtalk.com,DIRECT
+  - DOMAIN,acs.m.taobao.com,DIRECT
+  - DOMAIN-SUFFIX,push.apple.com,DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.249.0.0/16,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.249.0.0/16,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.252.0.0/16,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.252.0.0/16,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.57.144.0/22,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.57.144.0/22,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.188.128.0/18,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.188.128.0/18,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR,17.188.20.0/23,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR,17.188.20.0/23,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2620:149:a44::/48,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2620:149:a44::/48,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2403:300:a42::/48,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2403:300:a42::/48,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2403:300:a51::/48,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2403:300:a51::/48,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2a01:b740:a42::/48,no-resolve)),DIRECT
+  - AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2a01:b740:a42::/48,no-resolve)),DIRECT
+  - DOMAIN,xianyu-logs.invalid,DIRECT
+http:
+  force-http-engine:
+    - 'xianyu-logs.invalid:80'
+  mitm:
+    - 'goofish.com'
+    - '*.goofish.com'
+    - 'acs.m.taobao.com'
+    - 'h5api.m.taobao.com'
+    - 'wss-goofish.dingtalk.com'
+    - 'alicdn.com'
+    - '*.alicdn.com'
+    - 'mmstat.com'
+    - '*.mmstat.com'
+    - 'iyes.youku.com'
+    - 'amdc.alipay.com'
+  script:
+# 业务日志总开关在 &xianyu-options；开启后再到本地页面点击开始。
+# 默认不读取业务正文；完整开发采样需手动调整两条业务规则，详见 README。
+    - name: xianyu-development-logger
+      match: '^http://xianyu-logs\.invalid(?::80)?(?:/|$)'
+      type: request
+      require-body: true
+      timeout: 30
+      argument: &xianyu-options 'log_enabled=false&capture_budget=32&body_limit_kb=1024&raw_binary=false&media_body=false'
+    - name: xianyu-development-logger
+      match: '^https?://(?!xianyu-logs\.invalid(?::80)?(?:/|$))'
+      type: request
+      require-body: false
+      timeout: 30
+      argument: *xianyu-options
+    - name: xianyu-development-logger
+      match: '^https?://(?!xianyu-logs\.invalid(?::80)?(?:/|$))'
+      type: response
+      require-body: false
+      timeout: 30
+      argument: *xianyu-options
+script-providers:
+  xianyu-development-logger:
+    url: https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuLogger.js
+    interval: 86400

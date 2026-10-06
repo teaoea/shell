@@ -66,6 +66,12 @@ ChatGPT = select, DIRECT, YOUR_PROXY
 
 ### Stash
 
+安装 URL（可直接复制）：
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/ChatGPT.stoverride
+```
+
 导入并启用上表的 `ChatGPT.stoverride`，一次添加网络选择和日志入口。它创建 ChatGPT 手动策略组，以 `include-all: true` 引用已有节点和代理集合，同时提供 DIRECT。没有可用节点时，不能据此认为已配置代理。
 
 覆写只为本地日志域名强制 HTTP 引擎，不添加业务 MitM 主机。刷新后检查其他配置是否仍解密 ChatGPT，并核对最终规则命中结果。

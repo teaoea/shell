@@ -2,7 +2,7 @@
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 更新时间：2026-10-06
  * 闲鱼开发日志 1.0.0，2026-10-06。
- * 在 Loon 本地保存匹配到的 HTTP 请求／响应和标记，分块存储、校验、单文件导出。
+ * 在 Loon / Stash 本地保存匹配到的 HTTP 请求／响应和标记，分块存储、校验、单文件导出。
  * 不修改业务请求或响应；所有正文仅在用户开启日志时读取。
  */
 (function () {
@@ -10,6 +10,18 @@
   var VERSION = "1.0.0", KEY = "xianyu.logger.v1", BASE = "http://xianyu-logs.invalid";
   var MAX_EVENTS = 4096, CHUNK = 32768, MAX_INDEX = 1048576;
   var args = typeof $argument === "object" && $argument ? $argument : {};
+  // 功能：读取 Stash 字符串参数，保留 Loon 对象参数；更新时间：2026-10-06。
+  if (typeof $argument === "string" && $argument.length <= 8192) {
+    args = Object.create(null);
+    $argument.split("&").forEach(function (pair) {
+      var equal = pair.indexOf("=");
+      if (equal < 1) return;
+      try {
+        var key = decodeURIComponent(pair.slice(0, equal));
+        if (["log_enabled", "capture_budget", "body_limit_kb", "raw_binary", "media_body"].indexOf(key) >= 0) args[key] = decodeURIComponent(pair.slice(equal + 1).replace(/\+/g, "%20"));
+      } catch (_) {}
+    });
+  }
   var req = typeof $request === "undefined" ? null : $request;
   var res = typeof $response === "undefined" ? null : $response;
   var flag = function (v) { return v === true || v === "true"; };
