@@ -15,6 +15,18 @@ test('routing domain inventory stays identical on all four platforms', () => {
   assert.match(read('ChatGPT.quantumult.conf'), /static = ChatGPT, direct, proxy/);
   assert.match(read('ChatGPT.stoverride'), /include-all: true/);
 });
+test('Loon retains manual PROXY mapping and its log switch gates both samplers', () => {
+  const content = read('ChatGPT.plugin');
+  assert.match(content, /log_enabled = switch,false/);
+  assert.match(content, /DOMAIN-SUFFIX,chatgpt.com,PROXY/);
+  assert.doesNotMatch(content, /network_mode|policy_group|proxy_policy|ChatGPTSettings|generic script-path=/);
+  for (const line of content.split('\n').filter(l => /^http-(request|response) \^https/.test(l))) {
+    assert.match(line, /enable=\{log_enabled\}/);
+    assert.match(line, /argument=\[\{log_enabled\}\]/);
+  }
+  const page = content.split('\n').find(l => /^http-request \^http:/.test(l));
+  assert.doesNotMatch(page, /enable=/, 'log export must remain accessible with logging off');
+});
 test('logging adapters match the same hosts and use no body buffering', () => {
   for (const name of ['ChatGPT.plugin', 'ChatGPT.surge.conf', 'ChatGPT.quantumult.conf', 'ChatGPT.stoverride']) {
     const content = read(name);

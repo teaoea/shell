@@ -10,15 +10,18 @@ const mitm = domains.suffix.flatMap(d => [d, '*.' + d]);
 const rules = policy => domains.suffix.map(d => `DOMAIN-SUFFIX,${d},${policy}`).concat(domains.exact.map(d => `DOMAIN,${d},${policy}`));
 function write(name, text) { writeFileSync(root + name, text.trim() + '\n'); }
 write('ChatGPT.plugin', `#!name = ChatGPT 网络选择与本地日志
-#!desc = 绑定 DIRECT 或已有代理策略组；日志默认暂停，访问 http://chatgpt-logs.invalid/ 管理。仅分流无需 MitM，HTTPS 日志需解密；暂停日志不移除 MitM 主机。
+#!desc = 网络模式由下方 PROXY 策略入口手动选择 DIRECT 或已有代理；日志工具默认关闭，本地页面支持查看与导出。HTTPS 日志需解密，关闭日志不移除 MitM 主机。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
+#!loon_version = 3.5.1(983)
+[Argument]
+log_enabled = switch,false,tag=日志工具,desc=开启后允许元数据采样；首次开启后在本地日志页点击开启日志，关闭后停止采样但仍可导出；不移除 MitM 主机
 [Rule]
 ${rules('PROXY').join('\n')}
 DOMAIN,chatgpt-logs.invalid,DIRECT
 [Script]
-http-request ${local} script-path=${script},requires-body=false,timeout=10,tag=ChatGPT 日志页面
-http-request ${core} script-path=${script},requires-body=false,timeout=10,tag=ChatGPT 请求日志
-http-response ${core} script-path=${script},requires-body=false,timeout=10,tag=ChatGPT 响应日志
+http-request ${local} script-path=${script},argument=[{log_enabled}],requires-body=false,timeout=10,tag=ChatGPT 日志页面
+http-request ${core} script-path=${script},argument=[{log_enabled}],enable={log_enabled},requires-body=false,timeout=10,tag=ChatGPT 请求日志
+http-response ${core} script-path=${script},argument=[{log_enabled}],enable={log_enabled},requires-body=false,timeout=10,tag=ChatGPT 响应日志
 [Mitm]
 hostname = ${mitm.join(', ')}`);
 write('ChatGPT.surge.conf', `# ChatGPT 网络选择与本地日志：合并到主配置对应段，不是独立配置或模块。

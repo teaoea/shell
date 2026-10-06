@@ -5,6 +5,8 @@
   var LIMIT = 300;
   var LOCAL = 'http://chatgpt-logs.invalid';
   var qx = typeof $prefs !== 'undefined';
+  var args = typeof $argument === 'object' && $argument ? $argument : {};
+  var allowed = args.log_enabled === undefined || args.log_enabled === true || args.log_enabled === 'true';
   var store = qx ? {
     read: function () { return $prefs.valueForKey(KEY); },
     write: function (v) { return $prefs.setValueForKey(v, KEY); }
@@ -55,7 +57,7 @@
     }).join('');
     return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
       '<title>ChatGPT 网络日志</title><style>body{font:16px system-ui;margin:24px;color:#17332c;background:#f4f8f6}main{max-width:960px;margin:auto}button,a{display:inline-block;padding:10px;margin:5px;color:#075e47}form{display:inline}table{border-collapse:collapse;font-size:13px}td,th{padding:8px;border-bottom:1px solid #ccd8d2;text-align:left}.scroll{overflow:auto}</style><main>' +
-      '<h1>ChatGPT 网络日志</h1><p>状态：' + (s.enabled ? '记录中' : '已暂停') + ' · 已保存 ' + s.events.length + ' 条 · 已淘汰 ' + s.evicted + ' 条</p>' +
+      '<h1>ChatGPT 网络日志</h1><p>状态：' + (!allowed ? '插件日志开关已关闭' : s.enabled ? '记录中' : '已暂停') + ' · 已保存 ' + s.events.length + ' 条 · 已淘汰 ' + s.evicted + ' 条</p>' +
       '<p>最多保留最近 300 条。仅记录网络元数据，不保存聊天正文、账号凭据或完整 URL。</p>' + forms +
       '<a href="/export" download="chatgpt-network.log">导出日志</a><a href="/">刷新</a>' +
       '<p>网络选择：在代理软件中选择 ChatGPT 策略的 DIRECT（直连）或代理节点。实际出口请查看软件的连接记录。</p>' +
@@ -76,7 +78,7 @@
       var state = load();
       if (method === 'GET' && path === '/') { save(state); return respond(200, 'text/html', page(state)); }
       if (method === 'GET' && path === '/export') {
-        var data = [{ format: 'chatgpt-network-log', version: 1, exported: new Date().toISOString(), count: state.events.length, evicted: state.evicted, enabled: state.enabled,
+        var data = [{ format: 'chatgpt-network-log', version: 1, exported: new Date().toISOString(), count: state.events.length, evicted: state.evicted, enabled: allowed && state.enabled, session_enabled: state.enabled,
           coverage: 'HTTP metadata only; concurrent writes may lose events; no observed exit policy' }].concat(state.events);
         return respond(200, 'text/plain', data.map(function (e) { return JSON.stringify(e); }).join('\n') + '\n', { 'Content-Disposition': 'attachment; filename="chatgpt-network.log"' });
       }
@@ -86,6 +88,7 @@
       var referer = header(req.headers, 'referer');
       if ((origin && origin !== LOCAL && origin !== LOCAL + ':80') ||
         (referer && !/^http:\/\/chatgpt-logs\.invalid(?::80)?\//i.test(referer)) || route !== path + '?token=' + state.token) return respond(403, 'text/plain', '请刷新日志页后重试');
+      if (path === '/start' && !allowed) return respond(409, 'text/plain', '请先在 Loon 插件设置中开启“日志工具”。');
       if (path === '/clear') state = fresh();
       else state.enabled = path === '/start';
       save(state);
@@ -94,7 +97,7 @@
     var match = /^https:\/\/((?:[a-z0-9-]+\.)*(?:chatgpt\.com|openai\.com|oaistatic\.com|oaiusercontent\.com|oaistatsig\.com|openaimerge\.com))(?::443)?(\/[^?#]*)?(?:[?#].*)?$/i.exec(url);
     if (!match) return $done({});
     var s = load();
-    if (!s.enabled) return $done({});
+    if (!allowed || !s.enabled) return $done({});
     var response = typeof $response === 'undefined' ? null : $response;
     var status = response ? Number(response.statusCode || response.status) : 0;
     var methodName = String(req.method || '').toUpperCase();

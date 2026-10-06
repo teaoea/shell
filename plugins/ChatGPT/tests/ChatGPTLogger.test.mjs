@@ -8,9 +8,10 @@ const local = 'http://chatgpt-logs.invalid';
 function runtime(platform) {
   const data = new Map();
   let fail = false;
-  function run(request, response) {
+  function run(request, response, argument) {
     const done = [];
     const context = { $request: request, console: { log() {} }, $done: v => done.push(v) };
+    if (argument !== undefined) context.$argument = argument;
     const write = (v, k) => { if (fail) return false; data.set(k, v); return true; };
     if (platform === 'qx') context.$prefs = { valueForKey: k => data.get(k), setValueForKey: write };
     else context.$persistentStore = { read: k => data.get(k), write };
@@ -29,6 +30,22 @@ function runtime(platform) {
   }
   return { data, run, reply, state, control, fail: () => { fail = true; } };
 }
+test('Loon plugin log switch gates capture and start while preserving export access', () => {
+  const rt = runtime('loon');
+  rt.run({ url: local + '/', method: 'GET' });
+  rt.control('start');
+  const request = { url: 'https://chatgpt.com/', method: 'GET' };
+  rt.run(request, undefined, { log_enabled: false });
+  assert.equal(rt.state().events.length, 0);
+  rt.run(request, undefined, { log_enabled: true });
+  assert.equal(rt.state().events.length, 1);
+  const start = rt.reply(rt.run({ url: local + '/start?token=' + rt.state().token, method: 'POST' }, undefined, { log_enabled: false }));
+  assert.match(String(start.status), /409/);
+  const page = rt.reply(rt.run({ url: local + '/', method: 'GET' }, undefined, { log_enabled: false }));
+  assert.match(page.body, /插件日志开关已关闭/);
+  const exported = rt.reply(rt.run({ url: local + '/export', method: 'GET' }, undefined, { log_enabled: false }));
+  assert.equal(JSON.parse(exported.body.split('\n')[0]).count, 1);
+});
 for (const platform of ['loon', 'qx', 'stash', 'surge']) {
   test(platform + ': page controls, privacy, pass-through and export', () => {
     const rt = runtime(platform);
