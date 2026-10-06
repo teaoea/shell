@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs';
 const read = name => readFileSync(new URL('../' + name, import.meta.url), 'utf8');
 const domains = JSON.parse(read('domains.json'));
 test('routing domain inventory stays identical on all four platforms', () => {
-  for (const name of ['ChatGPT.plugin', 'ChatGPT.rules', 'ChatGPT.stoverride', 'ChatGPT.snippet']) {
+  for (const name of ['ChatGPT.plugin', 'ChatGPT.surge.conf', 'ChatGPT.stoverride', 'ChatGPT.quantumult.conf']) {
     const content = read(name);
-    const lines = content.split('\n').filter(l => /^(?:  - )?(?:DOMAIN|host)/.test(l));
-    const actual = lines.map(l => l.trim().replace(/^- /, '').split(',')[1]);
+    const lines = content.split('\n').filter(l => /^(?:  - )?(?:DOMAIN(?:-SUFFIX)?|host(?:-suffix)?),/.test(l));
+    const actual = lines.map(l => l.trim().replace(/^- /, '').split(',')[1]).filter(d => d !== 'chatgpt-logs.invalid');
     assert.deepEqual(actual, [...domains.suffix, ...domains.exact], name);
   }
   assert.match(read('ChatGPT.plugin'), /DOMAIN-SUFFIX,chatgpt.com,PROXY/);
@@ -16,7 +16,7 @@ test('routing domain inventory stays identical on all four platforms', () => {
   assert.match(read('ChatGPT.stoverride'), /include-all: true/);
 });
 test('logging adapters match the same hosts and use no body buffering', () => {
-  for (const name of ['ChatGPTLogs.plugin', 'ChatGPTLogs.sgmodule', 'ChatGPTLogs.qxrewrite', 'ChatGPTLogs.stoverride']) {
+  for (const name of ['ChatGPT.plugin', 'ChatGPT.surge.conf', 'ChatGPT.quantumult.conf', 'ChatGPT.stoverride']) {
     const content = read(name);
     const core = content.split('\n').find(l => l.includes('^https://'));
     const pattern = core.match(/\^https:\/\/[^\s,']+/)[0];
@@ -29,5 +29,17 @@ test('logging adapters match the same hosts and use no body buffering', () => {
     assert.doesNotMatch(content, /requires?-body[=:] ?true|script-(?:request|response)-body/);
     assert.match(content, /ChatGPTLogger\.js/);
   }
-  assert.doesNotMatch(read('ChatGPTLogs.sgmodule'), /\[Proxy Group\]|,ChatGPT$/m, 'Surge module cannot reference custom policies');
+
+});
+test('each entry includes routing, local control, sampling and MITM without separate resources', () => {
+  for (const name of ['ChatGPT.plugin', 'ChatGPT.surge.conf', 'ChatGPT.quantumult.conf', 'ChatGPT.stoverride']) {
+    const content = read(name);
+    assert.match(content, /chatgpt-logs\.invalid,(?:DIRECT|direct)/);
+    assert.match(content, /script-echo-response|http-request|type: request/);
+    assert.match(content, /script-response-header|http-response|type: response/);
+    assert.match(content, /hostname =|  mitm:/);
+    assert.doesNotMatch(content, /ChatGPTLogs|ChatGPT\.rules|ChatGPT\.snippet|filter_remote|rewrite_remote/);
+    const sections = [...content.matchAll(/^\[([^\]]+)\]/gm)].map(m => m[1].toLowerCase());
+    assert.equal(new Set(sections).size, sections.length, 'no duplicate configuration sections');
+  }
 });
