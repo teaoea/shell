@@ -14,13 +14,13 @@ write('ChatGPT.plugin', `#!name = ChatGPT 网络选择与本地日志
 #!author = ${author}
 #!icon = ${icon}
 # 作者：${author}
-#!desc = 试验版：尝试将插件内策略名称改为网络模式；请确认出现手动选择入口并核对实际规则命中，不生效则回滚；日志工具默认关闭，本地页面支持查看与导出。默认不解密 ChatGPT，避免原生 App 证书错误；HTTPS 自定义日志仅适用于手动开启解密的浏览器调试。
+#!desc = 网络模式由下方 PROXY 策略入口手动选择 DIRECT 或已有代理；日志工具默认关闭，本地页面支持查看与导出。默认不解密 ChatGPT，避免原生 App 证书错误；HTTPS 自定义日志仅适用于手动开启解密的浏览器调试。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
 #!loon_version = 3.5.1(983)
 [Argument]
 log_enabled = switch,false,tag=日志工具,desc=开启后允许元数据采样；首次开启后在本地日志页点击开启日志，关闭后停止采样但仍可导出；默认不解密，原生 App 请使用 Loon 连接记录
 [Rule]
-${rules('网络模式').join('\n')}
+${rules('PROXY').join('\n')}
 DOMAIN,chatgpt-logs.invalid,DIRECT
 [Script]
 http-request ${local} script-path=${script},argument=[{log_enabled}],requires-body=false,timeout=10,tag=ChatGPT 日志页面
