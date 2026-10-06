@@ -809,13 +809,22 @@ function (row) {
        */
       function value(v) { if (v === null) return "null"; if (v === undefined) return "unavailable"; return typeof v === "string" ? v.replace(/\r/g,"\\r").replace(/\n/g,"\\n") : String(v); }
       /**
-       * 功能：执行 structure 对应的内部处理步骤。
-       * 更新时间：2026-10-04T08:54:22+08:00
+       * 功能：输出完整脱敏结构，将 Protobuf 字段元数据合并为一行并保留全部子字段。
+       * 更新时间：2026-10-06
        */
       function structure(label, v, lines, depth) {
         var indent = new Array(depth + 1).join("  ");
         if (v === null || v === undefined || typeof v !== "object") { lines.push(indent + label + ": " + value(v)); return; }
         if (Array.isArray(v)) { lines.push(indent + label + ": array(" + v.length + ")"); for (var i=0;i<v.length;i++) structure("["+i+"]",v[i],lines,depth+1); return; }
+        if (Object.prototype.hasOwnProperty.call(v,"field") && Object.prototype.hasOwnProperty.call(v,"wire")) {
+          var inline=["field","wire","bytes","value"], metadata=[], remaining=Object.keys(v).sort();
+          for(var f=0;f<inline.length;f++) if(Object.prototype.hasOwnProperty.call(v,inline[f]) && (v[inline[f]]===null || typeof v[inline[f]]!=="object")) {
+            metadata.push(inline[f]+"="+JSON.stringify(v[inline[f]])); remaining.splice(remaining.indexOf(inline[f]),1);
+          }
+          lines.push(indent+label+": "+metadata.join(" "));
+          for(var r=0;r<remaining.length;r++) structure(remaining[r],v[remaining[r]],lines,depth+1);
+          return;
+        }
         var keys=Object.keys(v).sort(); lines.push(indent+label+": object("+keys.length+")");
         for(var k=0;k<keys.length;k++) structure(keys[k],v[keys[k]],lines,depth+1);
       }
@@ -835,7 +844,7 @@ function (row) {
        * 更新时间：2026-10-04T08:54:22+08:00
        */
       function exchange(label,v,lines){
-        lines.push(label+":");if(!v){lines.push("  unavailable");return;}
+        if(!v){lines.push(label+": unavailable");return;}lines.push(label+":");
         var names=["url","method","status","synthetic","changed","transportHeadersRecomputedByLoon"];
         for(var i=0;i<names.length;i++)if(Object.prototype.hasOwnProperty.call(v,names[i]))lines.push("  "+names[i]+": "+value(v[names[i]]));
         if(Object.prototype.hasOwnProperty.call(v,"headers"))structure("headers",v.headers,lines,1);
@@ -847,16 +856,36 @@ function (row) {
        * 更新时间：2026-10-05
        */
       function eventText(index,row,capture,captureError){
-        var lines=["","================================================================================","EVENT "+(index+1),"================================================================================","Time: "+shanghaiTime(row.time),"Level: "+String(row.level).toUpperCase(),"Source: "+row.source,"Version: "+row.version,"Endpoint: "+row.endpoint,"Phase: "+value(row.phase),"Summary: "+row.message];
+        var lines=["","================================================================================","EVENT "+(index+1)+" | "+value(row.endpoint)+" | "+value(row.phase)+" | "+String(row.level).toUpperCase(),"================================================================================","Time: "+shanghaiTime(row.time),"Level: "+String(row.level).toUpperCase(),"Source: "+row.source,"Version: "+row.version,"Endpoint: "+row.endpoint,"Phase: "+value(row.phase),"Summary: "+row.message];
         if(row.timing)structure("Capture-Timing-Ms",row.timing,lines,0);
         if(captureError)lines.push("Capture-Error: "+captureError);if(!capture){lines.push("Capture: unavailable");return lines.join("\n")+"\n";}
         lines.push("Runtime: "+value(capture.runtime));structure("Correlation",capture.correlation,lines,0);structure("Processing",capture.processing,lines,0);
         exchange("Request-Inner-Before",capture.requestInner,lines);exchange("Request-Inner-After",capture.requestInnerAfter,lines);exchange("Request-Before",capture.request,lines);exchange("Request-After",capture.requestAfter,lines);exchange("Response-Before",capture.responseBefore,lines);exchange("Response-After",capture.responseAfter,lines);
         return lines.join("\n")+"\n";
       }
+      /**
+       * 功能：计算相邻事件的时间间隔，缺失或倒序时间不伪装成网络耗时。
+       * 更新时间：2026-10-06
+       * @param {Object[]} rows 当前导出的事件。
+       * @param {number} index 当前事件位置。
+       * @returns {string|number} 相邻事件间隔毫秒，无法计算时返回 unavailable。
+       */
+      function eventGap(rows,index) {
+        if(index===0)return "unavailable";
+        var current=Date.parse(rows[index].time), previous=Date.parse(rows[index-1].time);
+        return Number.isFinite(current)&&Number.isFinite(previous)&&current>=previous ? current-previous : "unavailable";
+      }
       var manifest = await get("/export-manifest.json");
       var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
-      parts.push(["YouTube full diagnostic log","Format-Version: 3","Time-Zone: Asia/Shanghai (UTC+08:00)","Exported-Time: "+shanghaiTime(data.exportedAt),"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Media-Capture-Mode-At-Export: "+value(data.settings.mediaCaptureMode),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push(["YouTube full diagnostic log","Format-Version: 4","Time-Zone: Asia/Shanghai (UTC+08:00)","Exported-Time: "+shanghaiTime(data.exportedAt),"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Media-Capture-Mode-At-Export: "+value(data.settings.mediaCaptureMode),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push("\n事件时间线 / TIMELINE\n"+
+        "说明：Δ 为与上一条事件的间隔，不是请求耗时；编号对应下方 EVENT。\n"+
+        "编号 | 上海时间 | 级别 | 接口 | 阶段 | Δ(ms) | 摘要\n");
+      for(var t=0;t<rows.length;t++) {
+        var timelineRow=rows[t];
+        parts.push([t+1,shanghaiTime(timelineRow.time),String(timelineRow.level).toUpperCase(),value(timelineRow.endpoint),value(timelineRow.phase),eventGap(rows,t),value(timelineRow.message)].join(" | ")+"\n");
+      }
+      parts.push("\n详细事件 / DETAILS\n");
       for (var n = 0; n < rows.length; n++) {
         var row = rows[n], capture = null, captureError = row.captureError || null;
         status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;

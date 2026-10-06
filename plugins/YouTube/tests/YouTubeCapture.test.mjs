@@ -680,3 +680,31 @@ test('Shanghai export displays unavailable for malformed time without cancelling
  assert.match(await blob.text(),/Issue: unavailable YouTubeLogger missing/);
  assert.equal(save.clicked,true);
 });
+
+test('readable log includes a complete timeline and compact protobuf metadata with nested fields preserved',async()=>{
+ const store=started();
+ player(store,new Uint8Array([10,2,8,1]));
+ page(store,'mark-content','POST');page(store,'pause','POST');
+ const manifest=JSON.parse(page(store,'export-manifest.json').body);
+ const script=page(store,'export').body.match(/<script>([\s\S]*)<\/script>/)[1];
+ const status={},save={click(){}};let blob;
+ await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,
+  URL:{createObjectURL(value){blob=value;return 'blob:format';}},
+  async fetch(path){const r=page(store,path.slice(1));return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}
+ },{timeout:5000});
+ const text=await blob.text();
+ assert.match(text,/Format-Version: 4/);
+ assert.ok(text.indexOf('TIMELINE')<text.indexOf('DETAILS'));
+ const timeline=text.split('TIMELINE')[1].split('DETAILS')[0];
+ for(let i=0;i<manifest.rows.length;i++) {
+  assert.ok(timeline.includes(`${i+1} | `));
+  assert.ok(timeline.includes(manifest.rows[i].message));
+  assert.ok(text.includes(`EVENT ${i+1} | ${manifest.rows[i].endpoint}`));
+ }
+ assert.match(timeline,/不是请求耗时/);
+ assert.match(text,/field=1 wire=2 bytes=2/);
+ assert.match(text,/field=1 wire=0/);
+ assert.match(text,/Request-Inner-Before: unavailable/);
+ assert.match(text,/Summary: user mark: content-playing/);
+ assert.match(text,/All-Referenced-Samples-Readable: true/);
+});
