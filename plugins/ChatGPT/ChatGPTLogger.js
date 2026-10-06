@@ -61,7 +61,7 @@
       '<p>最多保留最近 300 条。仅记录网络元数据，不保存聊天正文、账号凭据或完整 URL。</p>' + forms +
       '<a href="/export" download="chatgpt-network.log">导出日志</a><a href="/">刷新</a>' +
       '<p>网络选择：在代理软件中选择 ChatGPT 策略的 DIRECT（直连）或代理节点。实际出口请查看软件的连接记录。</p>' +
-      '<p>HTTPS 日志需要解密成功；原生客户端可能拒绝解密。此页未显示失败的 TLS、DNS、纯 IP 或 WebSocket 帧，零条记录不代表没有连接。</p>' +
+      '<p>默认不解密 ChatGPT，原生 App 请使用代理软件的连接记录。此页的 HTTPS 日志仅适用于手动解密的浏览器调试；零条记录不代表没有连接，不包含 TLS、DNS、纯 IP 或 WebSocket 帧。</p>' +
       '<div class="scroll"><table><thead><tr><th>时间 UTC</th><th>阶段</th><th>主机</th><th>接口类别</th><th>方法</th><th>状态</th></tr></thead><tbody>' + rows + '</tbody></table></div></main></html>';
   }
   var req = typeof $request === 'undefined' ? null : $request;

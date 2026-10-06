@@ -43,13 +43,13 @@ test('logging adapters match the same hosts and use no body buffering', () => {
   }
 
 });
-test('each entry includes routing, local control, sampling and MITM without separate resources', () => {
+test('each entry includes routing and local logs without adding TLS decryption', () => {
   for (const name of ['ChatGPT.plugin', 'ChatGPT.surge.conf', 'ChatGPT.quantumult.conf', 'ChatGPT.stoverride']) {
     const content = read(name);
     assert.match(content, /chatgpt-logs\.invalid,(?:DIRECT|direct)/);
     assert.match(content, /script-echo-response|http-request|type: request/);
     assert.match(content, /script-response-header|http-response|type: response/);
-    assert.match(content, /hostname =|  mitm:/);
+    assert.doesNotMatch(content, /^\[mitm\]|^\s*mitm:|^hostname\s*=/im, 'default configuration must not cause native-client certificate errors');
     assert.doesNotMatch(content, /ChatGPTLogs|ChatGPT\.rules|ChatGPT\.snippet|filter_remote|rewrite_remote/);
     const sections = [...content.matchAll(/^\[([^\]]+)\]/gm)].map(m => m[1].toLowerCase());
     assert.equal(new Set(sections).size, sections.length, 'no duplicate configuration sections');

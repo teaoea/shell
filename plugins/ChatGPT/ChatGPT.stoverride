@@ -2,7 +2,7 @@ name: ChatGPT 网络选择与本地日志
 author: 可莉唯一的狗
 icon: https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/assets/chatgpt.jpg
 homepage: https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
-desc: 在 ChatGPT 策略组选择 DIRECT 或代理节点；日志默认暂停，访问 http://chatgpt-logs.invalid/ 管理。HTTPS 日志需解密；暂停不移除 MitM 主机。
+desc: 在 ChatGPT 策略组选择 DIRECT 或代理节点；日志默认暂停，访问 http://chatgpt-logs.invalid/ 管理。默认不解密 ChatGPT；原生 App 使用 Stash 连接记录，HTTPS 自定义日志仅用于手动解密的浏览器调试。
 proxy-groups:
   - name: ChatGPT
     type: select
@@ -27,19 +27,6 @@ rules:
 http:
   force-http-engine:
     - 'chatgpt-logs.invalid:80'
-  mitm:
-    - 'chatgpt.com:443'
-    - '*.chatgpt.com:443'
-    - 'openai.com:443'
-    - '*.openai.com:443'
-    - 'oaistatic.com:443'
-    - '*.oaistatic.com:443'
-    - 'oaiusercontent.com:443'
-    - '*.oaiusercontent.com:443'
-    - 'oaistatsig.com:443'
-    - '*.oaistatsig.com:443'
-    - 'openaimerge.com:443'
-    - '*.openaimerge.com:443'
   script:
     - name: chatgpt-network-logger
       match: '^http://chatgpt-logs\.invalid(?::80)?(?:/|$)'
