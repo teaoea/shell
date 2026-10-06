@@ -155,7 +155,8 @@ test('protobuf player response removes ad fields like the Loon bundle', () => {
   const body = concat(msg(2, scalar(1, 0)), msg(7, u8([1, 2])), msg(4, u8([3])), msg(68, u8([4])), msg(11, u8([5])));
   const expected = runLoon('response', {url:api + 'player', method:'POST', headers:{}}, {status:200, headers, body});
   const output = runQX('response', {url:api + 'player', method:'POST', headers:{}}, {statusCode:200, headers, body:'ignored', bodyBytes:buffer(body)});
-  assert.ok(expected.body.length && expected.body.length < body.length);
+  // 开启后台播放时会写入能力字段，输出不一定变短；只要求确有改动并与 Loon 包一致。
+  assert.ok(expected.body.length && String(Array.from(expected.body)) !== String(Array.from(body)));
   assert.deepEqual(Object.keys(output), ['bodyBytes']);
   assert.deepEqual(bytesOf(output.bodyBytes), Array.from(expected.body));
 });
@@ -177,10 +178,11 @@ test('feed and Shorts responses reach their modules and match the Loon bundle', 
 test('fixed background playback option changes the player response only when built as enabled', () => {
   const headers = {'Content-Type':'application/json'}, request = {url:api + 'player', method:'POST', headers:{}};
   const body = JSON.stringify({playabilityStatus:{status:'OK', playableInBackground:false}, videoDetails:{videoId:'v'}});
-  const enabled = qx.response.replace('background_playback:false', 'background_playback:true');
-  assert.notEqual(enabled, qx.response);
-  assert.deepEqual(plain(runQX('response', request, {statusCode:200, headers, body})), options.background_playback ? plain(runQX('response', request, {statusCode:200, headers, body}, enabled)) : {});
-  assert.equal(JSON.parse(runQX('response', request, {statusCode:200, headers, body}, enabled).body).playabilityStatus.playableInBackground, true);
+  const built = value => qx.response.replace(/background_playback:(?:true|false)/, 'background_playback:' + value);
+  assert.equal(built(options.background_playback), qx.response);
+  assert.notEqual(built(!options.background_playback), qx.response);
+  assert.deepEqual(plain(runQX('response', request, {statusCode:200, headers, body}, built(false))), {});
+  assert.equal(JSON.parse(runQX('response', request, {statusCode:200, headers, body}, built(true)).body).playabilityStatus.playableInBackground, true);
 });
 
 test('unmatched URLs, non-200 responses, empty bodies and wrong phases pass through untouched', () => {

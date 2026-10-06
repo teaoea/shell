@@ -1,5 +1,5 @@
 {
-  "background_playback": false,
-  "hide_home_shorts": false,
+  "background_playback": true,
+  "hide_home_shorts": true,
   "playback_region": "original"
 }

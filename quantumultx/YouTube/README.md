@@ -14,7 +14,7 @@
 | 首页、推荐、搜索的赞助卡片清理 | 固定启用 |
 | Shorts 播放广告清理 | 固定启用 |
 | 初始化 POST 返回空白视频（对应 Loon 的 `reject_video(200)`） | 固定启用 |
-| 后台播放、隐藏首页 Shorts、播放请求地区 | 构建时由 `options.json` 决定，默认全部关闭 |
+| 后台播放、隐藏首页 Shorts、播放请求地区 | 构建时由 `options.json` 决定；当前后台播放和隐藏首页 Shorts 已开启，地区保持 `original` |
 | 日志工具、Onesie 配置缓存、媒体采样 | 未移植 |
 
 ## 安装
@@ -43,8 +43,8 @@ Quantumult X 的重写片段没有插件参数界面，开关写在 `options.jso
 
 ```json
 {
-  "background_playback": false,
-  "hide_home_shorts": false,
+  "background_playback": true,
+  "hide_home_shorts": true,
   "playback_region": "original"
 }
 ```
