@@ -206,6 +206,28 @@ sudo bash /var/lib/vps-security/security_hardening.sh --rollback
 
 回滚恢复的是备份时的 SSH/UFW 配置，应用后的其他手动修改可能被覆盖。主机内监听检查不能证明云安全组或外部线路已放行；新连接登录是确认步骤的一部分。
 
+## Quantumult X：YouTube 去广告
+
+[Loon 版 YouTube 去广告插件](loon/YouTube/README.md) 的 Quantumult X 移植，由同一份源码构建，只保留去广告核心：播放器广告协商清理、首页／推荐／搜索赞助卡片和 Shorts 广告清理、初始化空白视频。当前构建已开启后台播放和隐藏首页 Shorts。**尚未在 Quantumult X 设备上验证，不能保证所有视频无广告。**
+
+1. 在主配置的 `[general]` 段加入下面一行。它丢弃所有 App 发往 UDP 443 的流量，使 YouTube 从 QUIC 回退到可解密的 TCP；已有这一行时无需重复添加。
+
+   ```text
+   udp_drop_list = 443
+   ```
+
+2. 在重写引用里添加片段地址：
+
+   ```text
+   https://raw.githubusercontent.com/falconchen/shell/main/quantumultx/YouTube/YouTubeNoAds.snippet
+   ```
+
+3. 开启 MitM 和重写，安装并完全信任证书。
+4. 删除或停用其他匹配 YouTube 的去广告重写。
+5. 完全退出 YouTube 再打开。
+
+开关修改方法、与 Loon 版的差异和待确认的问题见 [详细说明](quantumultx/YouTube/README.md)。Loon 用户请看 [Loon 插件总览](loon/README.md)。
+
 ## 许可证
 
 [MIT](LICENSE)
