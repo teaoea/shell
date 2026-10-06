@@ -38,5 +38,5 @@ test('runtime options reject prototype keys and respect explicit argument preced
  const c=qx({$environment:{sourcePath:'x#translation_target=zh-CN&constructor=x',variables:{translation_target:'en-US'}},$argument:'translation_target=zh-CN&__proto__=x'});run(runtime,c);run('result=ytRuntimeOptions()',c);assert.equal(c.result.translation_target,'zh-CN');assert.equal(Object.getPrototypeOf(c.result),null);assert.equal(c.result.constructor,undefined);
 });
 test('platform configurations reuse exactly the two bundles and never mock initplayback',()=>{
- for(const file of ['YouTubeNoAds.snippet','YouTubeNoAds.sgmodule']) {const s=fs.readFileSync(new URL('../configs/'+file,import.meta.url),'utf8');assert.ok(s.includes('request.min.js'));assert.ok(s.includes('response.min.js'));assert.ok(!s.includes('reject-200'));assert.ok(!s.includes('status:204'));}
+ for(const file of ['YouTubeNoAds.snippet','YouTubeNoAds.sgmodule']) {const s=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8');assert.ok(s.includes('request.min.js'));assert.ok(s.includes('response.min.js'));assert.ok(!s.includes('reject-200'));assert.ok(!s.includes('status:204'));}
 });

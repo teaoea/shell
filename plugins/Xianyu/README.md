@@ -10,7 +10,7 @@
 
 ## 安装与更新
 
-- [一键导入 Loon](https://www.nsloon.com/openplugins/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FXianyu%2FXianyuPushNetwork.plugin)
+- [一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FXianyu%2FXianyuPushNetwork.plugin)
 - [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin)
 - [返回插件总览](../README.md)
 

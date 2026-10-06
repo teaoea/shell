@@ -31,8 +31,8 @@ JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台�
 | 平台 | 可引用配置 | 验证范围 |
 | --- | --- | --- |
 | Loon | [YouTubeNoAds.plugin](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin) | 原去广告方案已有用户实测；本次适配与字幕功能仅离线验证 |
-| Quantumult X | [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/configs/YouTubeNoAds.snippet) | 二进制、参数、路径改写、echo 响应和存储已模拟验证；未做实机验证 |
-| Surge | [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/configs/YouTubeNoAds.sgmodule) | 参数、存储、字幕入口与媒体头已模拟验证；未做实机验证 |
+| Quantumult X | [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.snippet) | 二进制、参数、路径改写、echo 响应和存储已模拟验证；未做实机验证 |
+| Surge | [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.sgmodule) | 参数、存储、字幕入口与媒体头已模拟验证；未做实机验证 |
 
 圈 X 将 snippet 加入复写资源，并在 MitM 的 hostname 追加文件底部列出的域名；Surge 添加 sgmodule 并开启 MitM。证书需要安装并信任。不要同时启用另一套匹配相同请求的 YouTube 复写，以免规则覆盖。三平台均不能通过网络脚本向原生 YouTube App 注入悬浮按钮。
 
@@ -62,7 +62,8 @@ Loon 在插件设置中调整；Surge 编辑规则 `argument="key=value&key=valu
 ```text
 plugins/YouTube/
 ├── YouTubeNoAds.plugin       # Loon 插件入口
-├── configs/                 # 圈 X 复写资源和 Surge 模块
+├── YouTubeNoAds.snippet      # 圈 X 复写资源
+├── YouTubeNoAds.sgmodule     # Surge 模块
 ├── src/                     # 原始源码，保留中文 JSDoc 和更新时间
 │   ├── YouTubeFeed.js
 │   ├── YouTubePlayback.js
@@ -143,7 +144,7 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 
 ## 安装与更新
 
-- [一键导入 Loon](https://www.nsloon.com/openplugins/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FYouTube%2FYouTubeNoAds.plugin)
+- [一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FYouTube%2FYouTubeNoAds.plugin)
 - [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin)
 - [返回插件总览](../README.md)
 
