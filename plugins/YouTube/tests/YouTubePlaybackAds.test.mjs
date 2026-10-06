@@ -65,7 +65,7 @@ test('plugin defaults media sampling to headers and buffers only explicitly sele
   assert.equal(entries.length, 2);
   assert.ok(entries[0].includes('script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/response.min.js'));
   assert.ok(entries[0].includes('requires-body=true,binary-body-mode=true'));
-  assert.ok(entries[0].includes('argument=[{log_enabled},{log_level},{capture_budget},{background_playback}]'));
+  assert.ok(entries[0].includes('argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{quality_research}]'));
   const regex = new RegExp(entries[0].split(' ')[1], 'i');
   for (const host of ['youtubei.googleapis.com', 'youtubei-att.googleapis.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube.com']) {
     assert.ok(regex.test(`https://${host}/youtubei/v1/player?key=redacted`));

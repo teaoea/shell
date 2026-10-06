@@ -105,6 +105,94 @@ function ytDiagnosticPurgeLegacy() {
   if($persistentStore.write('structure-only-v1',key)!==true)throw Error('privacy-marker-failed');
 }
 /**
+ * 功能：仅为 Loon 画质研究提取白名单数值；不保存媒体地址、凭据、身份字段或原始二进制。
+ * 更新时间：2026-10-07
+ * @param {Object} payload 尚未脱敏的临时事件。
+ * @param {Function} decode 临时 Base64 解码器。
+ * @returns {Object} 可保存的画质元数据；候选 SABR 字段不表示已验证 iOS 协议。
+ */
+function ytDiagnosticQuality(payload, decode) {
+  var out={schema:1, purpose:'quality-research', actualRenderedQuality:'not-observed'};
+  /**
+   * 功能：只接受范围内的整数，不将字符串、超大整数或无效值写入画质字段。
+   * 更新时间：2026-10-07
+   */
+  function number(value,max){return typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=max?value:null;}
+  /**
+   * 功能：读取临时采样正文，限制大小；不把未知正文复制到输出。
+   * 更新时间：2026-10-07
+   */
+  function bytes(body,max){if(!body||body.available!==true||!Number.isSafeInteger(body.bytes)||body.bytes>max)return null;return body.memoryBytes instanceof Uint8Array?body.memoryBytes:body.encoding==='base64'?decode(body.data):null;}
+  /**
+   * 功能：定向读取 Protobuf 层级，跳过未知字段；限制字段数、长度及整数编码。
+   * 更新时间：2026-10-07
+   */
+  function fields(b){
+    var i=0,rows=[];
+    /**
+     * 功能：读取变长整数，超出安全整数范围时只跳过数值，不作精度猜测。
+     * 更新时间：2026-10-07
+     */
+    function integer(){var n=0,f=1;for(var c=0;c<10&&i<b.length;c++){var x=b[i++];if(c===9&&x>1)throw Error('varint');n+=(x&127)*f;if(x<128)return Number.isSafeInteger(n)?n:null;f*=128;}throw Error('varint');}
+    while(i<b.length){if(rows.length>=512)throw Error('fields-limit');var tag=integer();if(!tag||tag>4294967295)throw Error('tag');var no=Math.floor(tag/8),wire=tag%8,row={field:no,wire:wire};
+      if(wire===0)row.value=integer();
+      else if(wire===1||wire===5)i+=wire===1?8:4;
+      else if(wire===2){var len=integer();if(len===null||len>b.length-i)throw Error('length');row.bytes=b.subarray(i,i+len);i+=len;}
+      else throw Error('wire');if(i>b.length)throw Error('truncated');rows.push(row);
+    }return rows;
+  }
+  /**
+   * 功能：读取已公开的候选 SABR 画质状态和格式编号；身份上下文及未知字段全部忽略。
+   * 更新时间：2026-10-07
+   */
+  function abr(b){
+    var root=fields(b),result={status:'schema-candidate', schema:'LuanRT/googlevideo VideoPlaybackAbrRequest', iosSchemaVerified:false},state={},ids={initialization:[],audio:[],video:[]},observed=false;
+    var map={13:['timeSinceLastManualSelectionMs',86400000],16:['lastManualSelectedResolution',8640],18:['viewportWidth',32768],19:['viewportHeight',32768],20:['bitrateCapBytesPerSecond',1000000000],21:['stickyResolution',8640],23:['bandwidthEstimate',1000000000000],26:['videoQualitySetting',3],30:['dataSaverMode',1],62:['supportsQualityConstraints',1]};
+    for(var i=0;i<root.length;i++){
+      var r=root[i];
+      if(r.field===1&&r.wire===2){var child=fields(r.bytes);for(var j=0;j<child.length;j++){var f=child[j],spec=map[f.field],v=spec&&f.wire===0?number(f.value,spec[1]):null;if(v!==null){state[spec[0]]=v;observed=true;}}}
+      var list=r.field===2?'initialization':r.field===16?'audio':r.field===17?'video':null;
+      if(list&&r.wire===2&&ids[list].length<64){var format=fields(r.bytes);for(var k=0;k<format.length;k++)if(format[k].field===1&&format[k].wire===0){var itag=number(format[k].value,65535);if(itag!==null&&itag>0&&ids[list].indexOf(itag)<0)ids[list].push(itag);}}
+      if((r.field===22||r.field===23)&&r.wire===0){var last=number(r.value,65535);if(last!==null)result[r.field===22?'lastVideoItag':'lastAudioItag']=last;}
+    }
+    if(!observed)return {status:'unrecognized-schema'};
+    result.clientAbrState=state;result.formatItags=ids;return result;
+  }
+  /**
+   * 功能：从 JSON 播放器的固定路径提取格式能力，排除 URL、签名、标签及身份信息。
+   * 更新时间：2026-10-07
+   */
+  function formats(data){
+    var streaming=data&&data.streamingData||data&&data.playerResponse&&data.playerResponse.streamingData;
+    if(!streaming)return {status:'no-json-streaming-data'};
+    var result={status:'observed-json-formats',formats:[]},limits={itag:65535,width:32768,height:32768,fps:240,bitrate:1000000000,averageBitrate:1000000000,audioSampleRate:384000,audioChannels:32};
+    var lists=[streaming.formats,streaming.adaptiveFormats];
+    for(var l=0;l<lists.length;l++){var list=lists[l];if(!Array.isArray(list))continue;for(var i=0;i<list.length&&result.formats.length<128;i++){var f=list[i];if(!f||typeof f!=='object')continue;var row={source:l===0?'formats':'adaptiveFormats'};for(var key in limits){var v=number(f[key],limits[key]);if(v!==null)row[key]=v;}
+      // 只接受规范画质标签和有限的容器类型；不保留任意 MIME 参数或编码字符串。
+      if(typeof f.qualityLabel==='string'&&/^(?:144|240|360|480|720|1080|1440|2160|2880|4320|8640)p(?:48|50|60|90|120)?$/.test(f.qualityLabel))row.qualityLabel=f.qualityLabel;
+      if(typeof f.mimeType==='string'){var mime=/^(video|audio)\/(mp4|webm)(?:\s*;|$)/.exec(f.mimeType);if(mime)row.container=mime[1]+'/'+mime[2];}
+      row.hasDirectUrl=typeof f.url==='string'&&/^https:\/\//.test(f.url);row.hasCipher=typeof f.signatureCipher==='string'||typeof f.cipher==='string';
+      if(Object.keys(row).length>3)result.formats.push(row);
+    }}return result;
+  }
+  try{
+    var request=payload.request||{},url=String(request.url||'');
+    if(payload.endpoint==='ump'){
+      var query=/[?&]itag=(\d{1,5})(?:&|$)/.exec(url);if(query&&Number(query[1])>0&&Number(query[1])<=65535)out.urlItag=Number(query[1]);
+      if(payload.phase==='request'&&String(request.method||'GET').toUpperCase()==='POST'){
+        var b=bytes(request.body,262144);out.abr=b?abr(b):{status:'request-body-unavailable-or-too-large'};
+      }
+    }
+    if(/^(player|get_watch)$/.test(payload.endpoint)&&payload.phase==='response'){
+      var body=payload.responseBefore&&payload.responseBefore.body,text=null;
+      if(body&&body.available===true&&body.bytes<=4194304){if(body.encoding==='utf8-text')text=body.data;else{var binary=bytes(body,4194304);if(binary&&(binary[0]===123||binary[0]===91)&&typeof TextDecoder==='function')text=new TextDecoder('utf-8',{fatal:true}).decode(binary);}}
+      out.player=text?formats(JSON.parse(text)):{status:'binary-player-schema-unverified-or-body-unavailable'};
+    }
+  }catch(_){out.analysisStatus='unsupported-or-malformed-body';}
+  return out;
+}
+
+/**
  * 功能：在日志落盘前移除身份信息，只保留协议字段、长度和广告结构标记；未知正文不保存原文。
  * 更新时间：2026-10-04T14:45:25+08:00
  * @param {Object} payload 原始诊断事件。
@@ -179,6 +267,12 @@ function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptke
    * 更新时间：2026-10-05T12:09:41+08:00
    */
   function body(v,request,inner){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(!inner&&/^(config|log_event|initplayback|ump)$/.test(payload.endpoint))return out;try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  // Loon 显式启用画质研究时才提取白名单；再次脱敏不重复读取已经清除的正文。
+  if(!payload.privacy&&typeof $loon==='string'&&typeof $argument==='object'&&$argument&&
+     ($argument.log_enabled===true||$argument.log_enabled==='true')&&
+     ($argument.quality_research===true||$argument.quality_research==='true')&&/^(ump|player|get_watch)$/.test(payload.endpoint)){
+    payload.qualityResearch=ytDiagnosticQuality(payload,decode);
+  }
   ['request','requestAfter','requestInner','requestInnerAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00

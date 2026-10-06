@@ -42,6 +42,18 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds
 
 圈 X 请直接使用原生 `.snippet`，不要让转换器处理 Loon `.plugin` 或 Surge `.sgmodule`。转换 Loon 文件时出现 `AND` 逻辑规则或 `response if` 无法转换，属于配置语法不兼容；拆开逻辑条件会改变匹配范围。转换成功也不代表初始化播放与去广告效果等同。Surge 模块成功添加同样不能证明脚本已命中或广告已清理，需要设备日志确认。
 
+### Loon 画质研究日志
+
+在 Loon 主插件开启「日志工具」和默认关闭的「画质研究采样」，日志级别使用 `info`，媒体采样保持 `headers`。随后打开 `http://youtube-logs.invalid/` 开始记录。该功能用于研究自动选择最高可用画质，本次没有更改画质选择、播放请求、初始化空视频或去广告输出；圈 X、Surge、Stash 的配置不启用此采样。
+
+同一个 `.log` 的事件增加 `Quality-Research`：可识别的媒体 URL `itag`；JSON 播放器固定路径中的格式编号、分辨率、帧率、码率、规范画质标签和容器类型；媒体 POST 请求中候选 SABR 的手动画质、视口、码率限制、带宽估计、节流模式和选择的格式编号。只保留白名单数值及规范枚举，签名 URL、Cookie、令牌、身份上下文、未知字段和原始正文仍不保存。二进制播放器格式表尚未对齐，无法识别时明确标注缺失，不猜测字段号。
+
+SABR 字段位置参考 [LuanRT/googlevideo 的 VideoPlaybackAbrRequest](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/video_playback_abr_request.proto) 和 [ClientAbrState](https://github.com/LuanRT/googlevideo/blob/main/protos/video_streaming/client_abr_state.proto)，日志标记为 `schema-candidate`、`iosSchemaVerified=false`。候选参数、格式能力和手动标记均不能证明实际屏幕渲染的分辨率，需要结合设备观察验证。
+
+对照同一视频：先切到自动画质，在日志页面点击「标记：已切换自动画质」；播放约 10 秒，再手动选择该视频菜单中的最高画质，点击「标记：已手动选择最高画质」，继续播放约 10 秒，然后下载日志。标记时间是点击日志按钮的时间，日志不会读取 YouTube 的本地画质菜单；下载后仍只有一个文件，时间使用上海时区。
+
+按 [Loon Script 文档](https://nsloon.app/docs/Script/script_v2/)，请求正文采样需要在发送前选定规则。研究入口仅在日志及研究开关均开启时读取 `googlevideo.com/videoplayback` 的 POST 正文，不匹配 `initplayback`；在普通日志入口前命中，避免重复记录。分析正文上限为 256 KiB，超过或解析失败只记录原因，原请求照常放行；此上限限制 JS 分析，不能取消 Loon 已经选择的请求缓冲。媒体响应保持原有 headers/full 选择。暂停记录停止写入，但不取消已选中的正文规则；对照完成后关闭研究开关以停止后续请求缓冲，关闭日志总开关则同时停用采样。
+
 ### Stash 单插件日志开关
 
 只安装普通版 `YouTubeNoAds.stoverride`。无需修改远程覆写参数：访问 `http://youtube-logs.invalid/`，点击开始记录即开启业务日志和媒体响应头采样；点击暂停或下载日志即停止记录与媒体采样，已有记录保留。首次安装无日志会话时默认关闭，已开启的状态保存在本机，重新加载覆写不会重置会话。

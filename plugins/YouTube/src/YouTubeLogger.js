@@ -227,6 +227,94 @@ function xtime(value){return ((value<<1)^((value&128)?27:0))&255;}addKey(0);for(
 }
 
 /**
+ * 功能：仅为 Loon 画质研究提取白名单数值；不保存媒体地址、凭据、身份字段或原始二进制。
+ * 更新时间：2026-10-07
+ * @param {Object} payload 尚未脱敏的临时事件。
+ * @param {Function} decode 临时 Base64 解码器。
+ * @returns {Object} 可保存的画质元数据；候选 SABR 字段不表示已验证 iOS 协议。
+ */
+function ytDiagnosticQuality(payload, decode) {
+  var out={schema:1, purpose:'quality-research', actualRenderedQuality:'not-observed'};
+  /**
+   * 功能：只接受范围内的整数，不将字符串、超大整数或无效值写入画质字段。
+   * 更新时间：2026-10-07
+   */
+  function number(value,max){return typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=max?value:null;}
+  /**
+   * 功能：读取临时采样正文，限制大小；不把未知正文复制到输出。
+   * 更新时间：2026-10-07
+   */
+  function bytes(body,max){if(!body||body.available!==true||!Number.isSafeInteger(body.bytes)||body.bytes>max)return null;return body.memoryBytes instanceof Uint8Array?body.memoryBytes:body.encoding==='base64'?decode(body.data):null;}
+  /**
+   * 功能：定向读取 Protobuf 层级，跳过未知字段；限制字段数、长度及整数编码。
+   * 更新时间：2026-10-07
+   */
+  function fields(b){
+    var i=0,rows=[];
+    /**
+     * 功能：读取变长整数，超出安全整数范围时只跳过数值，不作精度猜测。
+     * 更新时间：2026-10-07
+     */
+    function integer(){var n=0,f=1;for(var c=0;c<10&&i<b.length;c++){var x=b[i++];if(c===9&&x>1)throw Error('varint');n+=(x&127)*f;if(x<128)return Number.isSafeInteger(n)?n:null;f*=128;}throw Error('varint');}
+    while(i<b.length){if(rows.length>=512)throw Error('fields-limit');var tag=integer();if(!tag||tag>4294967295)throw Error('tag');var no=Math.floor(tag/8),wire=tag%8,row={field:no,wire:wire};
+      if(wire===0)row.value=integer();
+      else if(wire===1||wire===5)i+=wire===1?8:4;
+      else if(wire===2){var len=integer();if(len===null||len>b.length-i)throw Error('length');row.bytes=b.subarray(i,i+len);i+=len;}
+      else throw Error('wire');if(i>b.length)throw Error('truncated');rows.push(row);
+    }return rows;
+  }
+  /**
+   * 功能：读取已公开的候选 SABR 画质状态和格式编号；身份上下文及未知字段全部忽略。
+   * 更新时间：2026-10-07
+   */
+  function abr(b){
+    var root=fields(b),result={status:'schema-candidate', schema:'LuanRT/googlevideo VideoPlaybackAbrRequest', iosSchemaVerified:false},state={},ids={initialization:[],audio:[],video:[]},observed=false;
+    var map={13:['timeSinceLastManualSelectionMs',86400000],16:['lastManualSelectedResolution',8640],18:['viewportWidth',32768],19:['viewportHeight',32768],20:['bitrateCapBytesPerSecond',1000000000],21:['stickyResolution',8640],23:['bandwidthEstimate',1000000000000],26:['videoQualitySetting',3],30:['dataSaverMode',1],62:['supportsQualityConstraints',1]};
+    for(var i=0;i<root.length;i++){
+      var r=root[i];
+      if(r.field===1&&r.wire===2){var child=fields(r.bytes);for(var j=0;j<child.length;j++){var f=child[j],spec=map[f.field],v=spec&&f.wire===0?number(f.value,spec[1]):null;if(v!==null){state[spec[0]]=v;observed=true;}}}
+      var list=r.field===2?'initialization':r.field===16?'audio':r.field===17?'video':null;
+      if(list&&r.wire===2&&ids[list].length<64){var format=fields(r.bytes);for(var k=0;k<format.length;k++)if(format[k].field===1&&format[k].wire===0){var itag=number(format[k].value,65535);if(itag!==null&&itag>0&&ids[list].indexOf(itag)<0)ids[list].push(itag);}}
+      if((r.field===22||r.field===23)&&r.wire===0){var last=number(r.value,65535);if(last!==null)result[r.field===22?'lastVideoItag':'lastAudioItag']=last;}
+    }
+    if(!observed)return {status:'unrecognized-schema'};
+    result.clientAbrState=state;result.formatItags=ids;return result;
+  }
+  /**
+   * 功能：从 JSON 播放器的固定路径提取格式能力，排除 URL、签名、标签及身份信息。
+   * 更新时间：2026-10-07
+   */
+  function formats(data){
+    var streaming=data&&data.streamingData||data&&data.playerResponse&&data.playerResponse.streamingData;
+    if(!streaming)return {status:'no-json-streaming-data'};
+    var result={status:'observed-json-formats',formats:[]},limits={itag:65535,width:32768,height:32768,fps:240,bitrate:1000000000,averageBitrate:1000000000,audioSampleRate:384000,audioChannels:32};
+    var lists=[streaming.formats,streaming.adaptiveFormats];
+    for(var l=0;l<lists.length;l++){var list=lists[l];if(!Array.isArray(list))continue;for(var i=0;i<list.length&&result.formats.length<128;i++){var f=list[i];if(!f||typeof f!=='object')continue;var row={source:l===0?'formats':'adaptiveFormats'};for(var key in limits){var v=number(f[key],limits[key]);if(v!==null)row[key]=v;}
+      // 只接受规范画质标签和有限的容器类型；不保留任意 MIME 参数或编码字符串。
+      if(typeof f.qualityLabel==='string'&&/^(?:144|240|360|480|720|1080|1440|2160|2880|4320|8640)p(?:48|50|60|90|120)?$/.test(f.qualityLabel))row.qualityLabel=f.qualityLabel;
+      if(typeof f.mimeType==='string'){var mime=/^(video|audio)\/(mp4|webm)(?:\s*;|$)/.exec(f.mimeType);if(mime)row.container=mime[1]+'/'+mime[2];}
+      row.hasDirectUrl=typeof f.url==='string'&&/^https:\/\//.test(f.url);row.hasCipher=typeof f.signatureCipher==='string'||typeof f.cipher==='string';
+      if(Object.keys(row).length>3)result.formats.push(row);
+    }}return result;
+  }
+  try{
+    var request=payload.request||{},url=String(request.url||'');
+    if(payload.endpoint==='ump'){
+      var query=/[?&]itag=(\d{1,5})(?:&|$)/.exec(url);if(query&&Number(query[1])>0&&Number(query[1])<=65535)out.urlItag=Number(query[1]);
+      if(payload.phase==='request'&&String(request.method||'GET').toUpperCase()==='POST'){
+        var b=bytes(request.body,262144);out.abr=b?abr(b):{status:'request-body-unavailable-or-too-large'};
+      }
+    }
+    if(/^(player|get_watch)$/.test(payload.endpoint)&&payload.phase==='response'){
+      var body=payload.responseBefore&&payload.responseBefore.body,text=null;
+      if(body&&body.available===true&&body.bytes<=4194304){if(body.encoding==='utf8-text')text=body.data;else{var binary=bytes(body,4194304);if(binary&&(binary[0]===123||binary[0]===91)&&typeof TextDecoder==='function')text=new TextDecoder('utf-8',{fatal:true}).decode(binary);}}
+      out.player=text?formats(JSON.parse(text)):{status:'binary-player-schema-unverified-or-body-unavailable'};
+    }
+  }catch(_){out.analysisStatus='unsupported-or-malformed-body';}
+  return out;
+}
+
+/**
  * 功能：在日志落盘前移除身份信息，只保留协议字段、长度和广告结构标记；未知正文不保存原文。
  * 更新时间：2026-10-04T14:45:25+08:00
  * @param {Object} payload 原始诊断事件。
@@ -306,6 +394,12 @@ function(k){if(!/token|cookie|auth|visitor|account|signature|clientkey|encryptke
    * 更新时间：2026-10-05T12:09:41+08:00
    */
   function body(v,request,inner){if(!v||v.reference||!v.available)return v;var out={available:false,reason:'privacy-structure-only',bytes:v.bytes,redacted:true};if(!inner&&/^(config|log_event)$/.test(payload.endpoint))return out;if(!inner&&/^(initplayback|ump)$/.test(payload.endpoint)){if(request)return out;try{var bytes=v.memoryBytes instanceof Uint8Array?v.memoryBytes:v.encoding==='base64'?decode(v.data):null;if(bytes)out.structure=ytDiagnosticUMPStructure(bytes,apiStructure);else out.reason='unsupported-ump-body';}catch(_){out.reason='ump-analysis-failed';}return out;}try{var b=v.encoding==='base64'?decode(v.data):null;if(b){try{var text=typeof TextDecoder==='function'&&(b[0]===123||b[0]===91)?new TextDecoder('utf-8',{fatal:true}).decode(b):null;out.structure=text?json(JSON.parse(text),0):proto(b,0);}catch(_){out.structure={bytes:b.length,omitted:true};}}else out.structure=json(JSON.parse(v.data),0);}catch(_){out.structure={omitted:true};}return out;}
+  // Loon 显式启用画质研究时才提取白名单；再次脱敏不重复读取已经清除的正文。
+  if(!payload.privacy&&typeof $loon==='string'&&typeof $argument==='object'&&$argument&&
+     ($argument.log_enabled===true||$argument.log_enabled==='true')&&
+     ($argument.quality_research===true||$argument.quality_research==='true')&&/^(ump|player|get_watch)$/.test(payload.endpoint)){
+    payload.qualityResearch=ytDiagnosticQuality(payload,decode);
+  }
   ['request','requestAfter','requestInner','requestInnerAfter','responseBefore','responseAfter'].forEach(/**
  * 功能：筛选或转换脱敏诊断字段，不复制身份信息。
  * 更新时间：2026-10-04T14:45:25+08:00
@@ -336,7 +430,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "3.1.0";
+  var VERSION = "3.2.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -519,6 +613,14 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
     return devChecksum(method + " " + url);
   }
   /**
+   * 功能：用临时字节视图采样小型画质请求；超出上限不编码、不保存正文。
+   * 更新时间：2026-10-07
+   */
+  function devQualityBody(body){
+    var b=body instanceof Uint8Array?body:body instanceof ArrayBuffer?new Uint8Array(body):ArrayBuffer.isView(body)?new Uint8Array(body.buffer,body.byteOffset,body.byteLength):null;
+    return b&&b.length<=262144?{available:true,bytes:b.length,memoryBytes:b}:{available:false,reason:'quality-request-body-unavailable-or-too-large'};
+  }
+  /**
    * 功能：记录脱敏诊断样本；响应头模式不读取媒体正文，完整模式记录可用脱敏结构。
    * 更新时间：2026-10-05
    */
@@ -530,7 +632,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
       if (!c || typeof $request === "undefined") return;
       var now = new Date().toISOString();
       var id = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 14);
-      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:headersOnly || /^(initplayback|ump)$/.test(endpoint) ? {available:false,reason:"request-not-buffered"} : devBody($request.body)};
+      var request = {url:$request.url, method:$request.method || "GET", headers:$request.headers || {}, h2_trailers:$request.h2_trailers || {}, body:!headersOnly && phase === "request" && endpoint === "ump" && devFlag(args.quality_research) && typeof $loon === "string" ? devQualityBody($request.body) : headersOnly || /^(initplayback|ump)$/.test(endpoint) ? {available:false,reason:"request-not-buffered"} : devBody($request.body)};
       var payload = {schema:1, id:id, time:now, source:source, version:version, phase:phase, endpoint:endpoint,
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
@@ -738,7 +840,7 @@ function (row) {
     });
     return {schema:1, exportedAt:new Date().toISOString(), session:c && c.session || null,
       recording:!!(c && c.enabled), stoppedReason:c && c.haltReason || null, coverage:coverage(rows),
-      settings:{mediaCaptureMode:args.media_capture_mode === "full" ? "full" : "headers", rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
+      settings:{qualityResearch:typeof $loon === "string" && devFlag(args.quality_research), mediaCaptureMode:args.media_capture_mode === "full" ? "full" : "headers", rawCapture:devFlag(args.capture_raw), summaryMinimumLevel:minimum, budgetMB:[16,32,64].indexOf(Number(args.capture_budget)) >= 0 ? Number(args.capture_budget) : 32},
       completeness:{allReferencedSamplesReadable:issues.length === 0, stoppedDueToLimitOrError:!!(c && c.haltReason), issues:issues,
         limitations:["Only matched player/get_watch/browse/next/search/reel_watch_sequence/log_event/config/initplayback/player/ad_break and enabled UMP response scripts; not all YouTube traffic.",
           "Media headers mode does not buffer media bodies; full mode waits for complete bodies. Each event records its actual bodyBuffering value.",
@@ -860,6 +962,7 @@ function (row) {
         if(row.timing)structure("Capture-Timing-Ms",row.timing,lines,0);
         if(captureError)lines.push("Capture-Error: "+captureError);if(!capture){lines.push("Capture: unavailable");return lines.join("\n")+"\n";}
         lines.push("Runtime: "+value(capture.runtime));structure("Correlation",capture.correlation,lines,0);structure("Processing",capture.processing,lines,0);
+        if(capture.qualityResearch)structure("Quality-Research",capture.qualityResearch,lines,0);
         exchange("Request-Inner-Before",capture.requestInner,lines);exchange("Request-Inner-After",capture.requestInnerAfter,lines);exchange("Request-Before",capture.request,lines);exchange("Request-After",capture.requestAfter,lines);exchange("Response-Before",capture.responseBefore,lines);exchange("Response-After",capture.responseAfter,lines);
         return lines.join("\n")+"\n";
       }
@@ -877,7 +980,7 @@ function (row) {
       }
       var manifest = await get("/export-manifest.json");
       var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
-      parts.push(["YouTube full diagnostic log","Format-Version: 4","Time-Zone: Asia/Shanghai (UTC+08:00)","Exported-Time: "+shanghaiTime(data.exportedAt),"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Media-Capture-Mode-At-Export: "+value(data.settings.mediaCaptureMode),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push(["YouTube full diagnostic log","Format-Version: 4","Time-Zone: Asia/Shanghai (UTC+08:00)","Exported-Time: "+shanghaiTime(data.exportedAt),"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Media-Capture-Mode-At-Export: "+value(data.settings.mediaCaptureMode),"Quality-Research-At-Export: "+value(data.settings.qualityResearch),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, raw bodies, config keys, media content and unknown values are removed before storage; quality research retains only whitelisted format metadata, not signed query values","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
       parts.push("\n事件时间线 / TIMELINE\n"+
         "说明：Δ 为与上一条事件的间隔，不是请求耗时；编号对应下方 EVENT。\n"+
         "编号 | 上海时间 | 级别 | 接口 | 阶段 | Δ(ms) | 摘要\n");
@@ -960,6 +1063,7 @@ function (row) {
       '<form method="post" action="/pause"><button>暂停记录</button></form>' +
       '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
       '<form method="post" action="/mark-content"><button>标记：正在播放正片</button></form>' +
+      (typeof $loon === 'string' && devFlag(args.quality_research) ? '<form method="post" action="/mark-quality-auto"><button>标记：已切换自动画质</button></form><form method="post" action="/mark-quality-highest"><button>标记：已手动选择最高画质</button></form><p>画质研究采样已开启。候选 SABR 字段尚未验证 iOS 协议；格式编号和菜单选择不代表实际渲染画质。小型媒体 POST 请求会读取正文，媒体响应仍按所选采样方式处理。关闭研究开关停止后续请求正文采样。</p>' : '') +
       '<button id="download" type="button">下载日志</button><p id="status" role="status"></p><a id="save" hidden>保存日志文件</a>' +
       '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。媒体采样：' + (args.media_capture_mode === 'full' ? 'full，等待完整媒体响应' : 'headers，仅记录媒体响应头') + '。' +
       (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
@@ -990,8 +1094,9 @@ function (row) {
         var source = /^(browse|next|search)$/i.test(apiName) ? "YouTubeFeed" :
           /^(log_event|config|initplayback)$/i.test(apiName) ? "YouTubeConfig" : api || apiName === "videoplayback" ? "YouTubePlayback" : "YouTubeLogger";
         var endpoint = apiName === "reel/reel_watch_sequence" ? "reel_watch_sequence" : apiName === "videoplayback" ? "ump" : apiName;
-        var headersOnly = typeof $response === "undefined" || !!media && args.media_capture_mode !== "full";
-        if (media) devMessages.push((apiName === "initplayback" ? "initialization_response" : "media") + (headersOnly ? ": headers_only=true body_buffering=false" : ": development_response=true body_buffering=true"));
+        var qualityRequest = typeof $loon === "string" && devFlag(args.quality_research) && !!media && apiName === "videoplayback" && String($request.method || "GET").toUpperCase() === "POST" && typeof $response === "undefined";
+        var headersOnly = !qualityRequest && (typeof $response === "undefined" || !!media && args.media_capture_mode !== "full");
+        if (media) devMessages.push((apiName === "initplayback" ? "initialization_response" : "media") + (headersOnly ? ": headers_only=true body_buffering=false" : (qualityRequest ? ": quality_request=true body_buffering=true" : ": development_response=true body_buffering=true")));
         if(media&&apiName === "initplayback"&&typeof $response !== "undefined")source="YouTubeLogger";
         devCapture(source, typeof $response !== "undefined" ? "response" : "request", endpoint, VERSION, {}, headersOnly);
         return {};
@@ -1009,11 +1114,12 @@ function (row) {
     var origin = $request.headers && ($request.headers.Origin || $request.headers.origin);
     if (method === "POST" && origin && origin !== "http://youtube-logs.invalid" && origin !== "http://youtube-logs.invalid:80") return response(403, "Foreign origin rejected", "text/plain; charset=utf-8");
     var c = path === "/clear" ? null : config();
-    if (path === "/start" || path === "/pause" || path === "/clear" || path === "/mark-ad" || path === "/mark-content") {
+    if (path === "/start" || path === "/pause" || path === "/clear" || path === "/mark-ad" || path === "/mark-content" || path === "/mark-quality-auto" || path === "/mark-quality-highest") {
       if (method !== "POST") return response(405, "Use the buttons on the log page.", "text/plain; charset=utf-8", {Allow:"POST"});
-      if (path === "/mark-ad" || path === "/mark-content") {
+      if (path === "/mark-ad" || path === "/mark-content" || path === "/mark-quality-auto" || path === "/mark-quality-highest") {
+        if (/^\/mark-quality-/.test(path) && !(typeof $loon === "string" && devFlag(args.quality_research))) return response(403, "请先在 Loon 主插件开启画质研究采样。", "text/plain; charset=utf-8");
         if (!c || c.enabled !== true) return response(409, "请先开始记录，再标记播放状态。", "text/plain; charset=utf-8");
-        if (!devAppend({source:"YouTubeLogger", version:VERSION, endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : "content-playing")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
+        if (!devAppend({source:"YouTubeLogger", version:VERSION, endpoint:"unknown", time:new Date().toISOString(), level:"info", message:"user mark: " + (path === "/mark-ad" ? "ad-playing" : path === "/mark-content" ? "content-playing" : path === "/mark-quality-auto" ? "quality-auto-selected" : "quality-highest-manually-selected")}, null)) return response(507, "标记未保存，请先导出记录并检查停止原因。", "text/plain; charset=utf-8");
         return response(303, "", "text/plain; charset=utf-8", {Location:BASE});
       }
       if (path === "/clear") {

@@ -44,6 +44,91 @@ function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":
     $response:{status:200,headers:{'Content-Type':'application/json'},body},...extra
   });
 }
+
+// 合成对照样本仅包含公开候选字段，未知二进制故意放入秘密以验证落盘边界。
+function qualityVarint(n){const out=[];while(n>=128){out.push(n%128+128);n=Math.floor(n/128);}return [...out,n];}
+function qualityScalar(no,n){return [...qualityVarint(no*8),...qualityVarint(n)];}
+function qualityMessage(no,body){return [...qualityVarint(no*8+2),...qualityVarint(body.length),...body];}
+function qualityRequestBody(){return Uint8Array.from([
+ ...qualityMessage(1,[...qualityScalar(13,1234),...qualityScalar(16,1080),...qualityScalar(18,1920),...qualityScalar(19,1080),...qualityScalar(23,8000000),...qualityScalar(26,3),...qualityScalar(30,0),...qualityMessage(99,new TextEncoder().encode('PRIVATE_STATE'))]),
+ ...qualityMessage(17,[...qualityScalar(1,137),...qualityMessage(3,new TextEncoder().encode('PRIVATE_XTAGS'))]),
+ ...qualityScalar(22,137),...qualityMessage(19,new TextEncoder().encode('PRIVATE_AUTH_CONTEXT'))
+]);}
+const qualityArgs={log_enabled:true,quality_research:true,log_level:'info',media_capture_mode:'headers'};
+test('Loon quality request capture is observational and only saves bounded candidate format metadata',()=>{
+ const store=started(),body=qualityRequestBody(),before=Buffer.from(body);
+ const result=run('YouTubeLogger',store,{$argument:qualityArgs,$request:{url:media+'&itag=137&visitor=PRIVATE_VISITOR',method:'POST',headers:{Cookie:'PRIVATE_COOKIE'},body}}).result;
+ assert.deepEqual(Object.keys(result),[]);assert.deepEqual(Buffer.from(body),before);
+ const capture=exportData(store).events[0].capture,q=capture.qualityResearch;
+ assert.equal(q.urlItag,137);assert.equal(q.actualRenderedQuality,'not-observed');
+ assert.equal(q.abr.status,'schema-candidate');assert.equal(q.abr.iosSchemaVerified,false);
+ assert.equal(q.abr.clientAbrState.lastManualSelectedResolution,1080);
+ assert.equal(q.abr.clientAbrState.bandwidthEstimate,8000000);
+ assert.equal(q.abr.clientAbrState.videoQualitySetting,3);
+ assert.deepEqual(q.abr.formatItags.video,[137]);assert.equal(capture.processing.bodyBuffering,true);
+ assert.equal(capture.request.body.available,false);
+ const saved=[...store.values()].join('');
+ for(const secret of ['PRIVATE_STATE','PRIVATE_XTAGS','PRIVATE_AUTH_CONTEXT','PRIVATE_VISITOR','PRIVATE_COOKIE','SIGNED','memoryBytes'])assert.ok(!saved.includes(secret),secret);
+});
+test('quality collection does not read media bodies when off, paused, outside Loon or on initialization',()=>{
+ for(const variant of ['off','paused','other-platform','initialization','GET','response','logging-off']){
+  const store=started();if(variant==='paused')page(store,'pause','POST');
+  const request={url:variant==='initialization'?'https://rr5.googlevideo.com/initplayback?sig=PRIVATE':media,method:variant==='GET'?'GET':'POST'};
+  Object.defineProperty(request,'body',{get(){throw Error('must not read media request body');}});
+  const args={...qualityArgs,quality_research:variant!=='off',log_enabled:variant!=='logging-off'};
+  const extra={$argument:args,$request:request};if(variant==='other-platform')extra.$loon=undefined;
+  if(variant==='response'){extra.$response={status:200,headers:{}};Object.defineProperty(extra.$response,'body',{get(){throw Error('must not buffer media response');}});}
+  assert.deepEqual(Object.keys(run('YouTubeLogger',store,extra).result),[]);
+  if(['paused','logging-off'].includes(variant))assert.equal(exportData(store).events.length,0);
+  if(['off','other-platform'].includes(variant))assert.equal(exportData(store).events[0].capture.qualityResearch,undefined);
+ }
+});
+test('quality malformed and oversized requests pass unchanged without raw fallback or stopping logging',()=>{
+ for(const body of [new Uint8Array([10,127,8]),new Uint8Array(262145),new Uint8Array([8,1])]){
+  const store=started(),result=run('YouTubeLogger',store,{$argument:qualityArgs,$request:{url:media,method:'POST',body}}).result;
+  assert.deepEqual(Object.keys(result),[]);assert.equal(JSON.parse(store.get(configKey)).enabled,true);
+  const q=exportData(store).events[0].capture.qualityResearch;
+  assert.ok(q.analysisStatus||q.abr.status==='request-body-unavailable-or-too-large'||q.abr.status==='unrecognized-schema');
+  assert.ok(![...store.values()].join('').includes('memoryBytes'));
+ }
+});
+test('quality JSON formats retain numeric capabilities but not signed URLs or arbitrary labels and preserve playback output',()=>{
+ const text=JSON.stringify({adSlots:[{}],streamingData:{adaptiveFormats:[{itag:137,width:1920,height:1080,fps:60,bitrate:8000000,qualityLabel:'1080p60',mimeType:'video/mp4; codecs="PRIVATE_CODEC"',url:'https://rr5.googlevideo.com/videoplayback?sig=PRIVATE_SIGNATURE',signatureCipher:'PRIVATE_CIPHER',accountId:'PRIVATE_ACCOUNT'}, {itag:140,height:1e20,qualityLabel:'PRIVATE_LABEL',mimeType:'PRIVATE_MIME'}]}});
+ const store=started(),enabled=player(store,text,{$argument:qualityArgs}).result;
+ const disabled=player(started(),text,{$argument:{...qualityArgs,quality_research:false}}).result;
+ assert.equal(JSON.stringify(enabled),JSON.stringify(disabled));
+ const q=exportData(store).events[0].capture.qualityResearch;
+ assert.equal(q.player.status,'observed-json-formats');assert.equal(q.player.formats[0].height,1080);
+ assert.equal(q.player.formats[0].qualityLabel,'1080p60');assert.equal(q.player.formats[0].container,'video/mp4');
+ assert.equal(q.player.formats[0].hasDirectUrl,true);assert.equal(q.player.formats[1].height,undefined);
+ const saved=[...store.values()].join('');for(const privateValue of ['PRIVATE_SIGNATURE','PRIVATE_CIPHER','PRIVATE_ACCOUNT','PRIVATE_CODEC','PRIVATE_LABEL','PRIVATE_MIME'])assert.ok(!saved.includes(privateValue),privateValue);
+});
+test('quality markers require opt-in active Loon logging and export within the existing single Shanghai log',async()=>{
+ const store=started(),invoke=path=>run('YouTubeLogger',store,{$argument:qualityArgs,$request:{url:'http://youtube-logs.invalid/'+path,method:'POST'}}).result.response;
+ assert.equal(page(store,'mark-quality-auto','POST').status,403);
+ assert.equal(invoke('mark-quality-auto').status,303);
+ run('YouTubeLogger',store,{$argument:qualityArgs,$request:{url:media+'&itag=137',method:'POST',body:qualityRequestBody()}});
+ assert.equal(invoke('mark-quality-highest').status,303);
+ const html=run('YouTubeLogger',store,{$argument:qualityArgs,$request:{url:'http://youtube-logs.invalid/',method:'GET'}}).result.response.body;
+ assert.match(html,/标记：已手动选择最高画质/);
+ const script=html.match(/<script>([\s\S]*)<\/script>/)[1];let blob;
+ const save={hidden:true,click(){}},status={textContent:''};
+ await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,URL:{createObjectURL:value=>{blob=value;return 'blob:local';}},async fetch(path,options={}){const response=run('YouTubeLogger',store,{$argument:qualityArgs,$request:{url:'http://youtube-logs.invalid'+path,method:options.method||'GET'}}).result.response;return {ok:response.status>=200&&response.status<400,status:response.status,json:async()=>JSON.parse(response.body)};}},{timeout:5000});
+ await save.onclick({preventDefault(){}});
+ assert.ok(blob,status.textContent);const log=await blob.text();assert.match(log,/Quality-Research:/);assert.match(log,/urlItag: 137/);
+ assert.match(log,/quality-auto-selected/);assert.match(log,/quality-highest-manually-selected/);assert.match(log,/Time-Zone: Asia\/Shanghai/);
+ assert.match(log,/Quality-Research-At-Export: true/);
+ assert.equal(invoke('mark-quality-auto').status,409);
+});
+test('only Loon configuration offers quality sampling and its request body guard preserves initialization',()=>{
+ const line=plugin.split('\n').find(x=>x.startsWith('request if ')&&x.includes('画质研究请求采样'));
+ assert.ok(line.includes('${log_enabled} == true')&&line.includes('${quality_research} == true')&&line.includes('${request.method} == "POST"'));
+ assert.ok(line.includes('requires_body=true, binary_body_mode=true'));
+ assert.ok(line.includes('videoplayback')&&!line.includes('initplayback'));
+ assert.ok(plugin.indexOf(line)<plugin.indexOf('tag=YouTube 日志记录与导出'));
+ assert.match(plugin,/quality_research = switch,false/);
+ for(const extension of ['snippet','sgmodule','stoverride'])assert.ok(!fs.readFileSync(new URL('YouTubeNoAds.'+extension,root),'utf8').includes('quality_research'));
+});
 test('native initialization logger only observes headers and cannot synthesize a second response or read the body',()=>{
  const store=started(),request={url:'https://rr4.googlevideo.com/initplayback?sig=PRIVATE_SIGNATURE',method:'POST',headers:{'User-Agent':'com.google.ios.youtube/21.39.4',Cookie:'PRIVATE_COOKIE'}};
  Object.defineProperty(request,'body',{get(){throw Error('native blank video logger must not read body');}});
