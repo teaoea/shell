@@ -1,0 +1,19 @@
+# YouTube 去广告（Quantumult X）
+# 功能：播放器广告协商清理、player/ad_break 空响应、首页/推荐/搜索赞助卡片与 Shorts 广告清理、初始化 POST 空白视频。
+# 更新时间：2026-10-06；由 loon/YouTube/src 的同一份源码构建，尚未在 Quantumult X 设备上验证。
+# 使用条件：开启 MitM 并信任证书；在主配置 [general] 加入 udp_drop_list = 443，使 YouTube 从 QUIC 回退到可解密的 TCP。
+# 说明：https://github.com/falconchen/shell/blob/main/quantumultx/YouTube/README.md
+
+hostname = youtubei.googleapis.com, youtubei-att.googleapis.com, youtube.com, www.youtube.com, m.youtube.com, music.youtube.com, *.googlevideo.com
+
+# 播放请求与广告配置处理：清理广告协商字段；player/ad_break 直接返回空 Protobuf。
+^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch|player\/ad_break)(?:\?[^#]*)?$ url script-request-body https://raw.githubusercontent.com/falconchen/shell/main/quantumultx/YouTube/dist/request.min.js
+
+# 信息流赞助卡片、播放响应广告位、Shorts 广告；后台播放与隐藏首页 Shorts 由构建时的 options.json 决定。
+^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|player|get_watch|reel\/reel_watch_sequence)(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/falconchen/shell/main/quantumultx/YouTube/dist/response.min.js
+
+# 初始化空视频实验：脚本只对 YouTube App 的 POST 返回 HTTP 200 无轨道 MP4，其余请求放行；不读取正文。
+^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ url script-request-header https://raw.githubusercontent.com/falconchen/shell/main/quantumultx/YouTube/dist/request.min.js
+
+# 备用：若所用 Quantumult X 版本不支持请求脚本直接应答，删除上一条并启用下一条（不区分请求方法与客户端）。
+# ^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ url reject-200
