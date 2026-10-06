@@ -47,13 +47,13 @@ function events(store) {
   return state.entries.map(summary=>{if(!summary.captureRef)return {summary,capture:null};const text=Array.from({length:summary.captureRef.chunks},(_,i)=>store.get(summary.captureRef.prefix+i)).join('');return {summary,capture:JSON.parse(text)};});
 }
 
-test('main plugin exposes exactly three switches and keeps function-specific scripts in one plugin', () => {
+test('main plugin exposes exactly four switches and keeps function-specific scripts in one plugin', () => {
   assert.equal(fs.existsSync(new URL('YouTubeLogger.plugin', root)), false);
   assert.equal(plugin.split('\n').filter(x => x.startsWith('http-response')).length, 4);
   assert.ok(plugin.includes('log_enabled = switch,false'));
   assert.ok(plugin.includes('background_playback = switch,false'));
   assert.ok(plugin.includes('hide_home_shorts = switch,false'));
-  assert.deepEqual(plugin.split('\n').filter(x=>/ = switch,/.test(x)).map(x=>x.split(' = ')[0]),['background_playback','hide_home_shorts','log_enabled']);
+  assert.deepEqual(plugin.split('\n').filter(x=>/ = switch,/.test(x)).map(x=>x.split(' = ')[0]),['background_playback','translation_enabled','hide_home_shorts','log_enabled']);
   assert.ok(!plugin.includes('script_debug = switch'));
   assert.ok(!plugin.includes('capture_raw = switch'));
   assert.ok(plugin.includes('log_level = select,"info","debug","warn","error"'));

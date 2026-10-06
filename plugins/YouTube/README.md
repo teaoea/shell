@@ -2,7 +2,7 @@
 
 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol。模型署名记录本项目开发中使用过的模型。
 
-Loon、Quantumult X（圈 X）和 Surge 共用一套底层脚本，各平台配置按功能调用 `dist/` 中的压缩 JS。带中文注释的原始代码保存在 `src/`。去广告脚本均可直接在 Loon 独立运行，没有运行时模块导入、第三方实现、第三方服务、外部库、重定向或额外网络请求；Terser 仅在本地构建时使用。
+Loon、Quantumult X（圈 X）、Surge 和 Stash 共用一套底层脚本，各平台配置按功能调用 `dist/` 中的压缩 JS。带中文注释的原始代码保存在 `src/`。去广告脚本均可直接在 Loon 独立运行，没有运行时模块导入、第三方实现、第三方服务、外部库、重定向或额外网络请求；Terser 仅在本地构建时使用。
 
 | 文件 | 功能 | 匹配位置 |
 | --- | --- | --- |
@@ -34,10 +34,15 @@ JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台�
 - **Loon**：安装 [YouTubeNoAds.plugin](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin)。
 - **Quantumult X（圈 X）**：在「复写资源」添加 [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.snippet)，启用资源，并将文件底部列出的域名追加到 MitM 的 hostname，安装并信任证书。资源中的规则也可手动合并到 `[rewrite_local]`。
 - **Surge**：在模块中添加 [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.sgmodule)，启用模块和 MitM，安装并信任证书。
+- **Stash**：在「覆写」中添加下方 URL，启用覆写与 MitM，安装并信任 Stash 的证书。
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.stoverride
+```
 
 圈 X 请直接使用原生 `.snippet`，不要让转换器处理 Loon `.plugin` 或 Surge `.sgmodule`。转换 Loon 文件时出现 `AND` 逻辑规则或 `response if` 无法转换，属于配置语法不兼容；拆开逻辑条件会改变匹配范围。转换成功也不代表初始化播放与去广告效果等同。Surge 模块成功添加同样不能证明脚本已命中或广告已清理，需要设备日志确认。
 
-## 三平台共享底层接口（1.0.0）
+## 四平台共享底层接口（1.0.0）
 
 供插件作者直接引用的发布地址只有两份，所有功能与平台适配都已打包，不需要额外运行库：
 
@@ -48,13 +53,16 @@ JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台�
 | --- | --- | --- |
 | Loon | [YouTubeNoAds.plugin](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin) | 原去广告方案已有用户实测；本次适配与字幕功能仅离线验证 |
 | Quantumult X | [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.snippet) | 二进制、参数、路径改写、echo 响应和存储已模拟验证；未做实机验证 |
+| Stash | [YouTubeNoAds.stoverride](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.stoverride) | 二进制正文、字符串参数、字幕入口、合成响应和媒体头已模拟验证；未做实机验证 |
 | Surge | [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.sgmodule) | 参数、存储、字幕入口与媒体头已模拟验证；未做实机验证 |
 
-圈 X 将 snippet 加入复写资源，并在 MitM 的 hostname 追加文件底部列出的域名；Surge 添加 sgmodule 并开启 MitM。证书需要安装并信任。不要同时启用另一套匹配相同请求的 YouTube 复写，以免规则覆盖。三平台均不能通过网络脚本向原生 YouTube App 注入悬浮按钮。
+圈 X 将 snippet 加入复写资源，并在 MitM 的 hostname 追加文件底部列出的域名；Surge 添加 sgmodule 并开启 MitM。证书需要安装并信任。不要同时启用另一套匹配相同请求的 YouTube 复写，以免规则覆盖。四平台均不能通过网络脚本向原生 YouTube App 注入悬浮按钮。
 
-**初始化播放存在平台差异。** Loon 继续使用已实测的 `reject_video(200)`。圈 X 与 Surge 配置保留 `initplayback` 正常网络请求，没有移植该原生动作，没有返回曾在 Loon 上导致持续黑屏的 204。它们可使用共享 API 清理逻辑，但不能据此声称已获得相同的片头广告清理效果。圈 X/Surge 示例也没有全局丢弃 UDP，不保证 QUIC 流量进入 MitM；连接未命中复写时需要检查实际传输协议与各平台策略。
+**初始化播放存在平台差异。** Loon 继续使用已实测的 `reject_video(200)`。圈 X、Surge 与 Stash 配置保留 `initplayback` 正常网络请求，没有移植该原生动作，没有返回曾在 Loon 上导致持续黑屏的 204。它们可使用共享 API 清理逻辑，但不能据此声称已获得相同的片头广告清理效果。圈 X/Surge/Stash 示例也没有全局丢弃 UDP，不保证 QUIC 流量进入 MitM；连接未命中复写时需要检查实际传输协议与各平台策略。
 
 `src/YouTubeRuntime.js` 将平台差异集中处理：Loon 对象参数、Surge 字符串参数、圈 X URL 片段/variables 参数；圈 X 的 `bodyBytes`、`statusCode`、响应状态行与单键存储；Surge 单键删除。媒体正文按需读取，二进制视图输出只复制有效字节，避免相邻缓冲数据泄漏。圈 X 合成响应必须配合 `script-echo-response` 及 `echo_response=true`；普通请求规则不合成响应。接口依据 [圈 X 官方二进制示例](https://github.com/crossutility/Quantumult-X/blob/master/sample-bytes-rewrite.js)、[请求路径示例](https://github.com/crossutility/Quantumult-X/blob/master/sample-rewrite-request-header.js)、[Surge Script API](https://manual.nssurge.com/scripting/api.html) 适配。
+
+Stash 使用原生 `http.script` 和 `script-providers`，两份 JS 自动下载并缓存；正文规则开启 `binary-mode`，媒体规则只读取响应头。覆写通过数组合并追加 MitM 域名和脚本，不替换原配置的节点及策略组。后台播放、日志和字幕翻译默认关闭；字幕翻译开启方式为 `translation_enabled=true`，目标语言仅保留 `zh-CN` / `en-US`。功能参数在 `&youtube-options` 一处修改，其他业务规则通过 YAML 引用同步使用；日志页面单独保持可访问，真正记录仍需将业务参数 `log_enabled` 设为 `true`。字幕仅翻译已有字幕，不生成缺失字幕。安装与接口依据 [Stash 覆写文档](https://stash.wiki/configuration/override)、[HTTP 脚本文档](https://stash.wiki/script/rewrite-requests) 和 [脚本管理文档](https://stash.wiki/script/manage-script)。
 
 ### 引用参数
 
@@ -62,6 +70,7 @@ JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台�
 | --- | --- | --- |
 | `background_playback` | `false` | 按明确能力字段允许后台播放 |
 | `hide_home_shorts` | `false` | 隐藏首页 Shorts 推荐区 |
+| `translation_enabled` | `false` | 字幕翻译总开关，默认关闭；开启后使用目标语言 |
 | `translation_target` | 配置提供 `zh-CN` | 仅 `zh-CN` / `en-US`；已有字幕请求的目标语言 |
 | `playback_region` | `original` | 保留地区或指定已支持 gl；不改变出口 IP |
 | `log_enabled` | `false` | 日志与媒体采样总开关 |
@@ -80,11 +89,12 @@ plugins/YouTube/
 ├── YouTubeNoAds.plugin       # Loon 插件入口
 ├── YouTubeNoAds.snippet      # 圈 X 复写资源
 ├── YouTubeNoAds.sgmodule     # Surge 模块
+├── YouTubeNoAds.stoverride   # Stash 覆写插件
 ├── src/                     # 原始源码，保留中文 JSDoc 和更新时间
 │   ├── YouTubeFeed.js
 │   ├── YouTubePlayback.js
 │   ├── YouTubeConfig.js
-│   ├── YouTubeRuntime.js     # 三平台接口适配
+│   ├── YouTubeRuntime.js     # 四平台接口适配
 │   ├── YouTubeTranslation.js
 │   └── YouTubeLogger.js
 ├── dist/                    # 仅 request.min.js 和 response.min.js，随源码发布

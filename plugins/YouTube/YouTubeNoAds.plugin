@@ -9,6 +9,7 @@
 [Argument]
 background_playback = switch,false,tag=后台播放,desc=开启后允许普通视频在切换 App 或锁屏后继续播放音频；直播和受限内容仍由 YouTube 决定
 playback_region = select,"original","CN","HK","TW","US","JP","KR","SG","GB","DE","RU",tag=播放请求地区,desc=original 保持原地区；CN 中国大陆；仅修改客户端 gl 参数，不改变出口 IP，去广告效果待验证
+translation_enabled = switch,false,tag=字幕翻译,desc=开启后将已有字幕翻译为所选目标语言；关闭时保留原字幕请求
 translation_target = select,"zh-CN","en-US",tag=字幕目标语言,desc=仅转换已有字幕轨道；简体中文 zh-CN 或美式英语 en-US；无字幕的视频无法翻译，不改变音轨、标题或简介
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
 log_enabled = switch,false,tag=日志工具,desc=关闭时同步停用全部媒体采样；开启后保存全链路脱敏记录，统一下载一个 .log 文件；完整媒体采样可能增加等待
@@ -33,7 +34,7 @@ request if ${url} ~= /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?
 ^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-header-replace Alt-Svc clear
 
 [Script]
-http-request ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,requires-body=false,timeout=10,argument=[{translation_target}],tag=YouTube 字幕目标语言
+http-request ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,requires-body=false,timeout=10,enable={translation_enabled},argument=[{translation_enabled},{translation_target}],tag=YouTube 字幕目标语言
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$|^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{media_capture_mode}],tag=YouTube 日志记录与导出
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 配置请求处理
 # 媒体采样受日志工具总开关控制：关闭后 headers/full 均不执行；保存的方式选项不代表正在采样。

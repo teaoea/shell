@@ -76,7 +76,8 @@ function ytTranslationRewriteUrl(url, target) {
 function ytTranslationMain() {
   var request = typeof $request === 'object' && $request ? $request : null;
   var args = typeof $argument === 'object' && $argument ? $argument : null;
-  var target = args ? ytTranslationTarget(args.translation_target) : null;
+  var enabled = args && (args.translation_enabled === true || args.translation_enabled === 'true');
+  var target = enabled ? ytTranslationTarget(args.translation_target) : null;
   if (typeof $response !== 'undefined' || !request || String(request.method || '').toUpperCase() !== 'GET' || !target) return $done({});
   var rewritten = ytTranslationRewriteUrl(String(request.url || ''), target);
   $done(rewritten ? {url: rewritten} : {});

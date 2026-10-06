@@ -1,7 +1,7 @@
 /**
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeRuntime.js
- * 功能：为共享请求包和响应包适配 Loon、Quantumult X 与 Surge 的平台接口。
+ * 功能：为共享请求包和响应包适配 Loon、Quantumult X、Surge 与 Stash 的平台接口。
  * 版本：1.0.0
  * 更新时间：2026-10-06
  */
@@ -15,6 +15,7 @@ function ytRuntimePlatform() {
   if (typeof $loon !== 'undefined') return 'Loon';
   if (typeof $prefs !== 'undefined' && typeof $task !== 'undefined') return 'Quantumult X';
   if (typeof $environment === 'object' && $environment && ($environment['surge-version'] || $environment['surge-build'])) return 'Surge';
+  if (typeof $environment === 'object' && $environment && ($environment['stash-version'] || $environment['stash-build'])) return 'Stash';
   return 'native';
 }
 
@@ -122,7 +123,7 @@ function ytRuntimeQxResult(output) {
 function ytRuntimeFinish(output, options) {
   output = output || {};
   var platform = ytRuntimePlatform();
-  if ((platform === 'Quantumult X' || platform === 'Surge') && typeof $response !== 'undefined' && /^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$/i.test(String($request.url || ''))) {
+  if ((platform === 'Quantumult X' || platform === 'Surge' || platform === 'Stash') && typeof $response !== 'undefined' && /^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$/i.test(String($request.url || ''))) {
     output = Object.assign({}, output);
     var headers = Object.assign({}, $response.headers || {}, output.headers || {});
     var keys = Object.keys(headers);
@@ -161,7 +162,7 @@ function ytRuntimeInvoke(handler) {
 }
 
 /**
- * 功能：仅圈 X 与 Surge 的媒体响应头入口清除 Alt-Svc，不访问媒体正文或日志。
+ * 功能：圈 X、Surge 与 Stash 的媒体响应头入口清除 Alt-Svc，不访问媒体正文或日志。
  * 更新时间：2026-10-06
  * @returns {boolean} 已提交响应头时返回真。
  */
