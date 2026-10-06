@@ -25,7 +25,7 @@ function ytRuntimePlatform() {
  * @returns {Object} 当前规则提供的参数对象。
  */
 function ytRuntimeOptions() {
-  if (typeof $argument === 'object' && $argument) return $argument;
+  if (typeof $argument === 'object' && $argument) return ytRuntimeLogControl($argument);
   var options = Object.create(null);
   var env = typeof $environment === 'object' && $environment ? $environment : {};
   var fragment = typeof env.sourcePath === 'string' && env.sourcePath.indexOf('#') >= 0 ? env.sourcePath.split('#').slice(1).join('#') : '';
@@ -52,7 +52,31 @@ function ytRuntimeOptions() {
       }
     }
   }
-  return options;
+  return ytRuntimeLogControl(options);
+}
+
+/**
+ * 功能：Stash 单插件日志开关由页面控制；默认关闭，暂停后同步停止业务日志和媒体采样。
+ * 更新时间：2026-10-06
+ * @param {Object} options 规则参数。
+ * @returns {Object} 根据本机会话状态解析的参数，不写入存储。
+ */
+function ytRuntimeLogControl(options) {
+  if (ytRuntimePlatform() !== 'Stash' || options.log_control !== 'page') return options;
+  var result = Object.assign({}, options);
+  result.log_enabled = false;
+  if (typeof $request !== 'undefined' && /^http:\/\/youtube-logs\.invalid(?::80)?(?:\/|$)/.test(String($request.url || ''))) {
+    result.log_enabled = true;
+    return result;
+  }
+  try {
+    if (typeof $persistentStore !== 'undefined') {
+      var raw = $persistentStore.read('ytads.logger.config.v1');
+      var config = raw && raw.length <= 8192 ? JSON.parse(raw) : null;
+      result.log_enabled = !!(config && config.enabled === true && typeof config.session === 'string' && /^[a-z0-9-]{1,80}$/.test(config.session));
+    }
+  } catch (_) {}
+  return result;
 }
 
 /**

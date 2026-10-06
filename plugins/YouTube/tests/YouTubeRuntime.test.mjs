@@ -56,12 +56,21 @@ test('Stash request scripts return nested synthetic responses for ad breaks and 
  }
 });
 
-test('Stash logging URL enables business sampling without enabling captions or background playback',()=>{
- const normal=fs.readFileSync(new URL('../YouTubeNoAds.stoverride',import.meta.url),'utf8');
- const diagnostic=fs.readFileSync(new URL('../YouTubeNoAdsLogging.stoverride',import.meta.url),'utf8');
- assert.ok(normal.includes('log_enabled=false'));
- assert.ok(!diagnostic.includes('log_enabled=false'));
- assert.ok(diagnostic.includes('background_playback=false'));
- assert.ok(diagnostic.includes('translation_enabled=false'));
- assert.equal((diagnostic.match(/url: https:/g)||[]).length,2);
+test('Stash page controls one-plugin logging across fresh invocations and pause stops media reads',()=>{
+ const store=new Map();
+ const invoke=(code,extra)=>{
+   const c=context({$environment:{'stash-version':'3'},$argument:'log_enabled=false&log_control=page',$persistentStore:{read(k){return store.get(k);},write(v,k){if(v==null)store.delete(k);else store.set(k,v);return true;}},...extra});
+   run(code,c);return c;
+ };
+ const options=()=>invoke(runtime+';result=ytRuntimeOptions()',{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/player'}}).result.log_enabled;
+ assert.equal(options(),false);
+ invoke(bundle('request'),{$request:{url:'http://youtube-logs.invalid/',method:'GET'}});
+ assert.equal(options(),false);
+ const start=invoke(bundle('request'),{$request:{url:'http://youtube-logs.invalid/start',method:'POST'}});assert.equal(start.outputs[0].response.status,303);assert.equal(options(),true);
+ invoke(bundle('request'),{$request:{url:'https://youtubei.googleapis.com/youtubei/v1/browse',method:'GET'}});
+ assert.ok(JSON.parse(store.get('ytads.logger.entries.v2')).entries.length>0);
+ const pause=invoke(bundle('request'),{$request:{url:'http://youtube-logs.invalid/pause',method:'POST'}});assert.equal(pause.outputs[0].response.status,303);assert.equal(options(),false);
+ const response={headers:{'Content-Type':'video/mp4'}};Object.defineProperty(response,'body',{get(){throw Error('paused media read');}});
+ invoke(bundle('response'),{$request:{url:'https://rr1.googlevideo.com/videoplayback?x=1'},$response:response});
+ store.set('ytads.logger.config.v1','broken');assert.equal(options(),false);
 });

@@ -42,15 +42,11 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds
 
 圈 X 请直接使用原生 `.snippet`，不要让转换器处理 Loon `.plugin` 或 Surge `.sgmodule`。转换 Loon 文件时出现 `AND` 逻辑规则或 `response if` 无法转换，属于配置语法不兼容；拆开逻辑条件会改变匹配范围。转换成功也不代表初始化播放与去广告效果等同。Surge 模块成功添加同样不能证明脚本已命中或广告已清理，需要设备日志确认。
 
-### Stash 通过 URL 开启日志
+### Stash 单插件日志开关
 
-远程覆写预览页不提供本插件的独立参数开关。需要采集时，先停用普通版 `YouTubeNoAds.stoverride`，再添加并启用日志调试版：
+只安装普通版 `YouTubeNoAds.stoverride`。无需修改远程覆写参数：访问 `http://youtube-logs.invalid/`，点击开始记录即开启业务日志和媒体响应头采样；点击暂停或下载日志即停止记录与媒体采样，已有记录保留。首次安装无日志会话时默认关闭，已开启的状态保存在本机，重新加载覆写不会重置会话。
 
-```text
-https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAdsLogging.stoverride
-```
-
-此版本由普通版自动生成，只开启业务日志，后台播放、字幕翻译仍关闭；媒体只采集响应头，不读取完整媒体正文。打开 `http://youtube-logs.invalid/`，点击开始记录，然后返回 YouTube 刷新首页并播放视频。页面可以暂停、标记和下载日志。两版应只启用一个，防止同一请求脚本重复或被覆盖。测试结束停用调试版、恢复普通版，即关闭业务日志与媒体采样；已有记录可在调试版停用前下载。
+Stash 原生覆写没有本插件可使用的 Loon `[Argument]` 开关，使用本地日志页面实现同一插件内的开关。`log_control=page` 让共享脚本按持久化会话状态决定是否记录，每次请求读取小型状态，不缓冲媒体正文。曾安装单独调试版的用户请停用并删除该覆写，再刷新普通版与两份 JS 缓存。
 
 ## 四平台共享底层接口（1.0.0）
 
@@ -72,7 +68,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds
 
 `src/YouTubeRuntime.js` 将平台差异集中处理：Loon 对象参数、Surge 字符串参数、圈 X URL 片段/variables 参数；圈 X 的 `bodyBytes`、`statusCode`、响应状态行与单键存储；Surge 单键删除。媒体正文按需读取，二进制视图输出只复制有效字节，避免相邻缓冲数据泄漏。圈 X 合成响应必须配合 `script-echo-response` 及 `echo_response=true`；普通请求规则不合成响应。接口依据 [圈 X 官方二进制示例](https://github.com/crossutility/Quantumult-X/blob/master/sample-bytes-rewrite.js)、[请求路径示例](https://github.com/crossutility/Quantumult-X/blob/master/sample-rewrite-request-header.js)、[Surge Script API](https://manual.nssurge.com/scripting/api.html) 适配。
 
-Stash 使用原生 `http.script` 和 `script-providers`，两份 JS 自动下载并缓存；正文规则开启 `binary-mode`，媒体规则只读取响应头。覆写通过数组合并追加 MitM 域名和脚本，不替换原配置的节点及策略组。后台播放、日志和字幕翻译默认关闭；字幕翻译开启方式为 `translation_enabled=true`，目标语言仅保留 `zh-CN` / `en-US`。功能参数在 `&youtube-options` 一处修改，其他业务规则通过 YAML 引用同步使用；日志页面单独保持可访问，真正记录仍需将业务参数 `log_enabled` 设为 `true`。字幕仅翻译已有字幕，不生成缺失字幕。安装与接口依据 [Stash 覆写文档](https://stash.wiki/configuration/override)、[HTTP 脚本文档](https://stash.wiki/script/rewrite-requests) 和 [脚本管理文档](https://stash.wiki/script/manage-script)。
+Stash 使用原生 `http.script` 和 `script-providers`，两份 JS 自动下载并缓存；正文规则开启 `binary-mode`，媒体规则只读取响应头。覆写通过数组合并追加 MitM 域名和脚本，不替换原配置的节点及策略组。后台播放、日志和字幕翻译默认关闭；字幕翻译开启方式为 `translation_enabled=true`，目标语言仅保留 `zh-CN` / `en-US`。功能参数在 `&youtube-options` 一处修改，其他业务规则通过 YAML 引用同步使用；日志页面单独保持可访问，业务日志由页面开始／暂停控制，无需修改 `log_enabled`。字幕仅翻译已有字幕，不生成缺失字幕。安装与接口依据 [Stash 覆写文档](https://stash.wiki/configuration/override)、[HTTP 脚本文档](https://stash.wiki/script/rewrite-requests) 和 [脚本管理文档](https://stash.wiki/script/manage-script)。
 
 ### 引用参数
 
@@ -84,11 +80,12 @@ Stash 使用原生 `http.script` 和 `script-providers`，两份 JS 自动下载
 | `translation_target` | 配置提供 `zh-CN` | 仅 `zh-CN` / `en-US`；已有字幕请求的目标语言 |
 | `playback_region` | `original` | 保留地区或指定已支持 gl；不改变出口 IP |
 | `log_enabled` | `false` | 日志与媒体采样总开关 |
+| `log_control` | Stash `page` | 用日志页面的开始／暂停控制业务日志及媒体采样 |
 | `log_level` | `info` | 完整脱敏开发记录；`error` 仅错误 |
 | `capture_budget` | 示例 `16` | 日志容量 MB；平台存储限制仍适用 |
 | `echo_response` | 圈 X echo 规则 `true` | 允许广告配置/本地日志页面返回合成响应 |
 
-Loon 在插件设置中调整；Surge 编辑规则 `argument="key=value&key=value"`；圈 X 编辑脚本地址 `#key=value&key=value` 部分（或使用受支持版本的 variables）。**圈 X/Surge 的选项需在相关规则中同步设置**，不能只改日志页面那一条。日志页面地址仍为 `http://youtube-logs.invalid/`，进入页面不会代替启用各规则的 `log_enabled=true`。示例仅提供媒体响应头采样；完整媒体采样目前沿用 Loon 的显式选择机制，其他平台不默认缓冲完整媒体。
+Loon 在插件设置中调整；Surge 编辑规则 `argument="key=value&key=value"`；圈 X 编辑脚本地址 `#key=value&key=value` 部分（或使用受支持版本的 variables）。**圈 X/Surge 的选项需在相关规则中同步设置**，不能只改日志页面那一条。日志页面地址仍为 `http://youtube-logs.invalid/`，Stash 使用 `log_control=page` 在页面开始／暂停，其他平台仍需启用相关规则的 `log_enabled=true`。示例仅提供媒体响应头采样；完整媒体采样目前沿用 Loon 的显式选择机制，其他平台不默认缓冲完整媒体。
 
 下游可引用 main 地址跟随更新，或把 URL 中 `main` 换为已验证的提交 SHA 固定版本。源码遵循仓库根目录 [MIT 许可](../../LICENSE)，分发时保留许可和版权声明；YouTube 图标及品牌不属于自有代码许可授权范围。发布压缩包的 SHA-256 注释用于关联合并输入，修改源码后需重新构建，不要手改 min.js。
 
