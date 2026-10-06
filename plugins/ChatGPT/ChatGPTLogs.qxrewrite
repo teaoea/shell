@@ -1,0 +1,4 @@
+# ChatGPT 本地日志；GET 页面、POST 控制、GET 导出。
+^http://chatgpt-logs\.invalid(?::80)?(?:/|$) url script-echo-response https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/ChatGPTLogger.js
+^https://(?:[a-z0-9-]+\.)*(?:chatgpt\.com|openai\.com|oaistatic\.com|oaiusercontent\.com|oaistatsig\.com|openaimerge\.com)(?::443)?/ url script-request-header https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/ChatGPTLogger.js
+^https://(?:[a-z0-9-]+\.)*(?:chatgpt\.com|openai\.com|oaistatic\.com|oaiusercontent\.com|oaistatsig\.com|openaimerge\.com)(?::443)?/ url script-response-header https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/ChatGPTLogger.js

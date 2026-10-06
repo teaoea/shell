@@ -1,0 +1,17 @@
+#!name = ChatGPT 网络选择
+#!desc = 在插件策略中绑定 DIRECT 或已有代理策略组；仅分流，无需 MitM。openai.com 规则也影响 API，第三方登录验证主机也影响其他服务。
+#!homepage = https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
+[Rule]
+DOMAIN-SUFFIX,chatgpt.com,PROXY
+DOMAIN-SUFFIX,openai.com,PROXY
+DOMAIN-SUFFIX,oaistatic.com,PROXY
+DOMAIN-SUFFIX,oaiusercontent.com,PROXY
+DOMAIN-SUFFIX,oaistatsig.com,PROXY
+DOMAIN-SUFFIX,openaimerge.com,PROXY
+DOMAIN,challenges.cloudflare.com,PROXY
+DOMAIN,cdn.workos.com,PROXY
+DOMAIN,forwarder.workos.com,PROXY
+DOMAIN,frontend-apps-multi-region.workos.com,PROXY
+DOMAIN,images.workoscdn.com,PROXY
+DOMAIN,setup.workos.com,PROXY
+DOMAIN,workos.imgix.net,PROXY

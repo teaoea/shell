@@ -1,0 +1,4 @@
+{
+  "suffix": ["chatgpt.com", "openai.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "openaimerge.com"],
+  "exact": ["challenges.cloudflare.com", "cdn.workos.com", "forwarder.workos.com", "frontend-apps-multi-region.workos.com", "images.workoscdn.com", "setup.workos.com", "workos.imgix.net"]
+}

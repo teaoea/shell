@@ -1,0 +1,22 @@
+name: ChatGPT 网络选择
+desc: 在 ChatGPT 策略组选择 DIRECT 或代理节点；openai.com 同时影响 API，第三方验证主机影响其他服务。
+proxy-groups:
+  - name: ChatGPT
+    type: select
+    proxies:
+      - DIRECT
+    include-all: true
+rules:
+  - DOMAIN-SUFFIX,chatgpt.com,ChatGPT
+  - DOMAIN-SUFFIX,openai.com,ChatGPT
+  - DOMAIN-SUFFIX,oaistatic.com,ChatGPT
+  - DOMAIN-SUFFIX,oaiusercontent.com,ChatGPT
+  - DOMAIN-SUFFIX,oaistatsig.com,ChatGPT
+  - DOMAIN-SUFFIX,openaimerge.com,ChatGPT
+  - DOMAIN,challenges.cloudflare.com,ChatGPT
+  - DOMAIN,cdn.workos.com,ChatGPT
+  - DOMAIN,forwarder.workos.com,ChatGPT
+  - DOMAIN,frontend-apps-multi-region.workos.com,ChatGPT
+  - DOMAIN,images.workoscdn.com,ChatGPT
+  - DOMAIN,setup.workos.com,ChatGPT
+  - DOMAIN,workos.imgix.net,ChatGPT
