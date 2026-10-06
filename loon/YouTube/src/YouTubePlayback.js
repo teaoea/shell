@@ -1,4 +1,5 @@
 /**
+ * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubePlayback.js
  * 功能：统一处理播放器请求、播放器响应、片头与中插配置、Shorts 播放广告、UMP 预取提示和后台播放。
  * 版本：3.1.0

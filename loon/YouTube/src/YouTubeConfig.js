@@ -1,4 +1,5 @@
 /**
+ * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeConfig.js
  * 功能：维护 YouTube Onesie 配置；旧初始化请求改写保留供离线回归，当前主插件使用原生空视频响应。
  * 版本：2.2.1

@@ -1,4 +1,5 @@
 /**
+ * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeRuntime.js
  * 功能：为共享请求包和响应包适配 Loon、Quantumult X 与 Surge 的平台接口。
  * 版本：1.0.0

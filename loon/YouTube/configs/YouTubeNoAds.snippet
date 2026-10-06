@@ -1,4 +1,5 @@
 # YouTube 共享底层 1.0.0：加入 Quantumult X 的 [rewrite_local]，或作为复写资源引用。
+# 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
 # 字幕目标仅 zh-CN / en-US；编辑 URL # 后参数。log_enabled 关闭时媒体不采样。
 # initplayback 原样放行：不移植 Loon 的 reject_video(200)，未完成圈 X 实机验证。
 ^https://(?:www\.|m\.)?youtube\.com/api/timedtext\?[^#]+$ url script-request-header https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js#background_playback=false&hide_home_shorts=false&translation_target=zh-CN&playback_region=original&log_enabled=false&log_level=info&capture_budget=16

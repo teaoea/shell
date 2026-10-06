@@ -1,4 +1,5 @@
 /**
+ * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeTranslation.js
  * 功能：按手动选择的目标语言请求 YouTube 原生字幕翻译，不读取或保存字幕正文。
  * 更新时间：2026-10-06

@@ -1,4 +1,5 @@
 /**
+ * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 功能：从保留中文注释的源码生成三平台独立运行的压缩文件；固定工具版本和参数，支持检查产物是否过期。
  * 更新时间：2026-10-06
  */
@@ -60,7 +61,11 @@ async function compileScript(phase) {
     sourceMap: false,
     format: {
       comments: false,
-      preamble: `/* 自动生成，功能源码保存在 src/。合并源码 SHA-256: ${hash} */`
+      preamble: `/**
+ * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
+ * 功能：自动生成的${phase === 'request' ? '请求' : '响应'}脚本；原始源码保存在 src/。
+ * 合并源码 SHA-256: ${hash}
+ */`
     }
   });
   if (!result.code) throw new Error(`${phase} 压缩输出为空`);
