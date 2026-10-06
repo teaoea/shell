@@ -642,3 +642,41 @@ for(const startTime of [undefined,new Date(NaN),new Date(Date.now()+600000),{get
  assert.ok(Number.isFinite(event.summary.timing.jsBeforeIndexCommitMs));assert.equal(event.summary.timing.runtimeBeforeIndexCommitMs,undefined);
  assert.ok(!JSON.stringify([...store.values()]).includes('PRIVATE'));
 });
+
+test('single log exports Shanghai milliseconds across midnight without altering UTC marker storage', async () => {
+ const store=started();
+ const utc='2026-10-06T16:00:00.123Z';
+ class FixedDate extends Date { constructor(...args){super(...(args.length?args:[utc]));} static now(){return Date.parse(utc);} }
+ run('YouTubeLogger',store,{$request:{url:'http://youtube-logs.invalid/mark-ad',method:'POST'},Date:FixedDate});
+ page(store,'pause','POST');
+ const stored=store.get(indexKey);
+ assert.equal(JSON.parse(stored).entries[0].time,utc);
+ const script=page(store,'export').body.match(/<script>([\s\S]*)<\/script>/)[1];
+ const status={},save={click(){this.clicked=true;}};let blob;
+ await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,
+  URL:{createObjectURL(value){blob=value;return 'blob:shanghai';}},
+  async fetch(path){const r=page(store,path.slice(1));const data=JSON.parse(r.body);if(path==='/export-manifest.json')data.data.exportedAt=utc;return {ok:r.status===200,status:r.status,json:async()=>data};}
+ },{timeout:5000});
+ const text=await blob.text();
+ assert.match(text,/Time-Zone: Asia\/Shanghai \(UTC\+08:00\)/);
+ assert.match(text,/Exported-Time: 2026-10-07T00:00:00\.123\+08:00/);
+ assert.match(text,/Time: 2026-10-07T00:00:00\.123\+08:00/);
+ assert.match(text,/Summary: user mark: ad-playing/);
+ assert.equal(save.download,'YouTube-2026-10-07T00-00-00-123+08-00.log');
+ assert.equal(save.clicked,true);
+ assert.equal(store.get(indexKey),stored,'export keeps original UTC index and capture references intact');
+ assert.match(page(store,'').body,/上海时间/);
+});
+
+test('Shanghai export displays unavailable for malformed time without cancelling the download',async()=>{
+ const store=started();page(store,'mark-content','POST');page(store,'pause','POST');
+ const script=page(store,'export').body.match(/<script>([\s\S]*)<\/script>/)[1];
+ const status={},save={click(){this.clicked=true;}};let blob;
+ await vm.runInNewContext(script,{document:{getElementById:id=>id==='status'?status:save},Blob,
+  URL:{createObjectURL(value){blob=value;return 'blob:invalid-time';}},
+  async fetch(path){const r=page(store,path.slice(1));const data=JSON.parse(r.body);if(path==='/export-manifest.json'){data.rows[0].time='bad-time';data.rows[0].captureError='missing';}return {ok:r.status===200,status:r.status,json:async()=>data};}
+ },{timeout:5000});
+ assert.match(await blob.text(),/Time: unavailable/);
+ assert.match(await blob.text(),/Issue: unavailable YouTubeLogger missing/);
+ assert.equal(save.clicked,true);
+});

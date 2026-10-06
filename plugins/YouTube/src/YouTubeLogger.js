@@ -763,6 +763,18 @@ function (row) {
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   async function browserExport(event) {
+    /**
+     * 功能：将日志 UTC 时间转换为上海时间，保留毫秒和明确的 UTC+08:00 偏移。
+     * 更新时间：2026-10-06
+     * @param {string} utc UTC 格式的事件或导出时间。
+     * @returns {string} 上海时间；无效时间返回 unavailable，避免中断导出。
+     */
+    function shanghaiTime(utc) {
+      var millis = typeof utc === "string" ? Date.parse(utc) : NaN;
+      if (!Number.isFinite(millis)) return "unavailable";
+      var shifted = new Date(millis + 8 * 60 * 60 * 1000);
+      return Number.isFinite(shifted.getTime()) ? shifted.toISOString().replace(/Z$/, "+08:00") : "unavailable";
+    }
     var status = document.getElementById("status"), save = document.getElementById("save"), download = document.getElementById("download");
     if(download&&download.disabled)return;
     if(download)download.disabled=true;
@@ -835,7 +847,7 @@ function (row) {
        * 更新时间：2026-10-05
        */
       function eventText(index,row,capture,captureError){
-        var lines=["","================================================================================","EVENT "+(index+1),"================================================================================","Time: "+row.time,"Level: "+String(row.level).toUpperCase(),"Source: "+row.source,"Version: "+row.version,"Endpoint: "+row.endpoint,"Phase: "+value(row.phase),"Summary: "+row.message];
+        var lines=["","================================================================================","EVENT "+(index+1),"================================================================================","Time: "+shanghaiTime(row.time),"Level: "+String(row.level).toUpperCase(),"Source: "+row.source,"Version: "+row.version,"Endpoint: "+row.endpoint,"Phase: "+value(row.phase),"Summary: "+row.message];
         if(row.timing)structure("Capture-Timing-Ms",row.timing,lines,0);
         if(captureError)lines.push("Capture-Error: "+captureError);if(!capture){lines.push("Capture: unavailable");return lines.join("\n")+"\n";}
         lines.push("Runtime: "+value(capture.runtime));structure("Correlation",capture.correlation,lines,0);structure("Processing",capture.processing,lines,0);
@@ -844,7 +856,7 @@ function (row) {
       }
       var manifest = await get("/export-manifest.json");
       var rows = manifest.rows, data = manifest.data, parts = [], issues = [];
-      parts.push(["YouTube full diagnostic log","Format-Version: 2","Exported-UTC: "+data.exportedAt,"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Media-Capture-Mode-At-Export: "+value(data.settings.mediaCaptureMode),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
+      parts.push(["YouTube full diagnostic log","Format-Version: 3","Time-Zone: Asia/Shanghai (UTC+08:00)","Exported-Time: "+shanghaiTime(data.exportedAt),"Session: "+value(data.session),"Recording: "+(data.recording?"on":"paused"),"Stopped-Reason: "+value(data.stoppedReason),"Entries: "+rows.length,"Recorded-Endpoints: "+data.coverage.summary,"Playback-Initialization-Observed: "+data.coverage.hasPlaybackInitialization,"Initialization-Versions: "+data.coverage.initializationVersions.join(","),"Structure-Capture-Enabled: "+value(data.settings.rawCapture),"Media-Capture-Mode-At-Export: "+value(data.settings.mediaCaptureMode),"Summary-Minimum-Level: "+value(data.settings.summaryMinimumLevel),"Capture-Budget-MB: "+value(data.settings.budgetMB),"Scope: browse, refresh/config, player, initplayback, ad-break, Shorts and UMP media events matched by the plugin","Body-Storage: redacted protocol structure only","Privacy: credentials, query values, raw bodies, config keys, media content and unknown values are removed before storage","Completeness: best-effort Loon script capture; see LIMITATIONS at end",""].join("\n"));
       for (var n = 0; n < rows.length; n++) {
         var row = rows[n], capture = null, captureError = row.captureError || null;
         status.textContent = "正在读取记录 " + (n + 1) + " / " + rows.length;
@@ -859,7 +871,7 @@ function (row) {
           if (text.length !== ref.chars || checksum(text) !== ref.checksum) throw new Error("样本校验失败，请保留已有记录并检查存储。");
           capture = JSON.parse(text);
           if (capture.schema !== 1 || capture.source !== row.source || capture.time !== row.time || capture.phase !== row.phase) throw new Error("样本元数据不匹配，请重新导出。");
-        } else if (captureError) issues.push(row.time+" "+row.source+" "+captureError);
+        } else if (captureError) issues.push(shanghaiTime(row.time)+" "+row.source+" "+captureError);
         parts.push(eventText(n,row,capture,captureError));
       }
       parts.push("\n================================================================================\nLIMITATIONS\n================================================================================\n");
@@ -868,7 +880,7 @@ function (row) {
       var blob = new Blob(parts, {type:"text/plain;charset=utf-8"});
       if(save.href&&save.href.indexOf("blob:")===0)URL.revokeObjectURL(save.href);
       save.href = URL.createObjectURL(blob);
-      save.download = "YouTube-" + data.exportedAt.replace(/[:.]/g, "-") + ".log";
+      save.download = "YouTube-" + shanghaiTime(data.exportedAt).replace(/[:.]/g, "-") + ".log";
       save.hidden = false;
       status.textContent = "已生成日志文件（" + rows.length + " 条记录），正在下载；若 Safari 未弹出下载提示，可点击保存日志文件。";
       save.click();
@@ -925,6 +937,7 @@ function (row) {
       '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，脱敏记录另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
       '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。媒体采样默认 headers：只记录初始化和 UMP 响应头，不等待媒体正文。需要分析媒体内播放器配置时选择 full，Loon 会等待完整响应；暂停只停止写入，切回 headers 才能停止后续媒体缓冲。浏览、刷新和播放控制接口仍保存可用的脱敏结构。唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
       '<p>在主插件选择日志保存级别：info 保存完整脱敏记录，包含浏览、刷新、播放及处理结果；error 只保存错误；debug 保存完整记录并保留调试级别；warn 只保存警告和错误。调整级别只影响新记录，旧记录仍保留。</p>' +
+      '<p>日志中的事件、标记和导出时间均显示上海时间（Asia/Shanghai，UTC+08:00），精确到毫秒；内部时间仍使用 UTC，以兼容旧记录和样本校验。</p>' +
       '<p>下载日志会自动暂停记录，在当前页面生成一个 .log 并触发下载。完整记录指脚本实际捕获的脱敏数据，不保证覆盖所有网络请求；媒体正文不保存。日志无法读取 Loon 的连接、证书或脚本超时记录。</p>' +
       '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form><script>document.getElementById("download").onclick=' + browserExport.toString() + ';</script></html>';
   }
