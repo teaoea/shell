@@ -10,15 +10,15 @@ test('routing domain inventory stays identical on all four platforms', () => {
     const actual = lines.map(l => l.trim().replace(/^- /, '').split(',')[1]).filter(d => d !== 'chatgpt-logs.invalid');
     assert.deepEqual(actual, [...domains.suffix, ...domains.exact], name);
   }
-  assert.match(read('ChatGPT.plugin'), /DOMAIN-SUFFIX,chatgpt.com,PROXY/);
+  assert.match(read('ChatGPT.plugin'), /DOMAIN-SUFFIX,chatgpt.com,网络模式/);
   assert.match(read('ChatGPT.surge.conf'), /ChatGPT = select, DIRECT, YOUR_PROXY/);
   assert.match(read('ChatGPT.quantumult.conf'), /static = ChatGPT, direct, proxy/);
   assert.match(read('ChatGPT.stoverride'), /include-all: true/);
 });
-test('Loon retains manual PROXY mapping and its log switch gates both samplers', () => {
+test('Loon trial uses the requested policy name and preserves both logging gates', () => {
   const content = read('ChatGPT.plugin');
   assert.match(content, /log_enabled = switch,false/);
-  assert.match(content, /DOMAIN-SUFFIX,chatgpt.com,PROXY/);
+  assert.match(content, /DOMAIN-SUFFIX,chatgpt.com,网络模式/);
   assert.doesNotMatch(content, /network_mode|policy_group|proxy_policy|ChatGPTSettings|generic script-path=/);
   for (const line of content.split('\n').filter(l => /^http-(request|response) \^https/.test(l))) {
     assert.match(line, /enable=\{log_enabled\}/);
