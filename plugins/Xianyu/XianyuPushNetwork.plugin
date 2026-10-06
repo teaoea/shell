@@ -1,10 +1,9 @@
 #!name = 闲鱼推送网络辅助
 #!author = 可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
 # 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
-#!desc = 闲鱼及 Apple 推送连接直连辅助；新增图标和本地开发日志，开启后仅采集带闲鱼客户端标识的 HTTP 请求、响应和 URL／字面 IP，统一导出开发样本；不以共享域名判断 App 来源。Header 识别不等于进程归属证明，无法采集所有纯 IP 连接。日志需 Loon Build 983+，正文需 MitM。不能唤醒闲鱼、防止后台回收或维持卖家在线；效果待实机验证。
+#!desc = 闲鱼及 Apple 推送连接直连辅助；新增图标和本地开发日志，开启后仅采集带闲鱼客户端标识的 HTTP 请求、响应和 URL／字面 IP，统一导出开发样本；不以共享域名判断 App 来源。Header 识别不等于进程归属证明，无法采集所有纯 IP 连接。正文采样需 MitM。不能唤醒闲鱼、防止后台回收或维持卖家在线；效果待实机验证。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/assets/xianyu.jpg
 #!tag = 闲鱼,推送,网络排查,开发日志
-#!system = iOS,iPadOS
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/Xianyu/README.md
 
 [Argument]

@@ -1,9 +1,7 @@
 #!name = YouTube去广告
 #!author = 可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
-#!system = iOS,iPadOS
-#!loon_version = 3.5.1(978)
 # 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
-#!desc = 仅适配 iOS/iPadOS YouTube，暂不支持 Apple TV/tvOS。YouTube App 去广告、后台播放及已有字幕轨道的翻译；字幕目标语言可选 zh-CN 或 en-US，无字幕视频无法翻译。日志默认仅采集媒体响应头，可选完整采样会增加等待。初始化空视频需 Loon 3.5.1 Build 978+，完整采样需 Build 983+。需开启 MitM 并信任证书。
+#!desc = YouTube App 去广告、后台播放及已有字幕轨道的翻译；字幕目标语言可选 zh-CN 或 en-US，无字幕视频无法翻译。日志默认仅采集媒体响应头，可选完整采样会增加等待。需开启 MitM 并信任证书。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
@@ -14,7 +12,7 @@ playback_region = select,"original","CN","HK","TW","US","JP","KR","SG","GB","DE"
 translation_target = select,"zh-CN","en-US",tag=字幕目标语言,desc=仅转换已有字幕轨道；简体中文 zh-CN 或美式英语 en-US；无字幕的视频无法翻译，不改变音轨、标题或简介
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
 log_enabled = switch,false,tag=日志工具,desc=关闭时同步停用全部媒体采样；开启后保存全链路脱敏记录，统一下载一个 .log 文件；完整媒体采样可能增加等待
-media_capture_mode = select,"headers","full",tag=媒体采样方式,desc=仅日志工具开启时生效，关闭日志后自动停用；headers 只记响应头；full 读取完整响应用于开发，可能增加等待，需 Loon Build 983+
+media_capture_mode = select,"headers","full",tag=媒体采样方式,desc=仅日志工具开启时生效，关闭日志后自动停用；headers 只记响应头；full 读取完整响应用于开发，可能增加等待
 log_level = select,"info","debug","warn","error",tag=日志保存级别,desc=info 保存完整脱敏链路；error 只保存错误；debug 保留调试级别；warn 保存警告和错误
 capture_budget = select,"32","16","64",tag=日志容量 MB,desc=达到上限停止记录，保留已有样本；导出后再清空
 

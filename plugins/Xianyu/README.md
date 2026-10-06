@@ -18,7 +18,7 @@
 https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin
 ```
 
-在 iPhone／iPad 上点击一键导入，在 Loon 中确认添加并启用；如浏览器没有唤起 Loon，复制上面的安装 URL，在 Loon 插件页面添加远程插件。需要 **Loon 3.5.1 Build 983 或更新版本**。使用分流模式；仅使用直连规则不需要开启 MitM，采集 HTTPS 请求头和正文则需要启用 MitM 并安装、信任 Loon 证书。不需要向插件填写账号凭据。
+在 iPhone／iPad 上点击一键导入，在 Loon 中确认添加并启用；如浏览器没有唤起 Loon，复制上面的安装 URL，在 Loon 插件页面添加远程插件。使用分流模式；仅使用直连规则不需要开启 MitM，采集 HTTPS 请求头和正文则需要启用 MitM 并安装、信任 Loon 证书。不需要向插件填写账号凭据。
 
 `XianyuPushNetwork.plugin` 是唯一安装入口，自动引用 `XianyuLogger.js` 和 `assets/xianyu.jpg`，无需另装日志插件。安装 URL 指向 GitHub `main` 分支；更新时刷新插件，再刷新／重新下载日志脚本缓存。插件中已登记可解密的已知主机，这些主机是否被解密由全局 MitM 设置决定，与日志开关独立。
 
@@ -28,7 +28,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNet
 
 ## 日志使用方法
 
-1. 更新插件和日志脚本，确认 Loon Build 983+。需要采集 HTTPS 时开启 MitM 并信任证书；以短时间复现为宜。
+1. 更新插件和日志脚本。需要采集 HTTPS 时开启 MitM 并信任证书；以短时间复现为宜。
 2. 在插件参数中开启「开发日志」。在 Loon 脚本列表运行「闲鱼开发日志」，点击通知打开日志页；也可在 Safari 打开 [本地日志页面](http://xianyu-logs.invalid/)。这是脚本直接生成的本地页面，不连接外部日志服务器。
 3. 先导出需要保留的旧记录，再点击「清空并新建会话」→「开始／继续记录」。随后打开闲鱼，依次复现开屏、首页、搜索、商品详情等场景。插件记录的是从点击开始后的匹配流量，不能自动判断闲鱼前台启动时刻，也不能回补开启前的请求。
 4. 广告出现时可切回日志页点击「标记广告出现」，正常页面可点「标记正常页面」。标记时间帮助定位样本，但切换页面和点击标记会有时间差；可以另外记下广告出现的准确时间。
@@ -97,7 +97,7 @@ node --test plugins/Xianyu/tests/XianyuLogger.test.mjs
 
 ## 规则及影响
 
-直连规则保持原有 22 条；本版新增脚本使用新版语法，整份插件需 Loon 3.5.1 Build 983 或更新版本，并在分流模式下测试。
+直连规则保持原有 22 条；本版新增脚本使用新版语法，请在分流模式下测试。
 
 | 规则 | 范围与依据 |
 | --- | --- |

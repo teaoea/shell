@@ -23,7 +23,7 @@ JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台�
 
 ## Apple TV / tvOS 兼容性
 
-当前 Loon 主插件仅声明 `#!system = iOS,iPadOS`，最低 Loon 为 `3.5.1(978)`；完整媒体采样仍需 Build 983+。尚未适配 Apple TV 的 YouTube 客户端，也未完成 tvOS 实机验证。已有用户反馈启用后 YouTube 启动显示无网络，这属于待定位的兼容性问题，不能认定为正常去广告行为。
+尚未适配 Apple TV 的 YouTube 客户端，也未完成 tvOS 实机验证。已有用户反馈启用后 YouTube 启动显示无网络，这属于待定位的兼容性问题，不能认定为正常去广告行为。
 
 此前没有声明系统范围，按 [Loon 官方插件说明](https://nsloon.app/docs/Plugin/) 会被视为支持所有系统。现有 UDP/QUIC 拦截、MitM 和 API 广告处理覆盖域名，不限定电视客户端；初始化空视频规则则只接受 iOS YouTube 的 User-Agent，因此整套配置不能直接作为 tvOS 方案使用。证书信任、客户端 TLS 行为、传输回退和响应结构都需要分别核对，尚无日志证明哪一项导致此次无网络。
 
@@ -127,7 +127,7 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 - Protobuf：自行实现 wire format 读取，移除已识别 Player 消息的字段 7（`adPlacements`）、字段 68（`adSlots`），并在字段 9（`playbackTracking`）中删除字段 18（`pageadViewthroughconversion`）。`get_watch` 使用已知的字段路径 `1 → 2 → Player`。保留非广告字段的原始字节、顺序及未知内容，只在嵌套消息改变时重算外层长度。
 - Ad break：`YouTubePlayback.js` 只对精确的 `player/ad_break` 请求直接返回 HTTP 200 与合法的空 Protobuf，阻止客户端取得新的片头/中插广告配置。它不匹配 `googlevideo.com`，不返回 502，也不截断广告或正片媒体流；主插件固定启用该处理。
 - Onesie 配置：`YouTubeConfig.js` 只接受 User-Agent 明确为 `com.google.ios.youtube/...` 的请求，按固定 Protobuf 路径读取 `clientKey`、`encryptKey`、有效期和热配置开关。密钥只写入 Loon 本地缓存，不进入普通日志或控制台；YouTube Music、网页和未知客户端不读写该状态。没有可用配置时，`log_event` 请求会去掉热配置哈希头，使服务端返回完整配置；已有有效配置时保留该哈希。脚本会移除 Loon 解码正文后失效的 `Content-Encoding` 请求头。
-- Initplayback 空视频实验：主插件的原生 Rewrite 精确匹配 `https://<主机>.googlevideo.com/initplayback` POST 请求，并要求 User-Agent 为 `com.google.ios.youtube/...`，然后执行 `reject_video(200)`。由 Loon 返回 HTTP 200 空白视频，无需 JS 读取正文、解密、重签或下载媒体文件。GET/HEAD、YouTube Music、网页、未知客户端和普通 `videoplayback` 不匹配。配置请求 JS 不再绑定 initplayback，日志请求使用 `requires-body=false`，避免旧 204 和正文处理叠加。原生空白视频不是合法的 Onesie/UMP 初始化信封，能否让 App 回退仍需实测。该动作的官方说明见 [Loon Rewrite Reject](https://nsloon.app/docs/Rewrite/rewrite_v2/#reject)，新语法需 Loon 3.5.1 Build 978+。
+- Initplayback 空视频实验：主插件的原生 Rewrite 精确匹配 `https://<主机>.googlevideo.com/initplayback` POST 请求，并要求 User-Agent 为 `com.google.ios.youtube/...`，然后执行 `reject_video(200)`。由 Loon 返回 HTTP 200 空白视频，无需 JS 读取正文、解密、重签或下载媒体文件。GET/HEAD、YouTube Music、网页、未知客户端和普通 `videoplayback` 不匹配。配置请求 JS 不再绑定 initplayback，日志请求使用 `requires-body=false`，避免旧 204 和正文处理叠加。原生空白视频不是合法的 Onesie/UMP 初始化信封，能否让 App 回退仍需实测。该动作的官方说明见 [Loon Rewrite Reject](https://nsloon.app/docs/Rewrite/rewrite_v2/#reject)。
 - Shorts 播放广告：`YouTubePlayback.js` 只删除响应字段 2 的条目中符合 `command（1）→ reelWatchEndpoint（139608561）→ adClientParams（16）→ isAd（1）= true` 的完整条目。普通 Shorts、未知命令及结构不完整的条目保持原样。
 - 字段编号和 `get_watch` 路径来自已有逆向协议描述的核对，属于协议映射信息；未复制原脚本或其库实现。YouTube 未公开保证这些编号适用于所有客户端。脚本使用字段 2 的 playabilityStatus 及 wire type 作有限检查，不能证明所有未来协议变化都能识别。
 - 空响应、非 200、损坏数据、已检测到的结构不匹配、未知内容类型、API 上的非预期 UMP、未解压的 gzip 及超限响应原样通过。限制为 2 MiB 响应、30,000 个解析字段、20,000 个 JSON 对象节点和 64 层 JSON 深度。
@@ -295,7 +295,7 @@ Shorts 广告清理固定开启，由合并后的 `YouTubePlayback.js` 处理 `r
 | 后台播放 | 关闭 | 开启后在已识别的播放器响应中允许普通视频后台继续播放；关闭时保留服务端原值 |
 | 隐藏首页 Shorts | 关闭 | 只隐藏首页推荐流的 Shorts 区块 |
 | 日志工具 | 关闭 | 开启后保存链路脱敏记录，并可标记、暂停和下载一个 `.log` |
-| 媒体采样方式 | headers | 默认只记录初始化和 UMP 响应头，不等待媒体正文；full 读取完整媒体响应用于开发分析，需 Loon Build 983+ |
+| 媒体采样方式 | headers | 默认只记录初始化和 UMP 响应头，不等待媒体正文；full 读取完整媒体响应用于开发分析 |
 | 播放请求地区 | original | 保持原地区；可选 CN 等地区，仅改变客户端 gl 参数 |
 | 日志保存级别 | info | 控制新事件及其可用脱敏样本的保存级别 |
 | 日志容量 MB | 32 | 可选 16 / 32 / 64 MiB，限制脱敏记录序列化总容量 |
@@ -493,7 +493,7 @@ AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DEST-PORT,443)),REJECT
 
 日志工具 3.0.0 将“媒体采样方式”的默认值设为 `headers`。日志开启且正在记录时，初始化和 UMP 媒体响应只记录状态、安全响应头、接口与关联标识，标注 `bodyBuffering=false`、`headers-only-not-buffered`，不读取或等待媒体正文。控制接口（browse/next/player 等）仍记录可用的脱敏字段树和处理结果；INFO 不因本次调整变成仅摘要。原有 full 开发采样仍可手动选择，继续验证、解密并脱敏可用的 Onesie 播放器结构，但会等待完整媒体响应。暂停记录不能取消已经选中的 full 响应缓冲，排查启动等待应切回 headers。
 
-按 [Loon Script 文档](https://nsloon.app/docs/Script/script_v2/)，是否收齐正文必须在进入 JS 前确定，`requires_body` 不接受动态参数。同一响应最多执行一个脚本。因此同一 Logger.js 设置两条选用入口：full 条件入口在前，默认响应头入口在后；不会重复记录，也不新增 JS 文件、缓存或下载接口。完整模式的条件规则需 Loon 3.5.1 Build 983 或以上；日志关闭时两个媒体入口均不执行。下载头 `Media-Capture-Mode-At-Export` 表示导出时的选择，历史每条事件的 `Processing.bodyBuffering` 才表示当时的实际处理模式。
+按 [Loon Script 文档](https://nsloon.app/docs/Script/script_v2/)，是否收齐正文必须在进入 JS 前确定，`requires_body` 不接受动态参数。同一响应最多执行一个脚本。因此同一 Logger.js 设置两条选用入口：full 条件入口在前，默认响应头入口在后；不会重复记录，也不新增 JS 文件、缓存或下载接口。日志关闭时两个媒体入口均不执行。下载头 `Media-Capture-Mode-At-Export` 表示导出时的选择，历史每条事件的 `Processing.bodyBuffering` 才表示当时的实际处理模式。
 
 本次 `12:13:34` 导出仍为 full 采样。两组初始化关联记录间隔为 2.226 秒、2.052 秒；next 请求至完整响应记录间隔 1.135 秒。next 样本的采样准备约 60 ms、分块写入 5 ms、脚本开始至最终索引提交前 74 ms，移除 2 个广告项。这些计时解释不了用户观察到的约 5 秒列表空白，也没有包含 Loon 收齐响应前的等待、最后索引提交和客户端渲染；不得据此声称整个插件没有延迟。
 
