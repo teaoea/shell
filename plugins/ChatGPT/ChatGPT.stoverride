@@ -1,4 +1,7 @@
 name: ChatGPT 网络选择与本地日志
+author: 可莉唯一的狗
+icon: https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/assets/chatgpt.jpg
+homepage: https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
 desc: 在 ChatGPT 策略组选择 DIRECT 或代理节点；日志默认暂停，访问 http://chatgpt-logs.invalid/ 管理。HTTPS 日志需解密；暂停不移除 MitM 主机。
 proxy-groups:
   - name: ChatGPT

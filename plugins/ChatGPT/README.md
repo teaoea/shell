@@ -1,5 +1,9 @@
 # ChatGPT 网络选择与本地日志
 
+![ChatGPT 图标](assets/chatgpt.jpg)
+
+作者：**可莉唯一的狗**。四个平台配置入口和共用日志脚本均包含作者署名；Loon 插件使用 `#!author` 和 `#!icon`，Stash 覆写使用 `author` 和 `icon`，圈 X 策略使用图标参数，Surge 主配置片段保留作者及图标来源注释。
+
 为 Loon、Quantumult X（圈 X）、Stash、Surge 提供 ChatGPT 直连／代理切换，以及可选的本地网络诊断日志。网络选择使用软件原生策略，覆盖匹配域名下的连接，不依赖解密或请求脚本修改出口。
 
 配置与脚本通过本仓库 `main` 分支提供，下面的远程 URL 可用于安装与更新。当前已做离线验证，四种软件的真实配置解析、手机日志采集、Safari 导出及出口切换仍待实机验证。
@@ -114,3 +118,5 @@ git diff --check
 - [Surge：模块限制](https://manual.nssurge.com/profile/module.html) · [策略组](https://manual.nssurge.com/policy-groups/overview.html) · [请求脚本](https://manual.nssurge.com/scripting/http-request.html)
 
 非官方插件，与 OpenAI、Loon、Quantumult X、Stash、Surge 无隶属关系。许可证沿用仓库 MIT。
+
+图标来自 OpenAI 发布的 [ChatGPT App Store 应用](https://apps.apple.com/us/app/chatgpt/id6448311069)，通过 [Apple Lookup API](https://itunes.apple.com/lookup?id=6448311069&country=us) 核对应用名称和开发者后保存为 `assets/chatgpt.jpg`，用于辨识本插件。

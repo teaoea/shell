@@ -4,12 +4,17 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const domains = JSON.parse(readFileSync(root + 'domains.json', 'utf8'));
 const base = 'https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/';
 const script = base + 'ChatGPTLogger.js';
+const author = '可莉唯一的狗';
+const icon = base + 'assets/chatgpt.jpg';
 const core = String.raw`^https://(?:[a-z0-9-]+\.)*(?:chatgpt\.com|openai\.com|oaistatic\.com|oaiusercontent\.com|oaistatsig\.com|openaimerge\.com)(?::443)?/`;
 const local = String.raw`^http://chatgpt-logs\.invalid(?::80)?(?:/|$)`;
 const mitm = domains.suffix.flatMap(d => [d, '*.' + d]);
 const rules = policy => domains.suffix.map(d => `DOMAIN-SUFFIX,${d},${policy}`).concat(domains.exact.map(d => `DOMAIN,${d},${policy}`));
 function write(name, text) { writeFileSync(root + name, text.trim() + '\n'); }
 write('ChatGPT.plugin', `#!name = ChatGPT 网络选择与本地日志
+#!author = ${author}
+#!icon = ${icon}
+# 作者：${author}
 #!desc = 网络模式由下方 PROXY 策略入口手动选择 DIRECT 或已有代理；日志工具默认关闭，本地页面支持查看与导出。HTTPS 日志需解密，关闭日志不移除 MitM 主机。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
 #!loon_version = 3.5.1(983)
@@ -25,6 +30,8 @@ http-response ${core} script-path=${script},argument=[{log_enabled}],enable={log
 [Mitm]
 hostname = ${mitm.join(', ')}`);
 write('ChatGPT.surge.conf', `# ChatGPT 网络选择与本地日志：合并到主配置对应段，不是独立配置或模块。
+# 作者：${author}
+# 图标：${icon}
 # 将 YOUR_PROXY 替换为已有代理节点或策略组；业务规则放在冲突规则与 FINAL 之前。
 # 日志默认暂停，访问 http://chatgpt-logs.invalid/ 管理。HTTPS 日志需解密，暂停不移除 MitM 主机。
 [Proxy Group]
@@ -40,10 +47,12 @@ ChatGPT响应日志 = type=http-response,pattern=${core},requires-body=false,tim
 # 主配置不使用模块的 %APPEND%；将以下主机追加到现有 hostname，保留原列表。
 hostname = ${mitm.join(', ')}`);
 write('ChatGPT.quantumult.conf', `# ChatGPT 网络选择与本地日志：合并对应段，不替换整个主配置。
+# 作者：${author}
+# 图标：${icon}
 # proxy 为圈 X 内置代理策略，也可换成已有节点或策略组。
 # 日志默认暂停，访问 http://chatgpt-logs.invalid/ 管理。HTTPS 日志需解密，暂停不移除 MitM 主机。
 [policy]
-static = ChatGPT, direct, proxy
+static = ChatGPT, direct, proxy, img-url=${icon}
 [filter_local]
 ${domains.suffix.map(d => `host-suffix,${d},ChatGPT`).concat(domains.exact.map(d => `host,${d},ChatGPT`)).join('\n')}
 host,chatgpt-logs.invalid,direct
@@ -55,6 +64,9 @@ ${core} url script-response-header ${script}
 # 追加到已有 hostname，保留原主机；不要覆盖整个列表。
 hostname = ${mitm.join(', ')}`);
 write('ChatGPT.stoverride', `name: ChatGPT 网络选择与本地日志
+author: ${author}
+icon: ${icon}
+homepage: https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
 desc: 在 ChatGPT 策略组选择 DIRECT 或代理节点；日志默认暂停，访问 http://chatgpt-logs.invalid/ 管理。HTTPS 日志需解密；暂停不移除 MitM 主机。
 proxy-groups:
   - name: ChatGPT
