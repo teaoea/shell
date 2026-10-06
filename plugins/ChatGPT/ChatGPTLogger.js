@@ -1,4 +1,4 @@
-/** ChatGPT 网络诊断日志 1.0.0 | 作者：可莉唯一的狗 | MIT | 本地元数据，不读取正文。 */
+/** ChatGPT 网络诊断日志 1.0.0 | 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol | MIT | 本地元数据，不读取正文。 */
 (function () {
   'use strict';
   var KEY = 'chatgpt.network.logger.v1';

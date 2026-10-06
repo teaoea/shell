@@ -1,7 +1,7 @@
 #!name = ChatGPT 网络选择与本地日志
-#!author = 可莉唯一的狗
+#!author = 可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/assets/chatgpt.jpg
-# 作者：可莉唯一的狗
+# 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
 #!desc = 网络模式由下方 PROXY 策略入口手动选择 DIRECT 或已有代理；日志工具默认关闭，本地页面支持查看与导出。默认不解密 ChatGPT，避免原生 App 证书错误；HTTPS 自定义日志仅适用于手动开启解密的浏览器调试。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/ChatGPT/README.md
 #!loon_version = 3.5.1(983)
