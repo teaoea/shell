@@ -1,6 +1,6 @@
 # YouTube 信息流及视频贴片去广告（自有 JS）
 
-只维护一个 Loon 插件入口 `YouTubeNoAds.plugin`，按功能调用 `dist/` 中的压缩 JS。带中文注释的原始代码保存在 `src/`。去广告脚本均可直接在 Loon 独立运行，没有运行时模块导入、第三方实现、第三方服务、外部库、重定向或额外网络请求；Terser 仅在本地构建时使用。
+Loon、Quantumult X（圈 X）和 Surge 共用一套底层脚本，各平台配置按功能调用 `dist/` 中的压缩 JS。带中文注释的原始代码保存在 `src/`。去广告脚本均可直接在 Loon 独立运行，没有运行时模块导入、第三方实现、第三方服务、外部库、重定向或额外网络请求；Terser 仅在本地构建时使用。
 
 | 文件 | 功能 | 匹配位置 |
 | --- | --- | --- |
@@ -8,25 +8,65 @@
 | `src/YouTubePlayback.js` → 请求包 / 响应包 | 集中处理播放器请求和响应、片头/中插配置、Shorts 播放广告、按开关允许后台播放；UMP 解析仅保留为离线研究 | `player`、`get_watch`、`player/ad_break`、`reel_watch_sequence` |
 | `src/YouTubeConfig.js` → 请求包 / 响应包 | 独立管理 Onesie 配置兼容逻辑；旧初始化请求改写保留供离线回归 | `config`、`log_event`；当前初始化空视频由主插件原生 Rewrite 处理 |
 | `src/YouTubeLogger.js` → 请求包 / 响应包 | 独立管理本地日志、开发抓包和唯一的完整 `.log` 导出页面 | 专用页面和各链路日志入口 |
-| `YouTubeNoAds.plugin` | 统一配置去广告、日志入口、参数与 MitM | 只需启用这一个插件 |
+| `src/YouTubeTranslation.js` → 请求包 | 为已有字幕请求选择 YouTube 原生翻译目标，不读取或保存字幕正文 | `/api/timedtext` 的 GET 请求 |
+| `YouTubeNoAds.plugin` | 统一配置去广告、日志入口、参数与 MitM | Loon 只需启用这一个插件 |
 
 主插件通过 Loon 的 `#!icon` 展示 YouTube 图标，`#!desc` 展示功能范围、当前启用的初始化空视频实验及使用条件，`#!homepage` 指向本说明。图标保存为 `assets/youtube.png`，来自 [YouTube 官方页面引用的 144×144 PNG](https://www.youtube.com/s/desktop/2b888666/img/favicon_144x144.png)（2026-10-02），随本仓库发布，不依赖其他人的图标仓库。插件信息字段见 [Loon 插件文档](https://nsloon.app/docs/Plugin/)。
 
-Loon 脚本列表中的条目是执行规则，同一发布文件可以由多条规则调用。配置、播放、信息流和日志在源码中由四个功能模块负责，手机实际加载请求、响应两份压缩包；当前初始化空视频使用主插件 `[Rewrite]` 的原生动作，不额外增加 JS 或开关。日志请求同时处理记录和本地页面导出，在 Safari 直接访问日志地址。初始化请求日志不读取正文；媒体响应默认只记录响应头，选择 full 才等待完整响应。
+Loon 脚本列表中的条目是执行规则，同一发布文件可以由多条规则调用。配置、播放、信息流、日志和字幕翻译在源码中分模块维护，手机实际加载请求、响应两份压缩包；当前初始化空视频使用主插件 `[Rewrite]` 的原生动作，不额外增加 JS 或开关。日志请求同时处理记录和本地页面导出，在 Safari 直接访问日志地址。初始化请求日志不读取正文；媒体响应默认只记录响应头，选择 full 才等待完整响应。
 
-JavaScript 按职责整理为四份文件：信息流及首页 Shorts、播放广告及后台播放、配置协商、日志与导出。每份文件由内部路由根据 URL 和请求/响应阶段调用对应处理逻辑，Loon 仍可直接执行，不需要运行时模块导入。文件头及每个函数都使用中文 JSDoc 注释，包含功能说明和更新时间，便于后续维护。
+JavaScript 按职责整理为信息流及首页 Shorts、播放广告及后台播放、配置协商、日志与导出、字幕翻译五份功能源码，另有平台适配层。构建入口根据 URL 和请求/响应阶段调用对应模块，Loon 仍只加载两份压缩包，不需要运行时模块导入。文件头及每个函数都使用中文 JSDoc 注释，包含功能说明和更新时间。
 
 目标包括首页/推荐列表中的赞助卡片，以及 YouTube 插入的片头及中插广告。**当前保留已识别 API 广告位和普通 Player 广告协商清理；HTTP 204 初始化实验已因实机持续黑屏而撤回，按用户要求改为 Loon 原生 `reject_video(200)` 空白视频方案。用户已确认该版本能正常播放，并在大量视频测试后反馈效果不错，暂时保留；不能据此承诺所有视频无广告或零启动等待。** 历史初始化请求改写代码只用于离线回归，不再由主插件调用。
+
+## 三平台共享底层接口（1.0.0）
+
+供插件作者直接引用的发布地址只有两份，所有功能与平台适配都已打包，不需要额外运行库：
+
+- [request.min.js](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js)：请求修改、字幕目标语言、广告配置响应和日志页面。
+- [response.min.js](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/response.min.js)：信息流、播放器响应、后台播放、配置缓存和媒体日志。
+
+| 平台 | 可引用配置 | 验证范围 |
+| --- | --- | --- |
+| Loon | [YouTubeNoAds.plugin](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/YouTubeNoAds.plugin) | 原去广告方案已有用户实测；本次适配与字幕功能仅离线验证 |
+| Quantumult X | [YouTubeNoAds.snippet](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/configs/YouTubeNoAds.snippet) | 二进制、参数、路径改写、echo 响应和存储已模拟验证；未做实机验证 |
+| Surge | [YouTubeNoAds.sgmodule](https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/configs/YouTubeNoAds.sgmodule) | 参数、存储、字幕入口与媒体头已模拟验证；未做实机验证 |
+
+圈 X 将 snippet 加入复写资源，并在 MitM 的 hostname 追加文件底部列出的域名；Surge 添加 sgmodule 并开启 MitM。证书需要安装并信任。不要同时启用另一套匹配相同请求的 YouTube 复写，以免规则覆盖。三平台均不能通过网络脚本向原生 YouTube App 注入悬浮按钮。
+
+**初始化播放存在平台差异。** Loon 继续使用已实测的 `reject_video(200)`。圈 X 与 Surge 配置保留 `initplayback` 正常网络请求，没有移植该原生动作，没有返回曾在 Loon 上导致持续黑屏的 204。它们可使用共享 API 清理逻辑，但不能据此声称已获得相同的片头广告清理效果。圈 X/Surge 示例也没有全局丢弃 UDP，不保证 QUIC 流量进入 MitM；连接未命中复写时需要检查实际传输协议与各平台策略。
+
+`src/YouTubeRuntime.js` 将平台差异集中处理：Loon 对象参数、Surge 字符串参数、圈 X URL 片段/variables 参数；圈 X 的 `bodyBytes`、`statusCode`、响应状态行与单键存储；Surge 单键删除。媒体正文按需读取，二进制视图输出只复制有效字节，避免相邻缓冲数据泄漏。圈 X 合成响应必须配合 `script-echo-response` 及 `echo_response=true`；普通请求规则不合成响应。接口依据 [圈 X 官方二进制示例](https://github.com/crossutility/Quantumult-X/blob/master/sample-bytes-rewrite.js)、[请求路径示例](https://github.com/crossutility/Quantumult-X/blob/master/sample-rewrite-request-header.js)、[Surge Script API](https://manual.nssurge.com/scripting/api.html) 适配。
+
+### 引用参数
+
+| 参数 | 默认或示例值 | 含义 |
+| --- | --- | --- |
+| `background_playback` | `false` | 按明确能力字段允许后台播放 |
+| `hide_home_shorts` | `false` | 隐藏首页 Shorts 推荐区 |
+| `translation_target` | 配置提供 `zh-CN` | 仅 `zh-CN` / `en-US`；已有字幕请求的目标语言 |
+| `playback_region` | `original` | 保留地区或指定已支持 gl；不改变出口 IP |
+| `log_enabled` | `false` | 日志与媒体采样总开关 |
+| `log_level` | `info` | 完整脱敏开发记录；`error` 仅错误 |
+| `capture_budget` | 示例 `16` | 日志容量 MB；平台存储限制仍适用 |
+| `echo_response` | 圈 X echo 规则 `true` | 允许广告配置/本地日志页面返回合成响应 |
+
+Loon 在插件设置中调整；Surge 编辑规则 `argument="key=value&key=value"`；圈 X 编辑脚本地址 `#key=value&key=value` 部分（或使用受支持版本的 variables）。**圈 X/Surge 的选项需在相关规则中同步设置**，不能只改日志页面那一条。日志页面地址仍为 `http://youtube-logs.invalid/`，进入页面不会代替启用各规则的 `log_enabled=true`。示例仅提供媒体响应头采样；完整媒体采样目前沿用 Loon 的显式选择机制，其他平台不默认缓冲完整媒体。
+
+下游可引用 main 地址跟随更新，或把 URL 中 `main` 换为已验证的提交 SHA 固定版本。源码遵循仓库根目录 [MIT 许可](../../LICENSE)，分发时保留许可和版权声明；YouTube 图标及品牌不属于自有代码许可授权范围。发布压缩包的 SHA-256 注释用于关联合并输入，修改源码后需重新构建，不要手改 min.js。
 
 ## 源码目录与压缩发布（2026-10-06）
 
 ```text
 loon/YouTube/
-├── YouTubeNoAds.plugin       # 唯一插件入口，分别加载请求包与响应包
+├── YouTubeNoAds.plugin       # Loon 插件入口
+├── configs/                 # 圈 X 复写资源和 Surge 模块
 ├── src/                     # 原始源码，保留中文 JSDoc 和更新时间
 │   ├── YouTubeFeed.js
 │   ├── YouTubePlayback.js
 │   ├── YouTubeConfig.js
+│   ├── YouTubeRuntime.js     # 三平台接口适配
+│   ├── YouTubeTranslation.js
 │   └── YouTubeLogger.js
 ├── dist/                    # 仅 request.min.js 和 response.min.js，随源码发布
 ├── tools/                   # 压缩构建与压缩版回归入口
@@ -38,15 +78,15 @@ loon/YouTube/
 
 只修改 `src/`，不手工修改 `dist/`。主插件的导入地址不变；更新主插件并刷新脚本缓存后，Loon 下载 `dist/*.min.js`。旧版插件引用的根目录 JS 已迁移，升级时需更新整个主插件，不能只刷新旧脚本地址。
 
-构建使用固定版本 Terser 5.51.2，仅移除注释和多余空白、缩短局部变量名。关闭 `compress` 控制流优化，保留顶层名称、函数名、类名、所有属性名与 Loon 全局接口；不删除调试记录或离线研究函数。四份功能源码本次只移动目录，内容未改写；构建时合并为请求包和响应包，每个功能模块用独立函数作用域隔离，按接口只执行相应模块。两份发布包仍各自独立运行，无动态加载、额外请求或手机端依赖。配置依据见 [Terser API 文档](https://terser.org/docs/api-reference/)。
+构建使用固定版本 Terser 5.51.2，仅移除注释和多余空白、缩短局部变量名。关闭 `compress` 控制流优化，保留顶层名称、函数名、类名、所有属性名与 Loon 全局接口；不删除调试记录或离线研究函数。构建时合并为请求包和响应包，每个功能模块用独立函数作用域隔离，按接口只执行相应模块。两份发布包仍各自独立运行，无动态加载、额外请求或手机端依赖。配置依据见 [Terser API 文档](https://terser.org/docs/api-reference/)。
 
 | 发布文件 | 同阶段未压缩合并字节 | 压缩字节 | 减少 |
 | --- | ---: | ---: | ---: |
-| request.min.js | 292,094 | 163,900 | 43.9% |
-| response.min.js | 352,679 | 195,009 | 44.7% |
-| 合计 | 644,773 | 358,909 | 44.3% |
+| request.min.js | 305,118 | 166,801 | 45.3% |
+| response.min.js | 361,602 | 195,709 | 45.9% |
+| 合计 | 666,720 | 362,510 | 45.6% |
 
-配置、播放器和日志同时服务请求与响应，两份发布包会包含这些源码的各自副本。此表比较同等两个合并入口的压缩前后体积，不能把总压缩体积与仅一份四模块源码直接比较，或将合并本身描述为执行提速。
+配置、播放器和日志同时服务请求与响应，两份发布包会包含这些源码的各自副本。字幕翻译仅进入请求包。此表比较同等两个合并入口的压缩前后体积，不能把总压缩体积与仅一份源码直接比较，或将合并本身描述为执行提速。
 
 压缩减少脚本下载体积和待解析文本量，可能降低加载与解析开销；它不改变网络握手、响应正文缓冲或客户端状态机，尚未测量真实 Loon 执行时间或确认能消除黑屏。日志页面包含动态生成的浏览器脚本，压缩版回归仍实际执行该输出，核对下载和脱敏行为。
 
@@ -66,7 +106,7 @@ pnpm run verify
 
 网页端扩展通常在两层处理广告：网络过滤负责拦截广告请求，页面脚本再删除播放器响应中的广告元数据和页面里的广告组件。当前实现参考 [uBlock Origin 的 YouTube 过滤规则](https://github.com/uBlockOrigin/uAssets/blob/master/filters/filters.txt) 所覆盖的 `playerAds`、`adPlacements`、`adSlots`、`pageadViewthroughconversion` 和 Shorts `isAd` 标记，并参考 [AdGuard Scriptlets](https://github.com/AdguardTeam/Scriptlets) 的响应属性替换思路。对已实际出现片头广告的新版 App，另采用[公开网页模块](https://gist.github.com/oiiogong/3b2f171141b54027e5db9a543b09b194)中的精确 `/youtubei/v1/player/ad_break` 广告配置拦截方案；Loon 无法在原生 YouTube App 内运行 DOM/scriptlet，因此这里把相同目标转换为对 `/youtubei/v1/*` JSON、Protobuf 响应和广告配置请求的定点处理。
 
-Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maasea/sgmodule/tree/master/Script/Youtube) 及公开的 [Innertube 逆向 schema](https://github.com/davidzeng0/innertube) 交叉核对。仓库没有复制第三方压缩脚本、运行库或外部 Worker，也不在运行时请求这些项目；各项功能由本目录四份自有 JS 按职责完成。浏览器方案中直接屏蔽媒体 URL 的做法没有移植到 App，以避免把广告媒体拦成黑屏或同时破坏正片。
+Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maasea/sgmodule/tree/master/Script/Youtube) 及公开的 [Innertube 逆向 schema](https://github.com/davidzeng0/innertube) 交叉核对。仓库没有复制第三方压缩脚本、运行库或外部 Worker，也不在运行时请求这些项目；各项功能由本目录自有 JS 按职责完成。浏览器方案中直接屏蔽媒体 URL 的做法没有移植到 App，以避免把广告媒体拦成黑屏或同时破坏正片。
 
 ## 实现范围
 
@@ -81,7 +121,17 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 - 字段编号和 `get_watch` 路径来自已有逆向协议描述的核对，属于协议映射信息；未复制原脚本或其库实现。YouTube 未公开保证这些编号适用于所有客户端。脚本使用字段 2 的 playabilityStatus 及 wire type 作有限检查，不能证明所有未来协议变化都能识别。
 - 空响应、非 200、损坏数据、已检测到的结构不匹配、未知内容类型、API 上的非预期 UMP、未解压的 gzip 及超限响应原样通过。限制为 2 MiB 响应、30,000 个解析字段、20,000 个 JSON 对象节点和 64 层 JSON 深度。
 - 拒绝两个 `googleapis.com` API 域名和 `*.googlevideo.com` 的 UDP/443，只用于促使 API、`initplayback` 与媒体事件日志回退到可被 MitM 的 TCP。普通 TCP `videoplayback` 放行，不修改 `ctier`、签名或音视频字节；当前只对精确命中的 YouTube App 初始化 POST 返回原生空白视频。关闭日志工具不会同时撤销该实验、`*.googlevideo.com` 的 MitM 和 UDP 回退规则。
-- 无字幕翻译、按钮隐藏、画中画或会员相关修改。后台播放仅在独立开关开启时修改明确的播放能力字段，不伪造会员状态。
+- 字幕翻译独立处理字幕请求，不修改播放能力。后台播放仅在独立开关开启时修改明确的播放能力字段，不伪造会员状态。
+
+### 字幕目标语言（2026-10-06）
+
+主插件新增“字幕目标语言”，只有 `zh-CN`（默认，简体中文）和 `en-US`（英文）两项。语言标签遵循 [BCP 47 / RFC 5646](https://datatracker.ietf.org/doc/html/rfc5646)，代码兼容小写输入。YouTube 字幕接口使用 `tlang=zh-Hans` 或 `tlang=en`；后者不保证美式英语专有措辞。
+
+在 YouTube 播放器中开启 CC 后，脚本在 `youtube.com`、`www.youtube.com`、`m.youtube.com` 的 `/api/timedtext` GET 请求头阶段，替换或追加 `tlang`，由 YouTube 原生服务返回翻译字幕。请求中的视频标识、签名、令牌、原始语言和字幕格式参数原样保留。无需等待字幕正文，不增加翻译服务请求，不保存字幕文本或请求凭据。已是目标语言时使用原字幕；若原请求有其他翻译目标，移除它以恢复原字幕。原生 `tlang` 用法可参考 [yt-dual-subs 的字幕请求实现](https://github.com/Gythiro/yt-dual-subs)。
+
+视频必须有人工字幕或自动字幕，且 YouTube 允许该轨道自动翻译。没有字幕、硬编码在画面内的文字和语音音轨不会被翻译；无需开启日志。修改目标后重新打开视频或重新开关 CC，以触发新的字幕请求。字幕语言菜单可能仍显示原轨道名称，因为本功能只修改字幕请求。字幕开启方式及可用性见 [YouTube iOS 字幕说明](https://support.google.com/youtube/answer/100078?co=GENIE.Platform%3DiOS&hl=en)。
+
+当前已验证源码与压缩入口的请求改写及参数保留，未完成 iPhone 实测，不能保证所有客户端都使用此字幕入口。如果字幕请求的签名明确包含 `tlang`，或目标语言/请求格式未知，脚本原样放行。此功能不修改已确认可播放的初始化空视频方案。
 
 ### 后台播放开关
 

@@ -1,5 +1,5 @@
 /**
- * 功能：从保留中文注释的源码生成 Loon 独立运行的压缩文件；固定工具版本和参数，支持检查产物是否过期。
+ * 功能：从保留中文注释的源码生成三平台独立运行的压缩文件；固定工具版本和参数，支持检查产物是否过期。
  * 更新时间：2026-10-06
  */
 import fs from 'node:fs/promises';
@@ -10,7 +10,7 @@ import {minify} from 'terser';
 
 const root = new URL('../', import.meta.url);
 const names = ['YouTubeFeed', 'YouTubePlayback', 'YouTubeConfig', 'YouTubeLogger'];
-const bundles = {request: ['YouTubeConfig', 'YouTubePlayback', 'YouTubeLogger'], response: names};
+const bundles = {request: ['YouTubeConfig', 'YouTubePlayback', 'YouTubeTranslation', 'YouTubeLogger'], response: names};
 const check = process.argv.includes('--check');
 if (process.argv.slice(2).some(value => value !== '--check')) throw new Error('仅支持 --check 参数');
 
@@ -23,24 +23,30 @@ if (process.argv.slice(2).some(value => value !== '--check')) throw new Error('�
 async function compileScript(phase) {
   const modules = await Promise.all(bundles[phase].map(async name => {
     const code = await fs.readFile(new URL(`src/${name}.js`, root), 'utf8');
-    return `${name}:function ${name}(){\n${code}\n}`;
+    return `${name}:function ${name}(){return ytRuntimeInvoke(function($request,$response,$argument,$persistentStore,$done){\n${code}\n});}`;
   }));
   const handlers = `yt${phase === 'request' ? 'Request' : 'Response'}Handlers`;
   const route = phase === 'request'
-    ? `if (/\\/youtubei\\/v1\\/(?:config|log_event)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubeConfig();
+    ? `if (/\\/api\\/timedtext\\?[^#]+$/i.test(url)) return ${handlers}.YouTubeTranslation();
+       if (/\\/youtubei\\/v1\\/(?:config|log_event)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubeConfig();
        if (/\\/youtubei\\/v1\\/(?:player|get_watch|player\\/ad_break)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubePlayback();
        return ${handlers}.YouTubeLogger();`
     : `if (/\\/youtubei\\/v1\\/(?:config|log_event)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubeConfig();
        if (/\\/youtubei\\/v1\\/(?:browse|next|search)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubeFeed();
        if (/\\/youtubei\\/v1\\/(?:player|get_watch|reel\\/reel_watch_sequence)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubePlayback();
        return ${handlers}.YouTubeLogger();`;
-  const source = `var ${handlers}={${modules.join(',\n')}};
+  const runtime = await fs.readFile(new URL('src/YouTubeRuntime.js', root), 'utf8');
+  const source = `${runtime}\nvar ${handlers}={${modules.join(',\n')}};
     if (typeof $done === 'function') (function(){
       if (${phase === 'request' ? "typeof $response !== 'undefined'" : "typeof $response === 'undefined'"}) return $done({});
       var url = typeof $request !== 'undefined' ? String($request.url || '') : '';
       // 日志开关是媒体采样的总开关；关闭后不读取采样选项、媒体正文或日志缓存，也不执行日志模块。
       var media = /^https:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?:videoplayback|initplayback)(?:\\?[^#]*)?$/i.test(url);
-      if (media && !(typeof $argument === 'object' && $argument && ($argument.log_enabled === true || $argument.log_enabled === 'true'))) return $done({});
+      var options = ytRuntimeOptions();
+      if (media && !(options.log_enabled === true || options.log_enabled === 'true')) {
+        if (${phase === 'response' ? 'true' : 'false'} && ytRuntimeMediaHeaders()) return;
+        return $done({});
+      }
       ${route}
     })();`;
   const hash = createHash('sha256').update(source).digest('hex');

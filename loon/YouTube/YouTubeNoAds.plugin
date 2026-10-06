@@ -1,5 +1,5 @@
 #!name = YouTube去广告
-#!desc = 按功能拆分的 YouTube App 广告处理：固定启用播放器广告协商清理、Initplayback 原生空视频响应实验、首页/推荐/搜索赞助卡片和 Shorts 广告清理；提供后台播放、隐藏首页 Shorts、日志工具三个开关及手动播放地区选择；日志默认仅采集媒体响应头，控制接口保留脱敏开发结构；可选完整媒体采样会增加等待。空视频实验需 Loon 3.5.1 Build 978+；完整采样选择需 Build 983+。需开启 MitM 并信任证书；普通 videoplayback 放行；初始化 POST 返回空视频，效果待实测。
+#!desc = YouTube App 去广告、后台播放及已有字幕轨道的翻译；字幕目标语言可选 zh-CN 或 en-US，无字幕视频无法翻译。日志默认仅采集媒体响应头，可选完整采样会增加等待。初始化空视频需 Loon 3.5.1 Build 978+，完整采样需 Build 983+。需开启 MitM 并信任证书。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/assets/youtube.png
 #!homepage = https://github.com/teaoea/shell/blob/main/loon/YouTube/README.md
 #!tag = YouTube,去广告,开发日志
@@ -7,6 +7,7 @@
 [Argument]
 background_playback = switch,false,tag=后台播放,desc=开启后允许普通视频在切换 App 或锁屏后继续播放音频；直播和受限内容仍由 YouTube 决定
 playback_region = select,"original","CN","HK","TW","US","JP","KR","SG","GB","DE","RU",tag=播放请求地区,desc=original 保持原地区；CN 中国大陆；仅修改客户端 gl 参数，不改变出口 IP，去广告效果待验证
+translation_target = select,"zh-CN","en-US",tag=字幕目标语言,desc=仅转换已有字幕轨道；简体中文 zh-CN 或美式英语 en-US；无字幕的视频无法翻译，不改变音轨、标题或简介
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
 log_enabled = switch,false,tag=日志工具,desc=关闭时同步停用全部媒体采样；开启后保存全链路脱敏记录，统一下载一个 .log 文件；完整媒体采样可能增加等待
 media_capture_mode = select,"headers","full",tag=媒体采样方式,desc=仅日志工具开启时生效，关闭日志后自动停用；headers 只记响应头；full 读取完整响应用于开发，可能增加等待，需 Loon Build 983+
@@ -30,6 +31,7 @@ request if ${url} ~= /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?
 ^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-header-replace Alt-Svc clear
 
 [Script]
+http-request ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js,requires-body=false,timeout=10,argument=[{translation_target}],tag=YouTube 字幕目标语言
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|reel\/reel_watch_sequence)(?:\?[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/videoplayback\?[^#]*$|^http:\/\/youtube-logs\.invalid(?::80)?(?:\/[^#]*)?$|^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{media_capture_mode}],tag=YouTube 日志记录与导出
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/loon/YouTube/dist/request.min.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 配置请求处理
 # 媒体采样受日志工具总开关控制：关闭后 headers/full 均不执行；保存的方式选项不代表正在采样。
