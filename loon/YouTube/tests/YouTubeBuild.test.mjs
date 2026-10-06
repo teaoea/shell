@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 const root = new URL('../', import.meta.url);
 
 test('the two published bundles reproduce exactly from current sources and pinned build options', () => {
-  const result = spawnSync(process.execPath, [new URL('tools/build.mjs', root).pathname, '--check'], {encoding: 'utf8'});
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('tools/build.mjs', root)), '--check'], {encoding: 'utf8'});
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.deepEqual(fs.readdirSync(new URL('dist/', root)).sort(), ['request.min.js', 'response.min.js']);
 });
