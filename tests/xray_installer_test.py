@@ -157,13 +157,26 @@ NETWORK_MODE=ipv4
                 self.assertIn('short-id: "0123456789abcdef"', content)
                 self.assertEqual(file.stat().st_mode & 0o777, 0o600)
                 endpoint = '[' + address + ']' if ':' in address else address
-                self.assertIn('shadowsocks=' + endpoint + ':8443', content)
+                quantumult = content.split('[quantumult-x]\n', 1)[1].split('\n\n', 1)[0]
+                fields = dict(item.split('=', 1) for item in quantumult.split(', '))
+                self.assertEqual(fields, {
+                    'vless': endpoint + ':443', 'method': 'none',
+                    'password': '00000000-0000-4000-8000-000000000000',
+                    'obfs': 'over-tls', 'obfs-host': 'www.apple.com',
+                    'reality-base64-pubkey': 'public_key',
+                    'reality-hex-shortid': '0123456789abcdef',
+                    'vless-flow': 'xtls-rprx-vision', 'udp-relay': 'true',
+                    'tag': 'Xray-REALITY',
+                })
+                self.assertNotIn('shadowsocks=', content)
                 self.assertIn('Xray-SS = ss, ' + endpoint + ', 8443', content)
                 self.assertEqual([p.name for p in file.parent.iterdir() if '.before-install.' not in p.name], ['client_config'])
         self.assertEqual(len(list((self.root / 'home').glob('client_config.before-install.*'))), 1)
         self.bash(self.credentials(False) + 'write_client_configs')
         content = (self.root / 'home/client_config').read_text()
-        self.assertEqual(re.findall(r'^\[([^]]+)\]$', content, re.M), ['loon', 'mihomo'])
+        self.assertEqual(re.findall(r'^\[([^]]+)\]$', content, re.M), ['loon', 'quantumult-x', 'mihomo'])
+        self.assertIn('vless=192.0.2.10:443, method=none', content)
+        self.assertNotIn('Xray-SS', content)
 
     def test_client_symlink_is_not_overwritten(self):
         target = self.root / 'target'
@@ -185,6 +198,13 @@ NETWORK_MODE=ipv4
                 self.assertEqual(inbound['streamSettings']['realitySettings']['minClientVer'], '1.8.2')
                 self.assertIn(inbound['settings']['clients'][0]['id'], client)
                 self.assertIn(str(inbound['port']), client)
+                quantumult = client.split('[quantumult-x]\n', 1)[1].split('\n\n', 1)[0]
+                fields = dict(item.split('=', 1) for item in quantumult.split(', '))
+                self.assertEqual(fields['vless'], '192.0.2.10:' + str(inbound['port']))
+                self.assertEqual(fields['password'], inbound['settings']['clients'][0]['id'])
+                self.assertEqual(fields['vless-flow'], inbound['settings']['clients'][0]['flow'])
+                self.assertEqual(fields['obfs-host'], inbound['streamSettings']['realitySettings']['serverNames'][0])
+                self.assertEqual(fields['reality-hex-shortid'], inbound['streamSettings']['realitySettings']['shortIds'][0])
                 self.assertEqual(len(server['inbounds']), 2 if enabled else 1)
                 if enabled:
                     ss = server['inbounds'][1]

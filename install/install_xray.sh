@@ -114,7 +114,7 @@ usage() {
   --client-address IP 所有客户端的节点地址，默认自动检测公网 IPv4/IPv6
   --loon-address IP   --client-address 的兼容别名
   --ss-port 端口      Shadowsocks 兼容入口，默认 8443（TCP/UDP）
-  --no-shadowsocks    只安装 REALITY，不生成圈 X / Surge 配置
+  --no-shadowsocks    只安装 REALITY，不生成 Surge 配置
   -h, --help          显示帮助
 
 支持 Debian/Ubuntu 和红帽系 Linux；需要运行中的 systemd。
@@ -353,7 +353,7 @@ select_xray_port() {
     if [[ "$SS_PORT_SET" != true ]]; then
       [[ "$XRAY_PORT" != "$SS_PORT" ]] || SS_PORT=8444
       if [[ "$ASSUME_YES" != true ]]; then
-        read -r -p "输入圈 X / Surge 的 Shadowsocks 端口（默认 $SS_PORT，TCP/UDP）: " answer
+        read -r -p "输入 Surge 的 Shadowsocks 端口（默认 $SS_PORT，TCP/UDP）: " answer
         [[ -z "$answer" ]] || SS_PORT=$answer
       fi
     fi
@@ -481,7 +481,7 @@ confirm_installation_plan() {
   mode_label=$(network_mode_label)
   printf '出口 IP 模式: %s；%s。\n' "$mode_label" "$optimization_text"
   if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
-    printf '同时安装 Shadowsocks AES-128-GCM 兼容入口，供圈 X / Surge 使用；默认端口 8443，稍后可修改。\n'
+    printf '同时安装 Shadowsocks AES-128-GCM 兼容入口，供 Surge 使用；默认端口 8443，稍后可修改。\n'
   fi
   printf '脚本不修改防火墙；需要自行放行所选端口。\n'
   read -r -p "将先更新软件源并安装必要工具，再处理网络设置、选择监听端口，最后询问 REALITY 伪装域名并安装 Xray，继续？(y/N): " answer
@@ -696,13 +696,13 @@ write_client_configs() {
   cat >"$bundle_temp" <<EOF
 [loon]
 Xray-REALITY = VLESS,$LOON_SERVER_IP,$XRAY_PORT,"$UUID",transport=tcp,flow=xtls-rprx-vision,public-key="$PUBLIC_KEY",short-id=$SHORT_ID,over-tls=true,sni=$REALITY_SERVER_NAME,tls-profile=chrome,udp=true,block-quic=false
+
+[quantumult-x]
+vless=$endpoint:$XRAY_PORT, method=none, password=$UUID, obfs=over-tls, obfs-host=$REALITY_SERVER_NAME, reality-base64-pubkey=$PUBLIC_KEY, reality-hex-shortid=$SHORT_ID, vless-flow=xtls-rprx-vision, udp-relay=true, tag=Xray-REALITY
 EOF
 
   if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
     cat >>"$bundle_temp" <<EOF
-
-[quantumult-x]
-shadowsocks=$endpoint:$SS_PORT, method=aes-128-gcm, password=$SS_PASSWORD, udp-relay=true, tag=Xray-SS
 
 [surge]
 Xray-SS = ss, $endpoint, $SS_PORT, encrypt-method=aes-128-gcm, password=$SS_PASSWORD, udp-relay=true
