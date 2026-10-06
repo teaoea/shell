@@ -10,24 +10,40 @@
 
 ## 安装方式
 
-在安装了 Loon 的 iPhone／iPad 上，点击下方「一键导入 Loon」，进入 Loon 后确认添加并启用插件。浏览器没有唤起 Loon 时，复制「插件安装 URL」的链接地址，在 Loon 插件页面添加远程插件。
+复制对应软件的安装 URL，在软件中添加远程插件、复写资源或模块。其他平台的具体配置步骤见各插件 README。
 
 安装链接：
 
 **ChatGPT 网络选择与本地日志**
 
-[一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FChatGPT%2FChatGPT.plugin) · [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/ChatGPT.plugin)
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/ChatGPT/ChatGPT.plugin
+```
 
 **YouTube 去广告**
 
-[一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FYouTube%2FYouTubeNoAds.plugin) · [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin)
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin
+```
 
-其他平台：[圈 X 复写资源（.snippet）](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.snippet) · [Surge 模块（.sgmodule）](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.sgmodule)。圈 X 请使用原生复写资源，无需转换 Loon 插件或 Surge 模块。
+圈 X 复写资源：
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.snippet
+```
+
+Surge 模块：
+
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.sgmodule
+```
+
+圈 X 请使用原生复写资源，无需转换 Loon 插件或 Surge 模块。
 
 **闲鱼推送网络辅助**
 
-[一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FXianyu%2FXianyuPushNetwork.plugin) · [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin)
+```text
+https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin
+```
 
 安装 URL 指向 GitHub `main` 分支。更新时在 Loon 刷新插件，并刷新脚本缓存／重新下载对应脚本。GitHub 已发布不等于手机已经加载新版，具体检查步骤见各插件的详细说明。
-
-一键导入使用 [Loon 官方 URL Scheme 与通用链接](https://nsloon.app/docs/Scheme/)，插件地址已进行 URL 编码。

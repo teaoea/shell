@@ -160,7 +160,6 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 
 ## 安装与更新
 
-- [一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FYouTube%2FYouTubeNoAds.plugin)
 - [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin)
 - [返回插件总览](../README.md)
 
@@ -168,7 +167,7 @@ Protobuf 字段和 UMP 封装另外与 [Maasea/YouTube](https://github.com/Maase
 https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/YouTubeNoAds.plugin
 ```
 
-在 iPhone／iPad 上点击一键导入，在 Loon 中确认添加并启用；如浏览器没有唤起 Loon，复制安装 URL，在 Loon 插件页面添加远程插件。开启 MitM 并信任证书，按下文刷新两份发布脚本。一键导入格式见 [Loon 官方文档](https://nsloon.app/docs/Scheme/)。
+复制安装 URL，在 Loon 插件页面添加远程插件并启用。开启 MitM 并信任证书，按下文刷新两份发布脚本。
 
 主插件按请求与响应阶段调用本仓库的两份压缩 JavaScript：
 

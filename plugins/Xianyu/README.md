@@ -10,7 +10,6 @@
 
 ## 安装与更新
 
-- [一键导入 Loon](https://www.nsloon.com/openloon/import?plugin=https%3A%2F%2Fraw.githubusercontent.com%2Fteaoea%2Fshell%2Fmain%2Fplugins%2FXianyu%2FXianyuPushNetwork.plugin)
 - [插件安装 URL](https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin)
 - [返回插件总览](../README.md)
 
@@ -18,7 +17,7 @@
 https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuPushNetwork.plugin
 ```
 
-在 iPhone／iPad 上点击一键导入，在 Loon 中确认添加并启用；如浏览器没有唤起 Loon，复制上面的安装 URL，在 Loon 插件页面添加远程插件。使用分流模式；仅使用直连规则不需要开启 MitM，采集 HTTPS 请求头和正文则需要启用 MitM 并安装、信任 Loon 证书。不需要向插件填写账号凭据。
+复制上面的安装 URL，在 Loon 插件页面添加远程插件并启用。使用分流模式；仅使用直连规则不需要开启 MitM，采集 HTTPS 请求头和正文则需要启用 MitM 并安装、信任 Loon 证书。不需要向插件填写账号凭据。
 
 `XianyuPushNetwork.plugin` 是唯一安装入口，自动引用 `XianyuLogger.js` 和 `assets/xianyu.jpg`，无需另装日志插件。安装 URL 指向 GitHub `main` 分支；更新时刷新插件，再刷新／重新下载日志脚本缓存。插件中已登记可解密的已知主机，这些主机是否被解密由全局 MitM 设置决定，与日志开关独立。
 
@@ -151,5 +150,4 @@ Loon 官方规则优先级为本地规则 > 插件规则 > 订阅规则；有域
 - [Loon：公开脚本 API](https://nsloon.app/docs/Script/script_api/)
 - [Loon：新版脚本语法、请求头匹配与首条命中规则](https://nsloon.app/docs/Script/script_v2/)
 - [Apple：闲鱼 App Store 页面](https://apps.apple.com/cn/app/id510909506)；图标来自该 App 的 [App Store 图标资源](https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/a7/7d/97/a77d970b-9da7-9154-56ab-46f114ea7736/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg)，元数据可通过 [Apple Lookup API](https://itunes.apple.com/lookup?id=510909506&country=cn) 核对。图标与名称用于辨识，本插件为非官方项目。
-- [Loon：URL Scheme 与一键导入通用链接](https://nsloon.app/docs/Scheme/)
 - [开源参考：XianyuAutoAgent 的消息连接实现](https://github.com/shaxiu/XianyuAutoAgent/blob/main/main.py)（非闲鱼官方接口文档，尚未用你的账号验证）。
