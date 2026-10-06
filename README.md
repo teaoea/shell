@@ -208,7 +208,7 @@ sudo bash /var/lib/vps-security/security_hardening.sh --rollback
 
 ## Quantumult X：YouTube 去广告
 
-[Loon 版 YouTube 去广告插件](loon/YouTube/README.md) 的 Quantumult X 移植，由同一份源码构建，只保留去广告核心：播放器广告协商清理、首页／推荐／搜索赞助卡片和 Shorts 广告清理、初始化空白视频。当前构建已开启后台播放和隐藏首页 Shorts。**尚未在 Quantumult X 设备上验证，不能保证所有视频无广告。**
+[Loon 版 YouTube 去广告插件](loon/YouTube/README.md) 的 Quantumult X 移植，由同一份源码构建，只保留去广告核心：播放器广告协商清理、首页／推荐／搜索赞助卡片和 Shorts 广告清理、初始化空白视频。当前构建已开启后台播放和隐藏首页 Shorts。用户已于 2026-10-06 在 Quantumult X 真机上确认可正常播放，片头／中插、信息流和 Shorts 广告消失，两个开关生效；没有逐视频统计，不能保证所有视频无广告。
 
 1. 在主配置的 `[general]` 段加入下面一行。它丢弃所有 App 发往 UDP 443 的流量，使 YouTube 从 QUIC 回退到可解密的 TCP；已有这一行时无需重复添加。
 
