@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.9.2；更新时间：2026-10-07
+ * 版本：1.10.0；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -157,10 +157,26 @@
       return { catalog, selected: Array.isArray(state.selected) ? state.selected.filter(id => catalog.some(tab => tab.id === id)) : null };
     } catch (_) { return { catalog: [], selected: null }; }
   }
+  function customTabURI(value) {
+    if (typeof value !== 'string') return null;
+    const uri = value.trim();
+    if (!uri || uri.length > 2048 || /[\s\x00-\x1f\x7f]/.test(uri)) return null;
+    if (!/^(?:https?:\/\/[^/?#@]+|bilibili:\/\/[a-zA-Z0-9_.-]+)(?:[/?#][^\s]*)?$/.test(uri)) return null;
+    let decoded;
+    try { decoded = decodeURIComponent(uri); } catch (_) { return null; }
+    if (/[\x00-\x1f\x7f]/.test(decoded) || /(?:[?&#]|^)(?:access_key|access_token|token|authorization|cookie|sign|password|passwd|secret|api_key)=/i.test(decoded) || /(?:javascript|data|file):/i.test(decoded)) return null;
+    return uri;
+  }
   function tabInfoStored(item) {
     if (!object(item) || typeof item.id !== 'string' || !/^(?:tab:[\w\u4e00-\u9fff:/.-]{1,96}|id:\d{1,16})$/.test(item.id) ||
       typeof item.name !== 'string' || !item.name.trim() || item.name.length > 64) return null;
     const result = { id: item.id, name: item.name };
+    if (item.source === 'custom') {
+      const uri = customTabURI(item.uri);
+      if (!uri || !Number.isSafeInteger(item.native_id) || item.native_id < 900000001 || item.native_id > 999999999 ||
+        item.id !== 'tab:loon_custom_' + item.native_id) return null;
+      return Object.assign(result, { source: 'custom', native_id: item.native_id, native_tab_id: 'loon_custom_' + item.native_id, uri });
+    }
     const nativeTab = typeof item.native_tab_id === 'string' && /^[\w\u4e00-\u9fff:/.-]{1,96}$/.test(item.native_tab_id) ? item.native_tab_id : String(item.native_id);
     if (item.source === 'region' && Number.isSafeInteger(item.native_id) && item.native_id > 0 && item.id === 'tab:' + nativeTab) {
       const uri = publicTabURI(item.uri);
@@ -276,8 +292,8 @@
     const state = readTabs();
     const ordered = state.selected === null ? state.catalog : state.selected.map(id => state.catalog.find(tab => tab.id === id)).filter(Boolean).concat(state.catalog.filter(tab => !state.selected.includes(tab.id)));
     const rows = ordered.map(tab => '<div class="tab-row"><label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
-      ((state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label><button type="button" class="drag-handle" aria-label="拖动排序：' + escapeHTML(tab.name) + '" title="拖动排序；键盘方向键也可移动">≡</button></div>').join('');
-    const selectedTabs = ordered.filter(tab => state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id));
+      ((state.selected === null ? !['region', 'custom'].includes(tab.source) || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label>' + (tab.source === 'custom' ? '<button class="delete-custom" type="submit" form="custom-delete" name="id" value="' + escapeHTML(tab.id) + '" aria-label="删除自定义标签：' + escapeHTML(tab.name) + '">×</button>' : '') + '<button type="button" class="drag-handle" aria-label="拖动排序：' + escapeHTML(tab.name) + '" title="拖动排序；键盘方向键也可移动">≡</button></div>').join('');
+    const selectedTabs = ordered.filter(tab => state.selected === null ? !['region', 'custom'].includes(tab.source) || tab.enabled === true : state.selected.includes(tab.id));
     const preview = selectedTabs.map((tab, index) => '<span class="preview-tab' + (index === 0 ? ' first' : '') + '">' + escapeHTML(tab.name) + '</span>').join('');
     // 所有调整与预览只在页面内完成；点击保存才提交，不轮询或逐项请求。
     const previewScript = `<script>(function(){
@@ -342,13 +358,14 @@
       list.addEventListener("change",update);update();
     })();</script>`;
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
-      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}.catalog-count{font-size:13px;margin:8px 0}details{font-size:14px;margin-top:16px}summary{cursor:pointer}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}#tab-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tab-row{display:flex;align-items:center;min-width:0;min-height:44px;border:1px solid #8883;border-radius:10px;background:light-dark(#fff,#20222b)}.tab-row label{flex:1;min-width:0;gap:7px;padding:8px 0 8px 9px;border:0;align-items:center;font-size:14px;line-height:1.3}.tab-row input{flex:none;width:18px;height:18px;margin:0}.tab-row span{overflow-wrap:anywhere}.drag-handle{flex:none;width:32px;min-height:44px;padding:0;margin:0;background:transparent;color:#888;font-size:23px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.drag-handle:focus-visible{outline:2px solid #fb7299;outline-offset:-3px}.tab-row.dragging{border-color:#fb7299;background:#fb729922;box-shadow:0 0 0 2px #fb729933}.tab-row.dragging .drag-handle{cursor:grabbing;color:#fb7299}@media(min-width:540px){#tab-list{grid-template-columns:repeat(3,minmax(0,1fr))}}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
+      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}.catalog-count{font-size:13px;margin:8px 0}details{font-size:14px;margin-top:16px}summary{cursor:pointer}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}#tab-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tab-row{display:flex;align-items:center;min-width:0;min-height:44px;border:1px solid #8883;border-radius:10px;background:light-dark(#fff,#20222b)}.tab-row label{flex:1;min-width:0;gap:7px;padding:8px 0 8px 9px;border:0;align-items:center;font-size:14px;line-height:1.3}.tab-row input{flex:none;width:18px;height:18px;margin:0}.tab-row span{overflow-wrap:anywhere}.delete-custom{flex:none;width:24px;height:44px;margin:0;padding:0;background:transparent;color:#888;font-size:19px}.custom-form label{display:block;padding:8px 0;border:0}.custom-form input{display:block;box-sizing:border-box;width:100%;height:42px;margin-top:6px;padding:8px 10px;border:1px solid #8884;border-radius:8px;background:light-dark(#fff,#20222b);color:inherit;font:inherit}.drag-handle{flex:none;width:32px;min-height:44px;padding:0;margin:0;background:transparent;color:#888;font-size:23px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.drag-handle:focus-visible{outline:2px solid #fb7299;outline-offset:-3px}.tab-row.dragging{border-color:#fb7299;background:#fb729922;box-shadow:0 0 0 2px #fb729933}.tab-row.dragging .drag-handle{cursor:grabbing;color:#fb7299}@media(min-width:540px){#tab-list{grid-template-columns:repeat(3,minmax(0,1fr))}}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
       (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
       '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>获取未启用的客户端分区与服务；已获取后无需重复加载。</p>' +
       '<p>勾选显示，按住 ≡ 拖动排序，预览同步更新。完成后保存并重新打开 B 站。</p>' +
       '<section class="preview-card" aria-label="首页标签预览"><div class="preview-title"><strong>首页标签预览</strong><small id="preview-status" aria-live="polite">已选 ' + selectedTabs.length + ' 项 · 按此顺序显示</small></div><div id="tab-preview">' + (preview || '<span class="preview-empty">请至少选择一个标签</span>') + '</div></section>' +
       '<p class="catalog-count">可选 ' + state.catalog.length + ' 项 · 分区与服务 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项</p>' +
       (rows ? '<form method="post" action="/tabs/save"><div id="tab-list">' + rows + '</div><button id="tabs-save" type="submit">保存选择与排序</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
+      '<form id="custom-delete" method="post" action="/tabs/delete"></form><details><summary>手动添加标签</summary><form class="custom-form" method="post" action="/tabs/add"><label>标签名称<input type="text" name="name" maxlength="64" placeholder="例如：a" required></label><label>对应 URL<input type="text" name="url" maxlength="2048" placeholder="https://example.com 或 bilibili://…" autocapitalize="none" autocorrect="off" spellcheck="false" required></label><p>支持网页链接和 B 站客户端链接。添加后勾选、拖动并保存；自定义项右侧 × 可删除。</p><button type="submit">添加标签</button></form></details>' +
       '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><details><summary>使用说明</summary><p>标签按从左到右、从上到下排序。至少保留一项，新获取项默认不勾选。按住右侧拖动柄移动，拖到屏幕边缘可滚动；手势取消会恢复本次拖动前的顺序。键盘方向键也可排序。预览突出第一项仅示意排列，不改变客户端默认选中项。</p><p>设置保存在本机，不依赖日志开关。保存后无需再运行管理按钮或获取全部标签；维持自定义效果需保持插件启用。</p></details></main>' + previewScript + '</body></html>';
   }
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -548,7 +565,7 @@
       const method = request.method || 'GET';
       if (path.startsWith('/tabs')) {
         if (path === '/tabs' && method === 'GET') return respond(200, 'text/html', tabsPage());
-        if (!['/tabs/save', '/tabs/reset', '/tabs/load'].includes(path)) return respond(404, 'text/plain', '页面不存在');
+        if (!['/tabs/save', '/tabs/reset', '/tabs/load', '/tabs/add', '/tabs/delete'].includes(path)) return respond(404, 'text/plain', '页面不存在');
         if (method !== 'POST') return respond(405, 'text/plain', '请使用页面按钮', { Allow: 'POST' });
         const headers = request.headers || {};
         const originKey = Object.keys(headers).find(key => key.toLowerCase() === 'origin');
@@ -557,6 +574,38 @@
         if (path === '/tabs/load') return fetchRegions((success, total, homepage) => respond(success ? 200 : 503, 'text/html', tabsPage(success ?
           '已获取 ' + total + ' 个分区与服务，包含未在首页启用的项。' + (homepage === false ? '基础首页标签补充失败，可稍后重试；分区列表已保留。' : '请勾选并保存。') : '完整列表获取失败，已保留现有标签与选择，请稍后重试。')));
         const state = readTabs();
+        if (path === '/tabs/add' || path === '/tabs/delete') {
+          if (typeof request.body !== 'string' || request.body.length > 32768) return respond(400, 'text/html', tabsPage('请填写有效的名称和 URL。'));
+          const form = Object.create(null);
+          try {
+            for (const pair of request.body.split('&')) {
+              const equal = pair.indexOf('=');
+              if (equal < 1) continue;
+              const key = pair.slice(0, equal);
+              if (['name', 'url', 'id'].includes(key)) form[key] = decodeURIComponent(pair.slice(equal + 1).replace(/\+/g, ' '));
+            }
+          } catch (_) { return respond(400, 'text/html', tabsPage('输入格式不正确，请重试。')); }
+          let message;
+          if (path === '/tabs/add') {
+            const name = typeof form.name === 'string' ? form.name.trim() : '', uri = customTabURI(form.url);
+            if (!name || name.length > 64 || /[\x00-\x1f\x7f]/.test(name) || !uri) return respond(400, 'text/html', tabsPage('请填写名称和有效的 http(s):// 或 bilibili:// 链接，不支持凭据参数。'));
+            if (state.catalog.length >= 100) return respond(400, 'text/html', tabsPage('标签已达 100 项，请先删除不需要的自定义标签。'));
+            if (state.catalog.some(tab => tab.source === 'custom' && tab.name === name && tab.uri === uri)) return respond(400, 'text/html', tabsPage('相同的自定义标签已存在。'));
+            let nativeID = 900000001;
+            while (state.catalog.some(tab => tab.native_id === nativeID || tab.id === 'tab:loon_custom_' + nativeID)) nativeID++;
+            state.catalog.push({ id: 'tab:loon_custom_' + nativeID, source: 'custom', native_id: nativeID, native_tab_id: 'loon_custom_' + nativeID, name, uri });
+            message = '自定义标签已添加，请勾选并保存选择与排序。';
+          } else {
+            const target = state.catalog.find(tab => tab.id === form.id && tab.source === 'custom');
+            if (!target) return respond(400, 'text/html', tabsPage('只能删除已存在的自定义标签。'));
+            state.catalog = state.catalog.filter(tab => tab !== target);
+            if (state.selected !== null) state.selected = state.selected.filter(id => id !== target.id);
+            message = '自定义标签已删除，请重新打开 B 站。';
+            if (state.selected !== null && !state.selected.length) { state.selected = null; message += '已恢复客户端原有标签。'; }
+          }
+          if (!saveTabs(state)) return respond(503, 'text/html', tabsPage('标签设置保存失败，请稍后重试。'));
+          return respond(200, 'text/html', tabsPage(message));
+        }
         if (path === '/tabs/reset') state.selected = null;
         else {
           if (typeof request.body !== 'string' || request.body.length > 32768) return respond(400, 'text/html', tabsPage('请选择至少一个标签。'));
@@ -761,7 +810,7 @@
           } else if (state.catalog.length < 100) { state.catalog.push(tab); catalogChanged = true; }
         }
         if (catalogChanged) saveTabs(state);
-        const additions = state.selected === null ? [] : state.catalog.filter(tab => tab.source === 'region' && state.selected.includes(tab.id) &&
+        const additions = state.selected === null ? [] : state.catalog.filter(tab => ['region', 'custom'].includes(tab.source) && state.selected.includes(tab.id) &&
           !data.tab.some(item => { const info = tabInfo(item); return info && info.id === tab.id; }));
         // 已选的隐藏分区可由受限公开路由新增；没有任何可用选项时保留原导航。
         if (state.selected !== null && (additions.length || data.tab.some(item => { const tab = tabInfo(item); return tab && state.selected.includes(tab.id); }))) {

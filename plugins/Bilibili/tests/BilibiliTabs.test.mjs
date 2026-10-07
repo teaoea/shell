@@ -196,3 +196,57 @@ test('unchanged homepage catalogs avoid persistent writes and saved settings sur
  h.home([...current,{...popular,name:'新热门'}]);assert.equal(h.writes(),saved+1);
  assert.deepEqual(JSON.parse(h.store.get(KEY)).selected,ids);
 });
+
+test('manual named URL tabs persist, join preview and ordered client navigation, and can be deleted',()=>{
+ const h=harness(frame([]));h.home(current);
+ const url='https://example.com/path?q=hello%20world#section';
+ const add=h.page('/tabs/add','POST','name=a&url='+encodeURIComponent(url));
+ assert.equal(add.status,200);assert.match(add.body,/自定义标签已添加/);
+ const custom=JSON.parse(h.store.get(KEY)).catalog.find(t=>t.source==='custom');
+ assert.equal(custom.name,'a');assert.equal(custom.uri,url);assert.deepEqual(h.home(current),{});
+ const ids=[custom.id,'tab:推荐tab'];
+ const saved=h.page('/tabs/save','POST',ids.map(id=>'tab='+encodeURIComponent(id)).join('&'));
+ assert.match(saved.body,/class="preview-tab first">a/);assert.match(saved.body,/删除自定义标签：a/);
+ const actual=JSON.parse(h.home(current).body).data.tab;
+ assert.deepEqual(actual[0],{id:custom.native_id,tab_id:custom.native_tab_id,name:'a',uri:url,pos:1});
+ assert.equal(actual[1].name,'推荐');assert.equal(actual[1].default_selected,1);
+ assert.deepEqual(h.home(actual),{});assert.deepEqual(JSON.parse(h.store.get(KEY)).selected,ids);
+ const del=h.page('/tabs/delete','POST','id='+encodeURIComponent(custom.id));
+ assert.equal(del.status,200);assert.equal(JSON.parse(h.store.get(KEY)).catalog.some(t=>t.id===custom.id),false);
+ assert.deepEqual(JSON.parse(h.store.get(KEY)).selected,['tab:推荐tab']);
+ assert.deepEqual(h.home(current),{});
+ assert.equal(h.page('/tabs/delete','POST','id='+encodeURIComponent('tab:推荐tab')).status,400);
+});
+
+test('custom tabs validate local mutations and URLs, preserve settings on errors, and escape names',()=>{
+ const h=harness(frame([]));h.home(current);const original=h.store.get(KEY);
+ assert.equal(h.page('/tabs/add').status,405);
+ assert.equal(h.page('/tabs/delete').status,405);
+ assert.equal(h.page('/tabs/add','POST','name=a&url=https%3A%2F%2Fexample.com',{Origin:'https://evil.example'}).status,403);
+ for(const url of ['javascript:alert(1)','file:///tmp/a','data:text/html,a','https://user:pass@example.com','https://example.com?token=PRIVATE_TOKEN','https://example.com?access_key=PRIVATE_TOKEN','https://example.com?url=javascript%3Aalert(1)','https://example.com/%ZZ','https://example.com/a\n']){
+  const response=h.page('/tabs/add','POST','name=a&url='+encodeURIComponent(url));
+  // Leading/trailing whitespace is intentionally trimmed for ordinary pasted links.
+  if(url.endsWith('\n'))continue;
+  assert.equal(response.status,400,url);assert.equal(h.store.get(KEY),original);
+  assert.ok(!response.body.includes('PRIVATE_TOKEN'));
+ }
+ assert.equal(h.page('/tabs/add','POST','name=%ZZ&url=bad').status,400);
+ const name='<img src=x onerror=alert(1)>';
+ const added=h.page('/tabs/add','POST','name='+encodeURIComponent(name)+'&url='+encodeURIComponent('bilibili://video/123'));
+ assert.equal(added.status,200);assert.ok(added.body.includes('&lt;img'));assert.ok(!added.body.includes('<img src=x'));
+ assert.equal(h.page('/tabs/add','POST','name='+encodeURIComponent(name)+'&url='+encodeURIComponent('bilibili://video/123')).status,400);
+ const prior=h.store.get(KEY);h.fail();assert.equal(h.page('/tabs/add','POST','name=b&url=https%3A%2F%2Fexample.org').status,503);assert.equal(h.store.get(KEY),prior);
+});
+
+test('deleting the last selected custom tab restores native tabs; reset keeps manual catalog without injection',()=>{
+ const h=harness(frame([]));h.home(current);
+ h.page('/tabs/add','POST','name=a&url=https%3A%2F%2Fexample.com');
+ const custom=JSON.parse(h.store.get(KEY)).catalog.find(t=>t.source==='custom');
+ h.page('/tabs/save','POST','tab='+encodeURIComponent(custom.id));
+ assert.equal(JSON.parse(h.home(current).body).data.tab[0].name,'a');
+ const reset=h.page('/tabs/reset','POST');assert.equal(reset.status,200);assert.deepEqual(h.home(current),{});
+ assert.ok(h.store.get(KEY).includes('example.com'));
+ h.page('/tabs/save','POST','tab='+encodeURIComponent(custom.id));
+ assert.match(h.page('/tabs/delete','POST','id='+encodeURIComponent(custom.id)).body,/已恢复客户端原有标签/);
+ assert.deepEqual(h.home(current),{});assert.equal(JSON.parse(h.store.get(KEY)).selected,null);
+});
