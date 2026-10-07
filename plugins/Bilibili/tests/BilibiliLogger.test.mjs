@@ -295,7 +295,7 @@ test('search module filtering logs safe counts without search words or history',
 });
 test('logger routes are disjoint and optional metadata hook does not buffer body', () => {
   const lines = plugin.split('\n').filter(line => line.startsWith('http-response '));
-  assert.equal(lines.length, 5);
+  assert.equal(lines.length, 6);
   const [filter, metadata] = lines.map(line => new RegExp(line.split(' ')[1]));
   for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/v2/splash/brand/list', '/x/v2/splash/event/list2', '/x/resource/show/tab/v2',
     '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {
@@ -352,12 +352,30 @@ test('export identifies exporter and actual producer versions without relabeling
  const h=harness(JSON.stringify({events:[old],evicted:0}));
  h.run({$request:{url:'https://app.bilibili.com/x/v3/splash/config?token='+secret,method:'POST'},$response:{status:200}});
  const exported=h.page('/export').response.body.trim().split('\n').map(JSON.parse);
- assert.equal(exported[0].script_version,'1.11.6');
+ assert.equal(exported[0].script_version,'1.11.7');
  assert.equal(exported[1].script_version,undefined);
- assert.equal(exported[2].script_version,'1.11.6');
+ assert.equal(exported[2].script_version,'1.11.7');
  assert.equal(exported[2].route_hint,'/x/v3/splash/config');
  assert.equal(exported[2].host,'app.bilibili.com');
  assert.ok(!JSON.stringify(exported).includes(secret));
  const scripts=plugin.split('\n').filter(line=>line.includes('script-path='));
- assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.6,/);
+ assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.7,/);
+});
+
+test('impression request and response logging never reads bodies or secrets and has no reject rule',()=>{
+ const h=harness();const request={url:'https://impression.biligame.com/api/impression/bilibili_pc?mid='+secret,method:'GET'};
+ Object.defineProperty(request,'body',{get(){throw Error('request body');}});
+ const response={status:204};Object.defineProperty(response,'body',{get(){throw Error('response body');}});
+ assert.deepEqual(h.run({$request:request,$response:undefined}),{});
+ assert.deepEqual(h.run({$request:request,$response:response}),{});
+ const events=JSON.parse(h.stored()).events;
+ assert.deepEqual(events.map(e=>e.phase),['request','response']);assert.equal(events[0].status,null);assert.equal(events[1].status,204);
+ for(const event of events){assert.equal(event.host,'impression.biligame.com');assert.equal(event.route_hint,'/api/impression/bilibili_pc');}
+ assert.ok(!h.page('/export').response.body.includes(secret));
+ assert.doesNotMatch(plugin,/DOMAIN,impression\.biligame\.com,REJECT/);
+ for(const kind of ['http-request','http-response']){
+  const line=plugin.split('\n').find(line=>line.startsWith(kind+' ^https://impression'));
+  assert.ok(line);assert.match(line,/requires-body=false/);assert.match(line,/enable=\{log_enabled\}/);
+  const re=new RegExp(line.split(' ')[1]);assert.ok(re.test(request.url));assert.ok(!re.test(request.url.replace('impression.biligame.com','impression.biligame.com.evil.test')));
+ }
 });
