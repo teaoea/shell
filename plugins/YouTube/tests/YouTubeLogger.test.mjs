@@ -68,7 +68,10 @@ test('main plugin exposes exactly five switches and keeps function-specific scri
   const regex = new RegExp(line.split(' ')[1]);
   assert.ok(regex.test(base + '/download.log'));
   assert.ok(!regex.test('http://youtube-logs.invalid.evil/'));
-  assert.ok(!plugin.includes('generic script-path='));
+  const tools=plugin.split('\n').filter(x=>x.startsWith('generic script-path='));
+  assert.equal(tools.length,1);
+  assert.ok(tools[0].includes('tag=YouTube 更新 UP 主名单'));
+  assert.ok(!tools[0].includes('log_enabled'));
   assert.ok(!logger.includes('$httpClient') && !logger.includes('$persistentStore.remove'));
 });
 

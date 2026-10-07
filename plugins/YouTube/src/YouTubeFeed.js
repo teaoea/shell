@@ -217,7 +217,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
  */
 (function () {
   "use strict";
-  var VERSION = "2.6.0";
+  var VERSION = "2.7.0";
   var MAX_FIELDS = 30000;
   var MAX_BYTES = 4 * 1024 * 1024;
   var MAX_JSON_NODES = 20000;
@@ -227,6 +227,9 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var debug = args.script_debug === true || args.script_debug === "true";
   var hideHomeShorts = args.hide_home_shorts === true || args.hide_home_shorts === "true";
   var adaptiveFeedAds = args.adaptive_feed_ads !== false && args.adaptive_feed_ads !== "false";
+  var blockedChannels = loadChannelBlocklist();
+  var blockedNativeChannels = !!(blockedChannels && (Object.keys(blockedChannels.ids).length || Object.keys(blockedChannels.handles).length));
+  var channelScanBudget = {fields:0};
   var endpoint = "unknown";
   var API = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(?:\?[^#]*)?$/i;
   var devMessages = [];
@@ -403,7 +406,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
         processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
-          arguments:{hide_home_shorts:hideHomeShorts, adaptive_feed_ads:adaptiveFeedAds, log_level:args.log_level || "info"}}};
+          arguments:{blocked_channels_count:blockedChannels ? blockedChannels.count : 0, hide_home_shorts:hideHomeShorts, adaptive_feed_ads:adaptiveFeedAds, log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:devBody($response.body)};
         var changed = output && Object.prototype.hasOwnProperty.call(output, "body");
@@ -928,7 +931,7 @@ function (r) {
   function cleanProto(bytes, kind, budget, depth, homeContext) {
     if (depth > 32) fail("protobuf-depth-limit");
     var records = parse(bytes, budget), edges = EDGES[kind] || {}, adFields = ADS[kind] || {};
-    var parts = [], removed = 0, adaptive = 0, shorts = 0, opaque = 0, eml = 0, dividers = 0, adSeen = false, drop = false;
+    var parts = [], removed = 0, blocked = 0, adaptive = 0, shorts = 0, opaque = 0, eml = 0, dividers = 0, adSeen = false, drop = false;
     if (hideHomeShorts && endpoint === "browse") {
       if (kind === "tab") homeContext = ascii(child(bytes, 11, budget)) === "FEwhat_to_watch";
       if (kind === "sectionList" && !homeContext) homeContext = protoHomeContinuation(bytes, records, budget);
@@ -977,6 +980,9 @@ function (other) {return other.no >= 1000000 && other.no !== 51845067;})) {
           shorts++; drop = true; return;
         }
       }
+      if(blockedChannels && r.no===50630979 && r.wire===2 && /^(?:sectionItem|secondaryItem|contentItem)$/.test(kind) &&
+         !records.some(/** 功能：混合 Renderer 保留，避免误删同项其他内容。更新时间：2026-10-07。 */function(other){return other.no>=1000000&&other.no!==50630979;}) &&
+         blockedProtoModel(bytes.subarray(r.payloadStart,r.end))){blocked++;drop=true;return;}
       var next = edges[r.no];
       if (!next) { parts.push(bytes.subarray(r.start, r.end)); return; }
       if (r.wire !== 2) fail("feed-envelope-schema-mismatch");
@@ -996,16 +1002,17 @@ function (other) {return other.no >= 1000000 && other.no !== 51845067;})) {
  */
 function (other) {return other.no >= 1000000 && other.no !== 153515154;})) fail("feed-mixed-renderer");
         if (identity.ad) {removed++; eml++; drop = true; return;}
+        if(blockedChannels && !records.some(/** 功能：仅处理独立视频卡。更新时间：2026-10-07。 */function(other){return other.no>=1000000&&other.no!==153515154;}) && blockedProtoElement(cardBytes)){blocked++;drop=true;return;}
         opaque++;
         divider = identity.divider && records.length === 1;
         parts.push(bytes.subarray(r.start, r.end));
         return;
       }
       result = cleanProto(bytes.subarray(r.payloadStart, r.end), next, budget, depth + 1, homeContext);
-      removed += result.removed; adaptive += result.adaptive || 0; shorts += result.shorts; opaque += result.opaque; eml += result.eml; dividers += result.dividers;
+      removed += result.removed; blocked += result.blocked || 0; adaptive += result.adaptive || 0; shorts += result.shorts; opaque += result.opaque; eml += result.eml; dividers += result.dividers;
       if ((kind === "sectionList" || kind === "secondaryList" || kind === "itemSection" || kind === "deferredItems") && r.no === 1) {
         listCount++;
-        if (result.drop) {pendingAd = result.removed > 0; return;}
+        if (result.drop) {pendingAd = result.removed > 0 || result.blocked > 0; return;}
 
         if (kind !== "itemSection" && pendingAd && result.divider) {dividers++; pendingAd = false; return;}
         pendingAd = false; keptListCount++;
@@ -1023,7 +1030,7 @@ function (other) {return other.no >= 1000000 && other.no !== 50195462;})) fail("
         }
         divider = result.divider && records.length === 1;
       }
-      parts.push(result.removed || result.shorts || result.dividers ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
+      parts.push(result.removed || result.blocked || result.shorts || result.dividers ? replaceChild(bytes, r, result.body) : bytes.subarray(r.start, r.end));
     });
     if (kind === "itemSection") {
       var safeMetadata = records.every(
@@ -1032,10 +1039,151 @@ function (other) {return other.no >= 1000000 && other.no !== 50195462;})) fail("
  * 更新时间：2026-10-04T08:54:22+08:00
  */
 function (r) {return r.no === 1 || r.no === 4 || r.no === 8;});
-      drop = removed > 0 && listCount > 0 && keptListCount === 0 && safeMetadata;
+      drop = (removed > 0 || blocked > 0) && listCount > 0 && keptListCount === 0 && safeMetadata;
       divider = divider && listCount === 1 && safeMetadata;
     }
-    return {body:removed || shorts || dividers ? join(parts) : bytes, removed:removed, adaptive:adaptive, shorts:shorts, opaque:opaque, eml:eml, dividers:dividers, drop:drop, divider:divider};
+    return {body:removed || blocked || shorts || dividers ? join(parts) : bytes, removed:removed, blocked:blocked, adaptive:adaptive, shorts:shorts, opaque:opaque, eml:eml, dividers:dividers, drop:drop, divider:divider};
+  }
+
+  /**
+   * 功能：解析空格分隔的频道名单；频道 ID 区分大小写，账号不区分大小写，名称精确匹配。
+   * 更新时间：2026-10-07
+   */
+  function channelBlocklist(value){
+    if(typeof $loon!=='string'||typeof value!=='string'||!value.trim()||value.length>8192)return null;
+    var tokens=value.trim().split(/\s+/),out={ids:Object.create(null),handles:Object.create(null),names:Object.create(null),count:0};
+    if(tokens.length>256)return null;
+    for(var i=0;i<tokens.length;i++){var token=tokens[i];if(token.length>160||/[<>\x00-\x1f]/.test(token))continue;
+      var key=channelKey(token);if(!key)continue;var map=key.kind==='id'?out.ids:key.kind==='handle'?out.handles:out.names;
+      if(!map[key.value]){map[key.value]=true;out.count++;}
+    }return out.count?out:null;
+  }
+  /**
+   * 功能：合并手动名单与当前远程地址的缓存；默认留空不读存储，过滤时不发起下载。
+   * 更新时间：2026-10-07
+   */
+  function loadChannelBlocklist(){
+    var local=channelBlocklist(args.blocked_channels);
+    if(typeof $loon!=='string'||typeof args.blocked_channels_url!=='string'||!args.blocked_channels_url.trim()||typeof $persistentStore==='undefined')return local;
+    try{var raw=$persistentStore.read('ytads.channels.remote.v1');if(typeof raw!=='string'||raw.length>16384)return local;
+      var cache=JSON.parse(raw);if(!cache||cache.schema!==1||cache.url!==args.blocked_channels_url.trim()||!Number.isFinite(cache.fetchedAt))return local;
+      var remote=channelBlocklist(cache.text);if(!remote)return local;if(!local)return remote;
+      ['ids','handles','names'].forEach(/** 功能：对两份精确匹配映射去重合并。更新时间：2026-10-07。 */function(kind){Object.keys(remote[kind]).forEach(/** 功能：仅合并频道标识，不合并远程缓存元数据。更新时间：2026-10-07。 */function(key){if(!local[kind][key]){local[kind][key]=true;local.count++;}});});return local;
+    }catch(_){return local;}
+  }
+  /**
+   * 功能：规范化频道标识；仅接受 YouTube 频道链接，不把任意网址转换为频道名。
+   * 更新时间：2026-10-07
+   */
+  function channelKey(value){
+    if(typeof value!=='string')return null;var text=value.trim();if(!text||text.length>160)return null;
+    if(/^https?:\/\//i.test(text)){var link=/^https?:\/\/(?:www\.|m\.)?youtube\.com\/(channel\/UC[\w-]{22}|@[^/?#\s]+)\/?$/i.exec(text);if(!link)return null;text='/'+link[1];}
+    if(text.indexOf('/channel/')===0)text=text.slice(9);
+    if(text.indexOf('/@')===0)text=text.slice(1);
+    if(typeof text.normalize==='function')text=text.normalize('NFC');
+    if(/^UC[\w-]{22}$/.test(text))return {kind:'id',value:text};
+    if(/^@[^\s/?#<>]{1,100}$/.test(text))return {kind:'handle',value:text.toLowerCase()};
+    if(/^(?:[a-z]+:|\/)/i.test(text)||/[\x00-\x1f<>]/.test(text))return null;
+    return {kind:'name',value:text};
+  }
+  /**
+   * 功能：在白名单频道属性中精确匹配，不搜索视频标题、简介、评论或菜单文字。
+   * 更新时间：2026-10-07
+   */
+  function blockedIdentity(id,handle,name){
+    if(!blockedChannels)return false;
+    var key=channelKey(id);if(key&&key.kind==='id'&&blockedChannels.ids[key.value])return true;
+    key=channelKey(handle);if(key&&key.kind==='handle'&&blockedChannels.handles[key.value])return true;
+    key=channelKey(name);return !!(key&&key.kind==='name'&&blockedChannels.names[key.value]);
+  }
+  /**
+   * 功能：检查视频卡片作者字段；混合 Renderer、播放列表、频道卡和分页项保持原样。
+   * 更新时间：2026-10-07
+   */
+  function blockedJSONCard(value,depth){
+    if(!blockedChannels||!object(value)||depth>8)return false;
+    var keys=Object.keys(value).filter(/** 功能：限定卡片联合类型。更新时间：2026-10-07。 */function(k){return /(?:Renderer|ViewModel)$/.test(k);});
+    if(keys.length!==1)return false;var kind=keys[0],card=value[kind];if(!object(card))return false;
+    if(kind==='richItemRenderer')return blockedJSONCard(card.content,depth+1);
+    if(['videoRenderer','compactVideoRenderer','gridVideoRenderer','reelItemRenderer','playlistVideoRenderer','lockupViewModel','shortsLockupViewModel'].indexOf(kind)<0)return false;
+    if(kind==='lockupViewModel'&&card.contentType!=='LOCKUP_CONTENT_TYPE_VIDEO'&&card.contentType!=='LOCKUP_CONTENT_TYPE_SHORT')return false;
+    if(blockedIdentity(card.channelId,card.channelHandle,null))return true;
+    /**
+     * 功能：读取带频道导航的作者文字或明确的作者栏；不使用视频标题与描述。
+     * 更新时间：2026-10-07
+     */
+    function author(text){
+      if(!object(text))return false;
+      if(typeof text.simpleText==='string'&&blockedIdentity(null,null,text.simpleText))return true;
+      var runs=Array.isArray(text.runs)?text.runs:[];
+      for(var i=0;i<runs.length&&i<32;i++){var run=runs[i],ep=run&&run.navigationEndpoint&&run.navigationEndpoint.browseEndpoint;
+        if(ep&&blockedIdentity(ep.browseId,ep.canonicalBaseUrl,run.text))return true;
+      }return false;
+    }
+    if(author(card.ownerText)||author(card.shortBylineText)||author(card.longBylineText)||author(card.bylineText))return true;
+    var thumb=card.channelThumbnailSupportedRenderers&&card.channelThumbnailSupportedRenderers.channelThumbnailWithLinkRenderer;
+    var nav=thumb&&thumb.navigationEndpoint&&thumb.navigationEndpoint.browseEndpoint;
+    if(nav&&blockedIdentity(nav.browseId,nav.canonicalBaseUrl,null))return true;
+    var metadata=card.metadata&&card.metadata.lockupMetadataViewModel;
+    var content=metadata&&metadata.metadata&&metadata.metadata.contentMetadataViewModel;
+    var rows=content&&content.metadataRows;if(!Array.isArray(rows))return false;
+    for(var r=0;r<rows.length&&r<8;r++){var parts=rows[r]&&rows[r].metadataParts;if(!Array.isArray(parts))continue;
+      for(var p=0;p<parts.length&&p<16;p++){var text=parts[p]&&parts[p].text;if(!object(text)||!Array.isArray(text.commandRuns))continue;
+        for(var c=0;c<text.commandRuns.length&&c<32;c++){var command=text.commandRuns[c],ep=command&&command.onTap&&command.onTap.innertubeCommand&&command.onTap.innertubeCommand.browseEndpoint;
+          if(!ep)continue;var name=null,start=command.startIndex,length=command.length;
+          if(typeof text.content==='string'&&Number.isInteger(start)&&Number.isInteger(length)&&start>=0&&length>0&&start+length<=text.content.length)name=text.content.slice(start,start+length);
+          if(blockedIdentity(ep.browseId,ep.canonicalBaseUrl,name))return true;
+        }
+      }
+    }return false;
+  }
+  /**
+   * 功能：在单个已识别视频模型内查找频道导航；遇到多个频道、超限或不明结构时保留卡片。
+   * 更新时间：2026-10-07
+   */
+  function blockedProtoModel(bytes){
+    if(!blockedNativeChannels||channelScanBudget.fields>=MAX_FIELDS)return false;
+    var identities=Object.create(null),nodes=0;
+    /** 功能：只解码短 UTF-8 标识，未知字节不解释为文字。更新时间：2026-10-07。 */
+    function text(b){if(!b||b.length>640||typeof TextDecoder!=='function')return '';try{return new TextDecoder('utf-8',{fatal:true}).decode(b);}catch(_){return '';}}
+    /**
+     * 功能：从明确的 BrowseEndpoint 扩展读取 UCID 及频道账号；不匹配任意二进制片段。
+     * 更新时间：2026-10-07
+     */
+    function browse(b){var fields=parse(b,channelScanBudget),id='',handle='';for(var i=0;i<fields.length;i++){var f=fields[i];if(f.wire!==2)continue;var value=text(b.subarray(f.payloadStart,f.end));
+        if(f.no===2&&/^UC[\w-]{22}$/.test(value)){if(id&&id!==value)return null;id=value;}
+        var key=channelKey(value);if(key&&key.kind==='handle'&&value.indexOf('/@')===0)handle=value;
+      }return id?{id:id,handle:handle}:null;}
+    /** 功能：受限遍历当前视频模型，原始字节不改写。更新时间：2026-10-07。 */
+    function walk(b,depth){if(++nodes>256||depth>16)throw Error('channel-scan-limit');var fields;
+      try{fields=parse(b,channelScanBudget);}catch(error){if(error.ytNoAdsCode==='field-limit')throw error;return;}
+      for(var i=0;i<fields.length;i++){var f=fields[i];if(f.wire!==2)continue;var childBytes=b.subarray(f.payloadStart,f.end);
+        if(f.no===48687626){var identity=browse(childBytes);if(identity){var previous=identities[identity.id];identities[identity.id]={id:identity.id,handle:identity.handle||previous&&previous.handle||''};}continue;}
+        walk(childBytes,depth+1);
+      }
+    }
+    try{walk(bytes,0);var ids=Object.keys(identities);if(ids.length!==1)return false;var identity=identities[ids[0]];return blockedIdentity(identity.id,identity.handle,null);}catch(_){return false;}
+  }
+  /**
+   * 功能：只检查已识别的单个视频 Elements 模板；共享定义、嵌套卡片及未知模板不裁剪。
+   * 更新时间：2026-10-07
+   */
+  function blockedProtoElement(bytes){
+    if(!blockedNativeChannels||channelScanBudget.fields>=MAX_FIELDS)return false;
+    try{
+      if(parse(bytes,channelScanBudget).some(/** 功能：未知混合 Renderer 保持原样。更新时间：2026-10-07。 */function(r){return r.no>=1000000&&r.no!==172660663;}))return false;
+      var element=child(bytes,172660663,channelScanBudget);if(!element)return false;
+      if(parse(element,channelScanBudget).some(/** 功能：排除含子卡片的容器。更新时间：2026-10-07。 */function(r){return r.no===3;}))return false;
+      var type=child(element,1,channelScanBudget);if(!type)return false;
+      if(parse(type,channelScanBudget).some(/** 功能：未知混合联合类型保持原样。更新时间：2026-10-07。 */function(r){return r.no>=1000000&&r.no!==168777401;}))return false;
+      var component=child(type,168777401,channelScanBudget);if(!component)return false;
+      var templateType=child(component,3,channelScanBudget),model=child(component,5,channelScanBudget);if(!templateType||!model)return false;
+      if(parse(templateType,channelScanBudget).length!==1)return false;
+      var template=child(templateType,172035250,channelScanBudget);if(!template)return false;
+      var name=ascii(child(template,1,channelScanBudget));if(!/^(?:video_lockup_with_attachment|video_lockup|video_cell|compact_video_cell|shorts_video_cell)\.eml-fe\|[0-9a-f]{16}$/.test(name))return false;
+      var fields=parse(model,channelScanBudget);if(fields.length!==1||fields[0].wire!==2)return false;
+      return blockedProtoModel(model.subarray(fields[0].payloadStart,fields[0].end));
+    }catch(_){return false;}
   }
 
   var AD_KEYS = ["adSlotRenderer", "adPlacementRenderer", "inFeedAdLayoutRenderer",
@@ -1197,7 +1345,7 @@ function (item) {return shortsItem(item, 0);});
    * 更新时间：2026-10-04T08:54:22+08:00
    */
   function cleanJSON(text) {
-    var root = JSON.parse(text), nodes = 0, removed = 0, shorts = 0, opaque = 0;
+    var root = JSON.parse(text), nodes = 0, removed = 0, blocked = 0, shorts = 0, opaque = 0;
     var enabled = hideHomeShorts && endpoint === "browse";
     /**
      * 功能：执行 walk 对应的内部处理步骤。
@@ -1231,6 +1379,7 @@ function (key) {
  */
 function (entry) {
             if (adCard(entry, 0)) { removed++; return false; }
+            if (blockedChannels && blockedJSONCard(entry,0)) {blocked++;return false;}
             if (enabled && homeContext && jsonShortsCard(entry, 0)) {shorts++; return false;}
             return true;
           });
@@ -1240,7 +1389,7 @@ function (entry) {
       });
     }
     walk(root, 0, requestHome());
-    return {body:removed || shorts ? JSON.stringify(root) : text, removed:removed, shorts:shorts, opaque:opaque};
+    return {body:removed || blocked || shorts ? JSON.stringify(root) : text, removed:removed, blocked:blocked, shorts:shorts, opaque:opaque};
   }
   /**
    * 功能：根据当前 Loon 请求或响应执行对应处理流程。
@@ -1265,7 +1414,7 @@ function (entry) {
         text = new TextDecoder("utf-8", {fatal:true}).decode(bytes);
       }
       result = cleanJSON(text);
-      if ((result.removed || result.shorts) && bytes) {
+      if ((result.removed || result.blocked || result.shorts) && bytes) {
         if (typeof TextEncoder !== "function") {log("pass: no UTF-8 encoder"); return {};}
         result.body = new TextEncoder().encode(result.body);
       }
@@ -1274,8 +1423,8 @@ function (entry) {
       if (endpoint === "search") {log("pass: search protobuf schema unsupported"); return {};}
       result = cleanProto(bytes, endpoint, {fields:0}, 0, requestHome());
     }
-    log((result.removed || result.shorts ? "changed" : "pass") + ": removed=" + result.removed + " adaptive_removed=" + (result.adaptive || 0) + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque + " removed_eml=" + (result.eml || 0) + " removed_dividers=" + (result.dividers || 0) + " hidden_shorts=" + (result.shorts || 0));
-    return result.removed || result.shorts ? {body:result.body} : {};
+    log((result.removed || result.blocked || result.shorts ? "changed" : "pass") + ": removed=" + result.removed + " adaptive_removed=" + (result.adaptive || 0) + " format=" + (json || typeof body === "string" ? "json" : "protobuf") + " opaque_elements=" + result.opaque + " removed_eml=" + (result.eml || 0) + " removed_dividers=" + (result.dividers || 0) + " hidden_shorts=" + (result.shorts || 0) + " hidden_channels=" + (result.blocked || 0));
+    return result.removed || result.blocked || result.shorts ? {body:result.body} : {};
   }
   var output = {};
   try { output = run(); }

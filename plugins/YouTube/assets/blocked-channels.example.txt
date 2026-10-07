@@ -1,0 +1,6 @@
+# YouTube 频道屏蔽名单模板。将下面示例替换为需要隐藏的频道。
+# 支持空格或换行分隔；不要添加通配符、逗号或 - reject。
+# 名称含空格时使用 @账号 或频道 ID，二进制列表优先使用频道 ID。
+# @channel_one
+# https://www.youtube.com/@channel_two
+# UCxxxxxxxxxxxxxxxxxxxxxx

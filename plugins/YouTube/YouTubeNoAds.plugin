@@ -12,6 +12,8 @@ playback_region = select,"original","CN","HK","TW","US","JP","KR","SG","GB","DE"
 translation_enabled = switch,false,tag=字幕翻译,desc=开启后将已有字幕翻译为所选目标语言；关闭时保留原字幕请求
 translation_target = select,"zh-CN","en-US",tag=字幕目标语言,desc=仅转换已有字幕轨道；简体中文 zh-CN 或美式英语 en-US；无字幕的视频无法翻译，不改变音轨、标题或简介
 hide_home_shorts = switch,false,tag=隐藏首页 Shorts,desc=开启后移除首页 Shorts 推荐区；保留底部 Shorts 入口和其他页面
+blocked_channels = input,"",tag=UP 主屏蔽名单,desc=多个频道 ID、@账号或完整频道名称用空格分隔；优先使用频道 ID，名称含空格请用账号或 ID；留空不生效，仅隐藏能识别归属的视频
+blocked_channels_url = input,"",tag=远程 UP 主名单 URL,desc=填写公开 HTTPS 文本直链如 GitHub Raw；每小时更新本地缓存，也可运行更新名单脚本；与手动名单合并，留空停用远程名单
 log_enabled = switch,false,tag=日志工具,desc=关闭时同步停用全部媒体采样；开启后保存全链路脱敏记录，统一下载一个 .log 文件；完整媒体采样可能增加等待
 quality_research = switch,false,tag=画质研究采样,desc=仅日志工具开启时生效；记录可识别的画质与格式参数，读取小型媒体 POST 请求用于对照研究，不自动切换画质
 media_capture_mode = select,"headers","full",tag=媒体采样方式,desc=仅日志工具开启时生效，关闭日志后自动停用；headers 只记响应头；full 读取完整响应用于开发，可能增加等待
@@ -35,6 +37,10 @@ request if ${url} ~= /^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?
 ^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-header-replace Alt-Svc clear
 
 [Script]
+# 功能：独立更新频道名单缓存；信息流脚本只读缓存，不等待远程下载。
+# 更新时间：2026-10-07
+cron "0 * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,timeout=10,argument=[{blocked_channels_url}],tag=YouTube 定时更新 UP 主名单
+generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,timeout=10,argument=[{blocked_channels_url}],tag=YouTube 更新 UP 主名单,img-url=person.crop.circle.badge.xmark.system
 http-request ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,requires-body=false,timeout=10,enable={translation_enabled},argument=[{translation_enabled},{translation_target}],tag=YouTube 字幕目标语言
 # 功能：仅显式开启日志及画质研究时读取 videoplayback POST；不命中初始化空视频。
 # 更新时间：2026-10-07；必须在普通日志入口前匹配，默认不增加正文缓冲。
@@ -49,7 +55,7 @@ http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?you
 
 http-request ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch)(?:\?[^#]*)?$|^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/request.min.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{playback_region}],tag=YouTube 播放请求与广告配置处理
 
-http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/response.min.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{hide_home_shorts}],tag=YouTube 信息流广告与首页 Shorts 处理
+http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/response.min.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{hide_home_shorts},{blocked_channels},{blocked_channels_url}],tag=YouTube 信息流广告与首页 Shorts 处理
 http-response ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$|^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/reel\/reel_watch_sequence(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/YouTube/dist/response.min.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled},{log_level},{capture_budget},{background_playback},{quality_research}],tag=YouTube 播放响应与后台播放
 
 

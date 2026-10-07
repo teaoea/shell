@@ -11,7 +11,7 @@ import {minify} from 'terser';
 
 const root = new URL('../', import.meta.url);
 const names = ['YouTubeFeed', 'YouTubePlayback', 'YouTubeConfig', 'YouTubeLogger'];
-const bundles = {request: ['YouTubeConfig', 'YouTubePlayback', 'YouTubeTranslation', 'YouTubeLogger'], response: names};
+const bundles = {request: ['YouTubeConfig', 'YouTubePlayback', 'YouTubeTranslation', 'YouTubeLogger', 'YouTubeChannelList'], response: names};
 const check = process.argv.includes('--check');
 if (process.argv.slice(2).some(value => value !== '--check')) throw new Error('仅支持 --check 参数');
 
@@ -28,7 +28,8 @@ async function compileScript(phase) {
   }));
   const handlers = `yt${phase === 'request' ? 'Request' : 'Response'}Handlers`;
   const route = phase === 'request'
-    ? `if (/\\/api\\/timedtext\\?[^#]+$/i.test(url)) return ${handlers}.YouTubeTranslation();
+    ? `if (typeof $request === 'undefined' && typeof $loon === 'string' && Object.prototype.hasOwnProperty.call(options, 'blocked_channels_url')) return ${handlers}.YouTubeChannelList();
+       if (/\\/api\\/timedtext\\?[^#]+$/i.test(url)) return ${handlers}.YouTubeTranslation();
        if (/\\/youtubei\\/v1\\/(?:config|log_event)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubeConfig();
        if (/\\/youtubei\\/v1\\/(?:player|get_watch|player\\/ad_break)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubePlayback();
        return ${handlers}.YouTubeLogger();`

@@ -44,6 +44,15 @@ function player(store,body='{"playabilityStatus":{},"adSlots":[],"videoDetails":
     $response:{status:200,headers:{'Content-Type':'application/json'},body},...extra
   });
 }
+test('channel filtering INFO capture contains only counts and never the local or remote blacklist',()=>{
+ const store=started(),id='UC'+'A'.repeat(22),name='PRIVATE_CHANNEL_NAME',handle='@PRIVATE_HANDLE',url='https://raw.githubusercontent.com/PRIVATE_OWNER/PRIVATE_REPO/main/list.txt';
+ const body=JSON.stringify({contents:[{videoRenderer:{ownerText:{runs:[{text:name,navigationEndpoint:{browseEndpoint:{browseId:id,canonicalBaseUrl:'/'+handle}}}]}}}]});
+ store.set('ytads.channels.remote.v1',JSON.stringify({schema:1,url,text:handle,fetchedAt:1}));
+ run('YouTubeFeed',store,{$argument:{log_enabled:true,log_level:'info',blocked_channels:id+' '+name,blocked_channels_url:url},$request:{url:'https://youtubei.googleapis.com/youtubei/v1/browse'},$response:{status:200,headers:{'Content-Type':'application/json'},body}});
+ const saved=JSON.stringify(exportData(store));for(const value of [id,name,handle,url])assert.ok(!saved.includes(value),value);
+ assert.equal(exportData(store).events[0].capture.processing.arguments.blocked_channels_count,3);
+ assert.match(saved,/hidden_channels=1/);
+});
 
 // 合成对照样本仅包含公开候选字段，未知二进制故意放入秘密以验证落盘边界。
 function qualityVarint(n){const out=[];while(n>=128){out.push(n%128+128);n=Math.floor(n/128);}return [...out,n];}

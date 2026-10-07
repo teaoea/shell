@@ -18,6 +18,97 @@ const ad=msg(424701016,[255,1]); // opaque ad body must never be guessed as prot
 const normal=msg(50195462,msg(1,msg(99,[255,254,0])));
 const tracking=msg(4,[1,2,3]);
 const initial=list=>msg(9,msg(49399797,list));
+const blockedId='UC'+'A'.repeat(22),keptId='UC'+'B'.repeat(22);
+const channelOptions=blocked_channels=>({$loon:'test-loon',$argument:{script_debug:true,blocked_channels}});
+function channelVideo(id,handle='@blocked',name='测试频道'){
+ return {videoRenderer:{videoId:'VIDEO',title:{simpleText:'测试频道出现在标题不应参与匹配'},ownerText:{runs:[{text:name,navigationEndpoint:{browseEndpoint:{browseId:id,canonicalBaseUrl:'/'+handle}}}]}}};
+}
+for(const endpoint of ['browse','next','search'])test(`${endpoint} hides only videos by exact blocked author and preserves pagination and metadata`,()=>{
+ const keep=channelVideo(keptId,'@keep','其他频道'),pagination={continuationItemRenderer:{continuationEndpoint:{token:'KEEP'}}};
+ const data={contents:[channelVideo(blockedId),keep,pagination,{channelRenderer:{channelId:blockedId}},{playlistRenderer:{ownerText:{simpleText:'测试频道'}}}],metadata:channelVideo(blockedId)};
+ const result=run(JSON.stringify(data),{endpoint,extra:channelOptions(blockedId)});
+ const out=JSON.parse(result.output.body);assert.deepEqual(out.contents,data.contents.slice(1));assert.deepEqual(out.metadata,data.metadata);
+ assert.match(result.logs.join(''),/hidden_channels=1/);assert.ok(!result.logs.join('').includes(blockedId));
+});
+test('space separated handles and names are exact, Unicode aware and do not match titles or descriptions',()=>{
+ const keep=channelVideo(keptId,'@keep','测试频道扩展'),blocked=channelVideo(blockedId,'@TestHandle','另一个频道');
+ const named=channelVideo(keptId,'@else','完整中文名');
+ const wrapped={richItemRenderer:{content:named}};
+ const data={contents:[keep,blocked,wrapped],comments:[{text:'完整中文名'}]};
+ const result=run(JSON.stringify(data),{extra:channelOptions('  @testhandle   完整中文名\t@testhandle  ')});
+ assert.deepEqual(JSON.parse(result.output.body),{contents:[keep],comments:data.comments});assert.match(result.logs.join(''),/hidden_channels=2/);
+});
+test('blocked handles also accept exact YouTube channel URLs while unknown and mixed cards stay intact',()=>{
+ const keep={videoRenderer:{ownerText:{runs:[{text:'测试频道'}]},description:'@blocked',title:'测试频道'}},mixed={...channelVideo(blockedId),channelRenderer:{channelId:keptId}};
+ const data={contents:[channelVideo(blockedId),keep,mixed,{elementRenderer:{opaque:'@blocked'}}]};
+ const out=JSON.parse(run(JSON.stringify(data),{extra:channelOptions('https://www.youtube.com/@blocked')}).output.body);
+ assert.deepEqual(out.contents,data.contents.slice(1));
+});
+test('modern JSON video metadata uses linked channel command spans and never playlist metadata',()=>{
+ const metadata={lockupMetadataViewModel:{title:{content:'@blocked'},metadata:{contentMetadataViewModel:{metadataRows:[{metadataParts:[{text:{content:'完整中文名 · 100 次观看',commandRuns:[{startIndex:0,length:5,onTap:{innertubeCommand:{browseEndpoint:{browseId:blockedId,canonicalBaseUrl:'/@blocked'}}}}]}}]}]}}}};
+ const video={lockupViewModel:{contentId:'VIDEO',contentType:'LOCKUP_CONTENT_TYPE_VIDEO',metadata}};
+ const playlist={lockupViewModel:{contentId:'PLAYLIST',contentType:'LOCKUP_CONTENT_TYPE_PLAYLIST',metadata}};
+ const out=JSON.parse(run(JSON.stringify({items:[video,playlist]}),{extra:channelOptions('完整中文名')}).output.body);
+ assert.deepEqual(out.items,[playlist]);
+});
+for(const [name,extra] of [['empty',channelOptions('')],['whitespace',channelOptions('   ')],['other platform',{$argument:{blocked_channels:blockedId}}],['oversized',channelOptions('x'.repeat(8193))],['too many tokens',channelOptions(Array(257).fill(blockedId).join(' '))]])test(`channel blocking ${name} preserves original no-ad response bytes`,()=>{
+ const data=' { "contents": ['+JSON.stringify(channelVideo(blockedId))+'] } ';
+ assert.equal(Object.keys(run(data,{extra}).output).length,0);
+});
+const channelCommand=(id,handle='@blocked')=>msg(48687626,cat(msg(2,new TextEncoder().encode(id)),msg(4,new TextEncoder().encode('/'+handle))));
+test('native EML channel filtering rebuilds enclosing lengths while preserving unknown bytes and continuation',()=>{
+ const model=cat(msg(1,channelCommand(blockedId)),msg(99,new TextEncoder().encode('PRIVATE_OWNER_METADATA')));
+ const blocked=msg(1,section(element('video_lockup_with_attachment',{modelData:model})));
+ const keep=msg(1,section(element('video_lockup_with_attachment',{modelData:msg(1,channelCommand(keptId,'@keep'))})));
+ const continuation=msg(2,text('CONTINUATION')),registry=msg(777,element('video_lockup_with_attachment',{modelData:model}));
+ const body=cat(home(cat(blocked,keep,continuation)),registry),expected=cat(home(cat(keep,continuation)),registry);
+ const out=run(body,{type:'application/x-protobuf',extra:channelOptions(blockedId)});
+ assert.deepEqual(Buffer.from(out.output.body),Buffer.from(expected));assert.match(out.logs.join(''),/hidden_channels=1/);
+});
+test('native legacy recommendation cards match typed channel IDs and handles but not arbitrary title text',()=>{
+ const legacy=model=>msg(1,msg(50630979,model));
+ const blocked=legacy(msg(3,channelCommand(blockedId))),keep=legacy(msg(1,text(blockedId)));
+ const data=msg(8,msg(51779776,cat(blocked,keep,msg(2,text('CONTINUE')))));
+ const expected=msg(8,msg(51779776,cat(keep,msg(2,text('CONTINUE')))));
+ assert.deepEqual(Buffer.from(run(data,{endpoint:'next',type:'application/x-protobuf',extra:channelOptions('@BLOCKED')}).output.body),Buffer.from(expected));
+});
+test('native uncertain channel ownership, unknown templates and malformed models fail open while ad cleanup still runs',()=>{
+ const known=msg(172660663,msg(1,msg(168777401,component('video_lockup_with_attachment',{modelData:channelCommand(blockedId)}))));
+ const candidates=[
+  element('video_lockup_with_attachment',{modelData:cat(channelCommand(blockedId),channelCommand(keptId,'@keep'))}),
+  element('unknown_template',{modelData:channelCommand(blockedId)}),
+  element('video_lockup_with_attachment',{modelData:Uint8Array.from([255,255])}),
+  element('video_lockup_with_attachment',{modelData:msg(1,text(blockedId))}),
+  msg(153515154,cat(known,msg(22222222,[1,2])))
+ ];
+ const keep=cat(...candidates.map(card=>msg(1,section(card)))),body=home(cat(msg(1,ad),keep));
+ const result=run(body,{type:'application/x-protobuf',extra:channelOptions(blockedId)});
+ assert.deepEqual(Buffer.from(result.output.body),Buffer.from(home(keep)));assert.match(result.logs.join(''),/hidden_channels=0/);
+});
+test('binary JSON view offsets retain exact nonmatching content with channel filtering enabled',()=>{
+ const keep=channelVideo(keptId,'@keep','其他频道'),data={contents:[channelVideo(blockedId),keep]};
+ const encoded=new TextEncoder().encode(JSON.stringify(data)),padded=cat([255],encoded,[254]);
+ const body=new DataView(padded.buffer,1,encoded.length);
+ const output=run(body,{extra:channelOptions(blockedId)}).output.body;
+ assert.deepEqual(JSON.parse(new TextDecoder().decode(output)),{contents:[keep]});
+});
+test('cached remote list merges with local entries without a network request or disclosing the list',()=>{
+ const url='https://raw.githubusercontent.com/example/list/main/channels.txt',cache=JSON.stringify({schema:1,url,text:'@remote '+blockedId,fetchedAt:1});
+ const remote=channelVideo(keptId,'@remote','远程频道'),local=channelVideo(keptId,'@local','本地频道'),keep=channelVideo(keptId,'@keep','保留');
+ let reads=0;const result=run(JSON.stringify({contents:[remote,local,keep]}),{extra:{$loon:'test-loon',$argument:{script_debug:true,blocked_channels:'@local '+blockedId,blocked_channels_url:url},$persistentStore:{read(key){reads++;assert.equal(key,'ytads.channels.remote.v1');return cache;}},$httpClient:{get(){throw Error('feed must not fetch');}}}});
+ assert.equal(reads,1);assert.deepEqual(JSON.parse(result.output.body).contents,[keep]);assert.match(result.logs.join(''),/hidden_channels=2/);
+ for(const value of [blockedId,url,'@local','@remote'])assert.ok(!result.logs.join('').includes(value));
+});
+for(const cache of [null,'not-json',JSON.stringify({schema:1,url:'https://old.example/list',text:'@blocked',fetchedAt:1}),JSON.stringify({schema:2,url:'https://example.com/list',text:'@blocked',fetchedAt:1})])test('unavailable, invalid or different-source remote cache leaves manual filtering operational',()=>{
+ const kept=channelVideo(keptId,'@keep','保留'),result=run(JSON.stringify({contents:[channelVideo(blockedId),kept]}),{extra:{$loon:'test-loon',$argument:{blocked_channels:blockedId,blocked_channels_url:'https://example.com/list'},$persistentStore:{read(){return cache;}}}});
+ assert.deepEqual(JSON.parse(result.output.body).contents,[kept]);
+});
+test('blank remote URL and non-Loon runtime never read channel cache',()=>{
+ for(const extra of [channelOptions(''),{$argument:{blocked_channels_url:'https://example.com/list'}}]){
+  extra.$persistentStore={read(){throw Error('must not access remote cache');}};
+  assert.equal(Object.keys(run(JSON.stringify({contents:[channelVideo(blockedId)]}),{extra}).output).length,0);
+ }
+});
 test('next logging does not alter recommendations, continuations or response cleanup',()=>{
  const payload=JSON.stringify({contents:{sectionListRenderer:{contents:[{adSlotRenderer:{}},{videoRenderer:{videoId:'KEEP'}}],continuations:[{nextContinuationData:{continuation:'KEEP'}}]}}});
  const results=[false,true].map(log_enabled=>run(payload,{endpoint:'next',extra:{$argument:{log_enabled},$persistentStore:{read(){return null;},write(){throw Error('paused session must not write');}}}}).output.body);

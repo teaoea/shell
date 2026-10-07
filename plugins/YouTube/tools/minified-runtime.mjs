@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const root = new URL('../', import.meta.url);
-const replacements = new Map(['YouTubeFeed', 'YouTubePlayback', 'YouTubeConfig', 'YouTubeLogger'].map(name => [
+const replacements = new Map(['YouTubeFeed', 'YouTubePlayback', 'YouTubeConfig', 'YouTubeLogger', 'YouTubeChannelList'].map(name => [
   fs.readFileSync(new URL(`src/${name}.js`, root), 'utf8'),
   name
 ]));
@@ -25,7 +25,7 @@ vm.runInNewContext = function runMinifiedScript(code, ...args) {
   const name = replacements.get(code);
   if (!name) return Reflect.apply(originalRun, vm, [code, ...args]);
   const context = args[0];
-  const phase = name === 'YouTubeFeed' || typeof context.$response !== 'undefined' || typeof context.$done === 'undefined' ? 'response' : 'request';
+  const phase = name === 'YouTubeChannelList' ? 'request' : name === 'YouTubeFeed' || typeof context.$response !== 'undefined' || typeof context.$done === 'undefined' ? 'response' : 'request';
   const hadDone = Object.hasOwn(context, '$done'), done = context.$done;
   try {
     delete context.$done;
