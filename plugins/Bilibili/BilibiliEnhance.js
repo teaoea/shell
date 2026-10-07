@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon JSON 响应过滤与本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.5.0；更新时间：2026-10-07
+ * 版本：1.7.0；更新时间：2026-10-07
  * 只处理已登记的 JSON 接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -16,8 +16,47 @@
     '/x/v2/splash/list': 'splash', '/x/v2/splash/show': 'splash',
     '/x/v2/feed/index': 'feed', '/x/v2/feed/index/story': 'feed',
     '/x/resource/show/tab': 'tab', '/x/resource/show/tab/v2': 'tab',
-    '/x/v2/search/square': 'search_square', '/x/v2/search/trending/ranking': 'search_trending'
+    '/x/v2/search/square': 'search_square', '/x/v2/search/trending/ranking': 'search_trending',
+    '/x/v2/account/mine': 'mine', '/x/v2/account/mine/ipad': 'mine',
+    '/x/v2/search/default': 'search_default', '/x/v2/search/defaultwords': 'search_defaultwords'
   };
+  const memberPromoFields = ['vip_section', 'vip_section_v2', 'modular_vip_section'];
+  const TABS_KEY = 'bilibili.enhance.tabs.v1';
+  const escapeHTML = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  function tabInfo(item) {
+    if (!object(item) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 64) return null;
+    // 只保存导航 ID 和展示名；不保存跳转地址、账号、请求参数或原始响应。
+    const id = typeof item.tab_id === 'string' && /^[\w\u4e00-\u9fff:/.-]{1,96}$/.test(item.tab_id) ? 'tab:' + item.tab_id :
+      Number.isSafeInteger(item.id) && item.id >= 0 ? 'id:' + item.id : null;
+    return id ? { id, name: item.name } : null;
+  }
+  function readTabs() {
+    try {
+      const state = JSON.parse($persistentStore.read(TABS_KEY) || '{}');
+      const catalog = Array.isArray(state.catalog) ? state.catalog.map(tabInfoStored).filter(Boolean).slice(0, 100) : [];
+      return { catalog, selected: Array.isArray(state.selected) ? state.selected.filter(id => catalog.some(tab => tab.id === id)) : null };
+    } catch (_) { return { catalog: [], selected: null }; }
+  }
+  function tabInfoStored(item) {
+    if (!object(item) || typeof item.id !== 'string' || !/^(?:tab:[\w\u4e00-\u9fff:/.-]{1,96}|id:\d{1,16})$/.test(item.id) ||
+      typeof item.name !== 'string' || !item.name.trim() || item.name.length > 64) return null;
+    return { id: item.id, name: item.name };
+  }
+  function saveTabs(state) {
+    try { return $persistentStore.write(JSON.stringify(state), TABS_KEY) === true; } catch (_) { return false; }
+  }
+  function tabsPage(message = '') {
+    const state = readTabs();
+    const rows = state.catalog.map(tab => '<label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
+      (state.selected === null || state.selected.includes(tab.id) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label>').join('');
+    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
+      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
+      (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
+      '<p>先重新打开 B 站，自动收集首页接口返回的全部标签，再刷新本页。勾选要保留的标签，至少选择一项；保存后重新打开 B 站。标签顺序沿用 App 返回的顺序。</p>' +
+      '<p>收集的是本机实际收到的标签，可累积不同响应；服务器未提供的标签无法凭空获取。新标签不会自动加入已保存的选择。当前记录 ' + state.catalog.length + ' 项。</p>' +
+      (rows ? '<form method="post" action="/tabs/save">' + rows + '<button type="submit">保存选择</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
+      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><p>设置仅保存在本机，不依赖开发日志开关。关闭日志不会清除标签选择。</p></main></body></html>';
+  }
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function options(raw) {
     let source = raw;
@@ -98,7 +137,7 @@
   const outcomes = ['modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
   const cardTypes = ['small_cover_v2', 'small_cover_v10', 'banner_v8', 'cm_v2', 'cm_double_v9'];
   const cardGotos = ['av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
-  const fields = ['data', 'type', 'items', 'list', 'top_list', 'show', 'top', 'bottom', 'card_type', 'card_goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'];
+  const fields = ['data', 'type', 'items', 'list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'].concat(memberPromoFields);
   function kind(value) {
     return value === null ? 'null' : Array.isArray(value) ? 'array' : object(value) ? 'object' :
       ['string', 'number', 'boolean'].includes(typeof value) ? typeof value : 'other';
@@ -196,7 +235,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.5.0</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.7.0</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     function respond(status, type, body, extra = {}) {
@@ -210,6 +249,32 @@
       if (!syncLogging(config)) throw new Error('storage');
       const path = (local[1] || '/').split('?')[0];
       const method = request.method || 'GET';
+      if (path.startsWith('/tabs')) {
+        if (path === '/tabs' && method === 'GET') return respond(200, 'text/html', tabsPage());
+        if (!['/tabs/save', '/tabs/reset'].includes(path)) return respond(404, 'text/plain', '页面不存在');
+        if (method !== 'POST') return respond(405, 'text/plain', '请使用页面按钮', { Allow: 'POST' });
+        const headers = request.headers || {};
+        const originKey = Object.keys(headers).find(key => key.toLowerCase() === 'origin');
+        const origin = originKey && headers[originKey];
+        if (origin && origin !== 'null' && !['http://bilibili-logs.invalid', 'http://bilibili-logs.invalid:80'].includes(origin)) return respond(403, 'text/plain', '请在本地标签页操作');
+        const state = readTabs();
+        if (path === '/tabs/reset') state.selected = null;
+        else {
+          if (typeof request.body !== 'string' || request.body.length > 32768) return respond(400, 'text/html', tabsPage('请选择至少一个标签。'));
+          const selected = [];
+          for (const pair of request.body.split('&')) {
+            const equal = pair.indexOf('=');
+            if (pair.slice(0, equal) !== 'tab') continue;
+            const id = decodeURIComponent(pair.slice(equal + 1).replace(/\+/g, ' '));
+            if (!state.catalog.some(tab => tab.id === id)) return respond(400, 'text/html', tabsPage('标签列表已变化，请刷新后选择。'));
+            if (!selected.includes(id)) selected.push(id);
+          }
+          if (!selected.length) return respond(400, 'text/html', tabsPage('请至少保留一个首页标签。'));
+          state.selected = selected;
+        }
+        if (!saveTabs(state)) return respond(503, 'text/plain', '标签设置保存失败，请稍后重试。');
+        return respond(200, 'text/html', tabsPage(path === '/tabs/reset' ? '已恢复全部标签，请重新打开 B 站。' : '选择已保存，请重新打开 B 站。'));
+      }
       if (path === '/clear') {
         if (method !== 'POST') return respond(405, 'text/plain', '请使用页面清空按钮', { Allow: 'POST' });
         const headers = request.headers || {};
@@ -244,6 +309,10 @@
     config = options(typeof $argument === 'undefined' ? null : $argument);
     if (!request) {
       syncLogging(config);
+      if (typeof $script === 'object' && $script && $script.name === 'Bilibili 首页标签管理') {
+        if (typeof $notification !== 'undefined') $notification.post('Bilibili 首页标签', '管理首页上方标签', '点击通知，选择要保留的标签。', { openUrl: 'http://bilibili-logs.invalid/tabs' });
+        return $done({});
+      }
       const manual = typeof $script === 'object' && $script && $script.name === 'Bilibili 打开日志页';
       notifyLogging(config, manual);
       return $done({});
@@ -268,11 +337,13 @@
     const json = losslessJSON(response.body);
     const body = json.value;
     if (!object(body) || body.code !== 0) return finish({}, 'api_error');
-    if (!(route === 'search_square' ? Array.isArray(body.data) : object(body.data))) return finish({}, 'unsupported_schema');
+    if (!(route === 'search_square' ? Array.isArray(body.data) :
+      route === 'search_defaultwords' ? Array.isArray(body.data) || object(body.data) : object(body.data))) return finish({}, 'unsupported_schema');
     const data = body.data;
     const contentCount = () => Array.isArray(body.data) ? body.data.length :
-      ['items', 'list', 'show', 'top', 'bottom'].concat(route === 'search_trending' ? ['top_list'] : [])
-        .reduce((sum, key) => sum + (Array.isArray(data[key]) ? data[key].length : 0), 0);
+      ['items', 'list', 'show', 'tab', 'top', 'bottom'].concat(route === 'search_trending' ? ['top_list'] : [])
+        .reduce((sum, key) => sum + (Array.isArray(data[key]) ? data[key].length : 0), 0) +
+        (route === 'mine' ? memberPromoFields.filter(key => Object.prototype.hasOwnProperty.call(data, key) && data[key] !== null).length : 0);
     if (event) {
       event.data_schema = Array.isArray(data) ? schema(body) : schema(data);
       event.before = contentCount();
@@ -294,6 +365,23 @@
       const previous = parent[key];
       const next = previous.filter(keep);
       if (next.length !== previous.length) { parent[key] = next; changed = true; }
+    }
+    if (route === 'mine') {
+      // 默认隐藏开通／续订大会员的推广模块，不修改 vip 身份或其他服务入口。
+      for (const key of memberPromoFields) if (Object.prototype.hasOwnProperty.call(data, key)) {
+        delete data[key]; changed = true;
+      }
+    }
+    if (route === 'search_default' || route === 'search_defaultwords') {
+      // 仅清空专用默认词响应；不修改用户输入、搜索历史、联想或搜索结果。
+      if (Array.isArray(body.data)) {
+        if (body.data.length) { body.data = []; changed = true; }
+      } else {
+        for (const key of ['show', 'show_name', 'name', 'word', 'keyword', 'param']) if (typeof data[key] === 'string' && data[key] !== '') {
+          data[key] = ''; changed = true;
+        }
+        for (const key of ['list', 'items', 'default_words', 'defaultwords', 'words']) filter(data, key, () => false);
+      }
     }
     if (config.hide_search_discovery) {
       if (route === 'search_square') {
@@ -331,6 +419,31 @@
       });
     }
     if (route === 'tab') {
+      if (Array.isArray(data.tab)) {
+        const state = readTabs();
+        for (const item of data.tab) {
+          const tab = tabInfo(item);
+          if (!tab) continue;
+          const existing = state.catalog.find(entry => entry.id === tab.id);
+          if (existing) existing.name = tab.name;
+          else if (state.catalog.length < 100) state.catalog.push(tab);
+        }
+        saveTabs(state);
+        // 当前响应没有任何已选标签时保留原列表，防止首页导航被清空。
+        if (state.selected !== null && data.tab.some(item => { const tab = tabInfo(item); return tab && state.selected.includes(tab.id); })) {
+          const before = data.tab;
+          filter(data, 'tab', item => { const tab = tabInfo(item); return !tab || state.selected.includes(tab.id); });
+          if (data.tab !== before) {
+            const hasDefault = data.tab.some(item => object(item) && item.default_selected === 1);
+            const firstSelected = data.tab.find(item => { const tab = tabInfo(item); return tab && state.selected.includes(tab.id); });
+            data.tab.forEach((item, index) => {
+              if (!object(item)) return;
+              if (typeof item.pos === 'number') item.pos = index + 1;
+              if (!hasDefault) item.default_selected = item === firstSelected ? 1 : 0;
+            });
+          }
+        }
+      }
       for (const key of ['top', 'bottom']) {
         const before = data[key];
         filter(data, key, item => {

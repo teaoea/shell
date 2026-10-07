@@ -21,6 +21,63 @@ function run(data, argument = {}, path = '/x/v2/feed/index', overrides = {}) {
 const parsed = result => JSON.parse(result.body).data;
 const video = (extra = {}) => ({ card_type: 'small_cover_v2', card_goto: 'av', title: '普通视频', args: { up_id: 123 }, ...extra });
 
+test('default search text is blanked for public app schema without touching metadata', () => {
+  for (const path of ['/x/v2/search/default', '/x/v2/search/defaultwords']) {
+    const data = { show: '推荐文字', word: '推荐词', param: '推荐跳转', trackid: 'keep', future: 1 };
+    assert.deepEqual(parsed(run(data, {}, path)), { ...data, show: '', word: '', param: '' });
+    assert.deepEqual(run({ show: '', word: '', param: '' }, {}, path), {});
+  }
+  assert.deepEqual(parsed(run([{ word: '推荐' }], {}, '/x/v2/search/defaultwords')), []);
+  assert.deepEqual(parsed(run({ show_name: '推荐', list: [{ word: '词' }], history: ['输入'] }, {}, '/x/v2/search/default')),
+    { show_name: '', list: [], history: ['输入'] });
+  for (const path of ['/x/v2/search', '/x/v2/search/suggest', '/x/v2/search/history'])
+    assert.deepEqual(run({ show: '手动输入', word: '输入' }, {}, path), {});
+});
+
+test('homepage tab collection, selection, fallback, restoration and privacy', () => {
+  const store = new Map();
+  const overrides = { $persistentStore: { read: key => store.get(key), write: (value, key) => { store.set(key, value); return true; } } };
+  const tabs = [{ id: 39, tab_id: '直播tab', name: '直播', pos: 1, default_selected: 1, uri: 'bilibili://live/?token=SECRET' },
+    { id: 40, tab_id: '推荐tab', name: '推荐', pos: 2 }, { id: 41, tab_id: 'hottopic', name: '热门', pos: 3 }];
+  const path = '/x/resource/show/tab/v2';
+  const page = (path, method = 'GET', body, headers) => run({}, {}, path, { ...overrides,
+    $request: { url: 'http://bilibili-logs.invalid' + path, method, body, headers }, $response: undefined }).response;
+  assert.deepEqual(run({ tab: tabs }, {}, path, overrides), {});
+  assert.ok(![...store.values()].join('').includes('SECRET'));
+  assert.match(page('/tabs').body, /直播/);
+  assert.equal(page('/tabs/save', 'POST', '').status, 400);
+  assert.equal(page('/tabs/save', 'POST', 'tab=unknown').status, 400);
+  assert.equal(page('/tabs/save', 'GET').status, 405);
+  assert.equal(page('/tabs/save', 'POST', 'tab=tab%3A推荐tab', { Origin: 'https://evil.example' }).status, 403);
+  assert.equal(page('/tabs/save', 'POST', 'tab=' + encodeURIComponent('tab:推荐tab')).status, 200);
+  const selected = parsed(run({ tab: tabs, top: [{ name: '消息' }], bottom: [{ name: '我的' }] }, {}, path, overrides));
+  assert.deepEqual(selected.tab, [{ ...tabs[1], pos: 1, default_selected: 1 }]);
+  assert.deepEqual(selected.bottom, [{ name: '我的' }]);
+  assert.deepEqual(run({ tab: [tabs[0]] }, {}, path, overrides), {});
+  const fresh = { id: 9, tab_id: 'new', name: '新标签' };
+  assert.deepEqual(parsed(run({ tab: [...tabs, fresh] }, {}, path, overrides)).tab, selected.tab);
+  assert.match(page('/tabs').body, /新标签/);
+  assert.equal(page('/tabs/reset', 'POST').status, 200);
+  assert.deepEqual(run({ tab: tabs }, {}, path, overrides), {});
+  assert.match(page('/tabs').body, /新标签/);
+});
+
+test('tab settings survive disabled logging and escape labels and reject failed saves', () => {
+  const store = new Map();
+  let fail = false;
+  const overrides = { $persistentStore: { read: key => store.get(key), write: (value, key) => { if (fail) return false; store.set(key, value); return true; } } };
+  run({ tab: [{ id: 1, name: '<img src=x>' }] }, {}, '/x/resource/show/tab', overrides);
+  const page = (path, method = 'GET', body) => run({}, {}, path, { ...overrides,
+    $request: { url: 'http://bilibili-logs.invalid' + path, method, body }, $response: undefined }).response;
+  assert.match(page('/tabs').body, /&lt;img src=x&gt;/);
+  assert.equal(page('/tabs/save', 'POST', 'tab=id%3A1').status, 200);
+  assert.deepEqual(JSON.parse(store.get('bilibili.enhance.tabs.v1')).selected, ['id:1']);
+  page('/');
+  assert.deepEqual(JSON.parse(store.get('bilibili.enhance.tabs.v1')).selected, ['id:1']);
+  fail = true;
+  assert.equal(page('/tabs/reset', 'POST').status, 503);
+});
+
 test('default filtering removes explicit ads and preserves ordinary / unknown cards', () => {
   const items = [video(), { card_type: 'cm_v2', card_goto: 'ad_av' }, { is_ad: 1 },
     { ad_info: { creative_id: 1 } }, { ad_info: {} }, { is_ad: 0 },
@@ -136,7 +193,7 @@ test('search filtering ignores unexpected schemas and unrelated search APIs', ()
     ['/x/v2/search/square', [{ type: 'history' }, { title: '热搜' }]],
     ['/x/v2/search', { items: [{ type: 'recommend' }] }],
     ['/x/v2/search/suggest', { list: [{ keyword: '输入联想' }] }],
-    ['/x/v2/search/default', { show_name: '默认词' }],
+    ['/x/v2/search/default/extra', { show_name: '默认词' }],
     ['/x/v2/search/square/extra', [{ type: 'recommend' }]]]) {
     assert.deepEqual(run(data, { hide_search_discovery: true }, path), {});
   }
@@ -190,6 +247,30 @@ test('Loon configuration passes every option and keeps optional filters disabled
   }
   assert.match(plugin, /hostname = app\.bilibili\.com\s*$/);
 });
+for (const path of ['/x/v2/account/mine', '/x/v2/account/mine/ipad']) {
+  test('mine membership promotion is removed by default without altering account or services: ' + path, () => {
+    const data = {
+      vip_section: { title: '续订会员' }, vip_section_v2: { title: '开通会员' },
+      modular_vip_section: { button: { title: '会员中心' } },
+      vip: { status: 1, type: 2, due_date: 1893456000000, label: { text: '年度大会员' } },
+      vip_type: 2, name: '账号', mid: 123,
+      sections_v2: [{ title: '创作中心', items: [{ title: '历史记录' }, { title: '我的收藏' }] }],
+      future_section: { title: '续订会员' }
+    };
+    const { vip_section, vip_section_v2, modular_vip_section, ...keep } = data;
+    assert.deepEqual(parsed(run(data, {}, path)), keep);
+    assert.deepEqual(parsed(run(data, { remove_feed_ads: false, hide_member_shop: false }, path)), keep);
+    assert.deepEqual(run(keep, {}, path), {});
+  });
+}
+test('mine filtering only applies to registered endpoints and preserves large numeric account fields', () => {
+  const raw = '{"code":0,"data":{"vip_section":{"title":"续订会员"},"mid":1234567890123456789,"vip":{"status":1}}}';
+  const result = run({}, {}, '/x/v2/account/mine', { $response: { body: raw } });
+  assert.equal(result.body, '{"code":0,"data":{"mid":1234567890123456789,"vip":{"status":1}}}');
+  for (const path of ['/x/v2/account/myinfo', '/x/v2/account/mine/extra', '/x/v2/feed/index']) {
+    assert.deepEqual(run({ vip_section: { title: '续订会员' } }, {}, path), {});
+  }
+});
 test('host/path/method boundaries protect other APIs and lookalike domains', () => {
   for (const url of ['https://app.bilibili.com.evil.test/x/v2/feed/index', 'https://api.bilibili.com/x/v2/feed/index',
     'https://app.bilibili.com/x/v2/feed/index/extra', 'https://app.bilibili.com/x/v2/feed/index/story/extra',
@@ -201,7 +282,7 @@ test('host/path/method boundaries protect other APIs and lookalike domains', () 
 test('plugin regex covers implemented endpoints and rejects extra suffixes', () => {
   const line = plugin.split('\n').find(line => line.startsWith('http-response '));
   const regex = new RegExp(line.split(' ')[1]);
-  for (const path of ['/x/v2/splash/list', '/x/v2/splash/show', '/x/v2/feed/index', '/x/v2/feed/index/story', '/x/resource/show/tab', '/x/resource/show/tab/v2', '/x/v2/search/square', '/x/v2/search/trending/ranking']) {
+  for (const path of ['/x/v2/splash/list', '/x/v2/splash/show', '/x/v2/feed/index', '/x/v2/feed/index/story', '/x/resource/show/tab', '/x/resource/show/tab/v2', '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {
     for (const suffix of ['', '?build=1']) {
       const url = 'https://app.bilibili.com' + path + suffix;
       assert.equal(regex.test(url), true);

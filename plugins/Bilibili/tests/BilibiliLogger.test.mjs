@@ -35,6 +35,22 @@ function harness(initial) {
   const page = (path = '/', method = 'GET', headers = {}) => run({ $request: { url: 'http://bilibili-logs.invalid' + path, method, headers }, $response: undefined });
   return { run, page, stored: () => stored, reads: () => reads, writes: () => writes, consoleOutput, notifications, fail() { broken = true; } };
 }
+test('default search content is not retained in logs or export', () => {
+  const h = harness();
+  h.run({ $request: { url: 'https://app.bilibili.com/x/v2/search/defaultwords?token=' + secret },
+    $response: { status: 200, body: JSON.stringify({ code: 0, data: { show: secret, word: secret, param: secret, trackid: secret } }) } });
+  assert.equal(JSON.parse(h.stored()).events[0].outcome, 'modified');
+  assert.ok(!h.stored().includes(secret));
+  assert.ok(!h.page('/export').response.body.includes(secret));
+});
+test('manual tab manager notification links to tab page without enabling logging', () => {
+  const h = harness();
+  h.run({ $request: undefined, $response: undefined, $argument: {}, $script: { name: 'Bilibili 首页标签管理' } });
+  assert.equal(h.notifications.length, 1);
+  assert.equal(h.notifications[0][3].openUrl, 'http://bilibili-logs.invalid/tabs');
+  assert.equal(h.stored(), undefined);
+  assert.match(h.page('/tabs').response.body, /首页标签管理/);
+});
 test('disabled logger checks cleanup without creating or appending logs', () => {
   const h = harness();
   h.run({ $argument: {} });
@@ -50,6 +66,21 @@ test('storage and export exclude secrets from headers, queries, values and keys'
   assert.equal(event.item_schema.title, 'string');
   assert.equal(event.item_schema.ad_info, 'object');
   for (const text of [h.stored(), h.page('/export').response.body, JSON.stringify(h.consoleOutput), h.page().response.body]) assert.ok(!text.includes(secret));
+});
+test('mine promotion logs record module counts and types without profile or promotion values', () => {
+  const h = harness();
+  h.run({ $request: { url: 'https://app.bilibili.com/x/v2/account/mine?access_key=' + secret },
+    $response: { body: JSON.stringify({ code: 0, data: {
+      vip_section: { title: secret, token: secret }, vip_section_v2: { url: secret },
+      modular_vip_section: { button: secret }, vip: { due_date: secret }, name: secret, mid: secret
+    } }) } });
+  const event = JSON.parse(h.stored()).events[0];
+  assert.equal(event.endpoint, '/x/v2/account/mine');
+  assert.equal(event.outcome, 'modified');
+  assert.equal(event.before, 3); assert.equal(event.after, 0); assert.equal(event.removed, 3);
+  assert.deepEqual(event.data_schema, { vip_section: 'object', vip_section_v2: 'object', modular_vip_section: 'object' });
+  assert.ok(!h.stored().includes(secret));
+  assert.ok(!h.page('/export').response.body.includes(secret));
 });
 test('unknown card types and destinations are mapped to fixed other category', () => {
   const h = harness();
@@ -267,7 +298,7 @@ test('logger routes are disjoint and optional metadata hook does not buffer body
   assert.equal(lines.length, 2);
   const [filter, metadata] = lines.map(line => new RegExp(line.split(' ')[1]));
   for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/resource/show/tab/v2',
-    '/x/v2/search/square', '/x/v2/search/trending/ranking']) {
+    '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {
     for (const suffix of ['', '?token=' + secret]) {
       const url = 'https://app.bilibili.com' + path + suffix;
       assert.equal(filter.test(url), true); assert.equal(metadata.test(url), false);
