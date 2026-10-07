@@ -16,6 +16,8 @@ blocked_keywords = input,"",tag=标题关键词屏蔽,desc=填写要屏蔽的标
 log_enabled = switch,false,tag=开发日志,desc=默认关闭；开启后自动记录，刷新 B 站首页触发提醒，点击通知打开日志页；请先导出再关闭，关闭后在下一次请求、日志页访问或每分钟检查时自动清空记录；不保存令牌或正文
 
 [Rule]
+# 默认拦截游戏广告曝光上报域名；仅此主机，不依赖 MitM。
+DOMAIN,impression.biligame.com,REJECT
 DOMAIN,bilibili-logs.invalid,DIRECT
 
 [Script]
