@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon JSON 响应过滤与本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.1.0；更新时间：2026-10-07
+ * 版本：1.2.0；更新时间：2026-10-07
  * 只处理已登记的 JSON 接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -49,6 +49,7 @@
       ['ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'].includes(item.card_goto);
   }
   const LOG_KEY = 'bilibili.enhance.logs.v1';
+  const NOTICE_KEY = 'bilibili.enhance.notice.v1';
   const LIMIT = 300;
   const rpcPaths = [
     '/bilibili.app.view.v1.View/View', '/bilibili.app.viewunite.v1.View/View',
@@ -102,8 +103,7 @@
     if (typeof raw !== 'string' || raw.length > 262144) throw new Error('storage');
     const value = JSON.parse(raw);
     if (!object(value) || !Array.isArray(value.events) || value.events.length > LIMIT) throw new Error('storage');
-    return { events: value.events.map(safeEvent).filter(Boolean), evicted: count(value.evicted),
-      nonce: typeof value.nonce === 'string' && /^[a-z0-9]{10,80}$/.test(value.nonce) ? value.nonce : undefined };
+    return { events: value.events.map(safeEvent).filter(Boolean), evicted: count(value.evicted) };
   }
   function saveLogs(state) {
     let raw = JSON.stringify(state);
@@ -120,35 +120,63 @@
       saveLogs(state);
     } catch (_) { /* 日志故障不得影响过滤，不输出异常内容。 */ }
   }
+  function notifyLogging(config, manual = false) {
+    try {
+      const previous = $persistentStore.read(NOTICE_KEY);
+      if (!config.log_enabled && previous === 'on') $persistentStore.write('off', NOTICE_KEY);
+      if (!manual && (!config.log_enabled || previous === 'on')) return;
+      if (typeof $notification === 'undefined' || typeof $notification.post !== 'function') return;
+      if (config.log_enabled && $persistentStore.write('on', NOTICE_KEY) !== true) return;
+      $notification.post('Bilibili 开发日志', config.log_enabled ? '日志已开启' : '打开日志页',
+        '点击此通知，在浏览器查看、导出或清空记录。', { openUrl: 'http://bilibili-logs.invalid/' });
+    } catch (_) { /* 通知与存储异常不影响业务，不输出异常内容。 */ }
+  }
+  function renderPage(state, config, cleared = false) {
+    const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    const labels = { modified: '已过滤', unchanged: '无需修改', http_error: '响应异常', unsupported_body: '正文未处理', api_error: '接口异常', invalid_json: '解析后放行', unsupported_schema: '结构未识别', metadata_only: '仅元数据' };
+    const removed = state.events.reduce((sum, entry) => sum + entry.removed, 0);
+    const rows = state.events.slice(-20).reverse().map(entry => {
+      const time = entry.time && Number.isFinite(Date.parse(entry.time)) ? new Date(Date.parse(entry.time) + 8 * 3600000).toISOString().slice(5, 19).replace('T', ' ') : '时间未知';
+      return '<article class="record"><div class="record-head"><time>' + escape(time) + '</time><span class="result">' + labels[entry.outcome] + '</span></div><p class="endpoint">' + escape(entry.endpoint) + '</p><div class="record-meta"><span>HTTP ' + (entry.status || '—') + '</span><span>' + entry.before + ' → ' + entry.after + ' 项</span><span>移除 ' + entry.removed + ' 项</span></div></article>';
+    }).join('');
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 开发日志</title><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20256%20256%22%3E%3Crect%20width%3D%22256%22%20height%3D%22256%22%20rx%3D%2256%22%20fill%3D%22%23fb7299%22%2F%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%2214%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M92%2044l22%2024m50-24l-22%2024%22%2F%3E%3Crect%20x%3D%2249%22%20y%3D%2275%22%20width%3D%22158%22%20height%3D%22121%22%20rx%3D%2224%22%2F%3E%3Cpath%20d%3D%22M91%20112v25m74-25v25m-48%2021h22M84%20198v12m88-12v12%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E"><style>
+      :root{color-scheme:light dark;--bg:#f6f7fb;--panel:#fff;--text:#202532;--muted:#6d7485;--line:#e8ebf1;--accent:#d83c75;--soft:#fff0f5;--green:#138356;--danger:#bd3045}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:760px;margin:0 auto;padding:24px 18px 40px;padding-bottom:calc(40px + env(safe-area-inset-bottom))}.brand-icon{width:48px;height:48px;flex:none;border-radius:12px}.brand-icon svg{display:block;width:100%;height:100%}.heading{display:flex;align-items:center;gap:12px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 22px}h1{font-size:24px;letter-spacing:-.5px;margin:0}.eyebrow{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:2px;margin:0 0 5px}.status{font-size:12px;white-space:nowrap;border-radius:24px;padding:6px 12px;background:var(--line);color:var(--muted)}.status.on{background:#e5f5ed;color:var(--green)}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px}.stat,.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px}.stat{padding:16px 12px}.stat strong{display:block;font-size:27px;line-height:1.2}.stat span{display:block;margin-top:7px;color:var(--muted);font-size:12px}.panel{padding:18px;margin-top:16px}h2{font-size:17px;margin:0 0 12px}p{margin:8px 0;color:var(--muted)}.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}a,button{-webkit-tap-highlight-color:transparent;display:block;width:100%;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-weight:600;text-decoration:none;text-align:center;padding:12px;min-height:48px;cursor:pointer}.primary{background:var(--accent);color:white;border-color:var(--accent)}form{grid-column:1/-1;margin:0}.clear{color:var(--danger);background:var(--soft);border-color:transparent}.note{font-size:13px;margin-top:14px}.success{padding:12px 16px;background:#e5f5ed;color:var(--green);border-radius:12px;margin-bottom:16px}.empty{text-align:center;padding:18px 10px}.empty strong{display:block;margin-bottom:8px}.record{border-top:1px solid var(--line);padding:14px 0}.record:last-child{padding-bottom:0}.record-head,.record-meta{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px}.result{color:var(--accent)}.endpoint{color:var(--text);font:13px/1.6 ui-monospace,monospace;overflow-wrap:anywhere;margin:9px 0}.record-meta{justify-content:flex-start;flex-wrap:wrap;gap:8px 16px}details{color:var(--muted);font-size:13px}summary{cursor:pointer;color:var(--text);font-weight:600}footer{font-size:12px;color:var(--muted);text-align:center;margin-top:22px}@media(prefers-color-scheme:dark){:root{--bg:#14151b;--panel:#20222c;--text:#f1f2f7;--muted:#a4aabd;--line:#343744;--soft:#352330;--accent:#fa79a7;--danger:#ff9ba9}.status.on,.success{background:#18372d;color:#8de0b8}.primary{color:#25141b}}@media(max-width:360px){main{padding:16px 12px}h1{font-size:21px}.stat{padding:14px 9px}}
+      </style></head><body><main><header><div class="heading"><div class="brand-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" rx="56" fill="#fb7299"/><g fill="none" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"><path d="M92 44l22 24m50-24l-22 24"/><rect x="49" y="75" width="158" height="121" rx="24"/><path d="M91 112v25m74-25v25m-48 21h22M84 198v12m88-12v12"/></g></svg></div><div><p class="eyebrow">BILIBILI</p><h1>开发日志</h1></div></div><span class="status ${config.log_enabled ? 'on' : ''}">${config.log_enabled ? '● 记录中' : '已关闭'}</span></header>
+      ${cleared ? '<div class="success" role="status">记录已清空。' + (config.log_enabled ? '日志仍在开启，新请求会继续记录。' : '日志保持关闭。') + '</div>' : ''}
+      <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
+      <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '复现问题后，在 Loon 中关闭「开发日志」，再导出文件。' : '在 Loon 插件参数中开启「开发日志」，即可开始记录。'}</p></section>
+      <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.2.0</footer></main></body></html>`;
+  }
   function localPage(request, local, config) {
     function respond(status, type, body, extra = {}) {
       return $done({ response: { status, headers: Object.assign({
         'Content-Type': type + '; charset=utf-8', 'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+        'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
       }, extra), body } });
     }
     try {
-      const state = readLogs();
       const path = (local[1] || '/').split('?')[0];
       const method = request.method || 'GET';
+      if (path === '/clear') {
+        if (method !== 'POST') return respond(405, 'text/plain', '请使用页面清空按钮', { Allow: 'POST' });
+        const headers = request.headers || {};
+        const originKey = Object.keys(headers).find(key => key.toLowerCase() === 'origin');
+        const origin = originKey && headers[originKey];
+        // Safari / 代理本地响应可能没有 Origin 或提供 null；不再依赖页面 nonce。
+        if (origin && origin !== 'null' && !['http://bilibili-logs.invalid', 'http://bilibili-logs.invalid:80'].includes(origin)) return respond(403, 'text/plain', '请在本地日志页使用清空按钮');
+        const state = { events: [], evicted: 0 };
+        saveLogs(state);
+        return respond(200, 'text/html', renderPage(state, config, true));
+      }
+      const state = readLogs();
       if (path === '/' && method === 'GET') {
-        if (!state.nonce) { state.nonce = Date.now().toString(36) + Math.random().toString(36).slice(2); saveLogs(state); }
-        // 页面只包含固定文字和数字；事件在导出时仅按 safeEvent 白名单投影。
-        return respond(200, 'text/html', '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilibili 开发日志</title><style>body{font:16px system-ui;max-width:760px;margin:32px auto;padding:16px}a,button{padding:12px;display:inline-block}</style><h1>Bilibili 开发日志</h1><p>日志开关：' + (config.log_enabled ? '开启' : '关闭') + '；已保存 ' + state.events.length + ' 条，已淘汰 ' + state.evicted + ' 条。</p><p>在 Loon 插件参数中开启或关闭日志。最多保留最近 300 条。仅保存接口类别、处理结果、数量和白名单结构类型；不保存令牌、Cookie、请求参数、标题、UID 或原始正文。</p><a href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新</a><form method="post" action="/clear?nonce=' + state.nonce + '"><button>清空已存日志</button></form><p>仅覆盖 app.bilibili.com 的可解密 HTTP 响应；二进制接口仅记元数据，不解码正文。并发写入可能丢失记录。</p></html>');
+        return respond(200, 'text/html', renderPage(state, config));
       }
       if (path === '/export' && method === 'GET') {
         const header = { format: 'bilibili-development-log', version: 1, exported: new Date().toISOString(), count: state.events.length, evicted: state.evicted };
         return respond(200, 'text/plain', [header, ...state.events].map(value => JSON.stringify(value)).join('\n') + '\n', { 'Content-Disposition': 'attachment; filename="bilibili-development.log"' });
-      }
-      if (path === '/clear') {
-        if (method !== 'POST') return respond(405, 'text/plain', '请使用页面按钮', { Allow: 'POST' });
-        const headers = request.headers || {};
-        const originKey = Object.keys(headers).find(key => key.toLowerCase() === 'origin');
-        const origin = originKey && headers[originKey];
-        if (!state.nonce || local[1] !== '/clear?nonce=' + state.nonce || (origin && !['http://bilibili-logs.invalid', 'http://bilibili-logs.invalid:80'].includes(origin))) return respond(403, 'text/plain', '请刷新日志页后重试');
-        saveLogs({ events: [], evicted: 0 });
-        return respond(303, 'text/plain', '已清空', { Location: '/' });
       }
       return respond(404, 'text/plain', '页面不存在');
     } catch (_) { return respond(503, 'text/plain', '日志存储不可用；未覆盖已有记录。'); }
@@ -163,7 +191,11 @@
     const request = typeof $request === 'object' && $request;
     const response = typeof $response === 'object' && $response;
     config = options(typeof $argument === 'undefined' ? null : $argument);
-    if (!request) return $done({});
+    if (!request) {
+      const manual = typeof $script === 'object' && $script && $script.name === 'Bilibili 打开日志页';
+      notifyLogging(config, manual);
+      return $done({});
+    }
     const local = /^http:\/\/bilibili-logs\.invalid(?::80)?(\/[^#]*)?$/.exec(String(request.url || ''));
     if (local) return localPage(request, local, config);
     if (!response) return $done({});
@@ -172,6 +204,7 @@
     const route = match && paths[match[1]];
     const status = Number(response.statusCode || response.status || 200);
     if (!match) return $done({});
+    notifyLogging(config);
     if (config.log_enabled) event = {
       time: new Date().toISOString(), endpoint: (route || rpcPaths.includes(match[1])) ? match[1] : 'other_api',
       method: request.method || 'GET', status, body_length: route && typeof response.body === 'string' ? response.body.length : 0

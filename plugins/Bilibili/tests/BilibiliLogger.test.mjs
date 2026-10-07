@@ -12,6 +12,8 @@ function harness(initial) {
   let writes = 0;
   let broken = false;
   const consoleOutput = [];
+  const notifications = [];
+  const auxiliary = new Map();
   function run(overrides = {}) {
     const outputs = [];
     vm.runInNewContext(source, {
@@ -19,9 +21,10 @@ function harness(initial) {
       $response: { status: 200, headers: { 'Set-Cookie': secret }, body: JSON.stringify({ code: 0, data: { items: [{ is_ad: 1, title: secret, args: { up_id: secret }, ad_info: { token: secret }, [secret]: secret }] }, token: secret }) },
       $argument: { log_enabled: true, blocked_keywords: secret, blocked_uids: secret },
       $persistentStore: {
-        read(key) { assert.equal(key, KEY); reads++; if (broken) throw Error(secret); return stored; },
-        write(value, key) { assert.equal(key, KEY); writes++; if (broken) return false; stored = value; return true; }
+        read(key) { if (broken) throw Error(secret); if (key !== KEY) return auxiliary.get(key); reads++; return stored; },
+        write(value, key) { if (broken) return false; if (key !== KEY) { auxiliary.set(key, value); return true; } writes++; stored = value; return true; }
       },
+      $notification: { post(...args) { notifications.push(JSON.parse(JSON.stringify(args))); } },
       console: { log(value) { consoleOutput.push(value); } },
       $done(value) { outputs.push(JSON.parse(JSON.stringify(value))); },
       ...overrides
@@ -30,7 +33,7 @@ function harness(initial) {
     return outputs[0];
   }
   const page = (path = '/', method = 'GET', headers = {}) => run({ $request: { url: 'http://bilibili-logs.invalid' + path, method, headers }, $response: undefined });
-  return { run, page, stored: () => stored, reads: () => reads, writes: () => writes, consoleOutput, fail() { broken = true; } };
+  return { run, page, stored: () => stored, reads: () => reads, writes: () => writes, consoleOutput, notifications, fail() { broken = true; } };
 }
 test('disabled logger does not read or write persistent storage', () => {
   const h = harness();
@@ -138,16 +141,67 @@ test('corrupt store is preserved, filtering continues and page reports failure',
   const result = h.page('/export');
   assert.equal(result.response.status, 503); assert.ok(!result.response.body.includes(secret));
 });
-test('clear requires POST, current nonce and same origin; export excludes nonce', () => {
-  const h = harness(); h.run(); h.page();
-  const nonce = JSON.parse(h.stored()).nonce;
-  assert.ok(!h.page('/export').response.body.includes(nonce));
-  assert.equal(h.page('/clear?nonce=' + nonce).response.status, 405);
-  assert.equal(h.page('/clear?nonce=bad', 'POST').response.status, 403);
-  assert.equal(h.page('/clear?nonce=' + nonce, 'POST', { Origin: 'https://evil.test' }).response.status, 403);
-  assert.equal(JSON.parse(h.stored()).events.length, 1);
-  assert.equal(h.page('/clear?nonce=' + nonce, 'POST', { Origin: 'http://bilibili-logs.invalid' }).response.status, 303);
+test('clear works without nonce and tolerates Safari null or absent origin', () => {
+  for (const headers of [{}, { Origin: 'null' }, { Origin: 'http://bilibili-logs.invalid' }, { Origin: 'http://bilibili-logs.invalid:80' }]) {
+    const h = harness(); h.run();
+    const result = h.page('/clear', 'POST', headers);
+    assert.equal(result.response.status, 200);
+    assert.match(result.response.body, /记录已清空/);
+    assert.doesNotMatch(result.response.body, /请刷新日志页后重试|nonce=/);
+    assert.deepEqual(JSON.parse(h.stored()), { events: [], evicted: 0 });
+  }
+});
+test('clear remains compatible with a cached old page and repeated clearing', () => {
+  const h = harness(); h.run();
+  assert.equal(h.page('/clear?nonce=stale', 'POST').response.status, 200);
+  assert.equal(h.page('/clear', 'POST').response.status, 200);
   assert.deepEqual(JSON.parse(h.stored()), { events: [], evicted: 0 });
+});
+test('clear does not accept GET or an explicit foreign origin', () => {
+  const h = harness(); h.run();
+  assert.equal(h.page('/clear').response.status, 405);
+  assert.equal(h.page('/clear', 'POST', { Origin: 'https://evil.test' }).response.status, 403);
+  assert.equal(JSON.parse(h.stored()).events.length, 1);
+});
+test('clear can recover a corrupt stored log', () => {
+  const h = harness('broken_' + secret);
+  assert.equal(h.page('/clear', 'POST').response.status, 200);
+  assert.deepEqual(JSON.parse(h.stored()), { events: [], evicted: 0 });
+});
+test('mobile page previews safe records and indicates empty and disabled state', () => {
+  const h = harness(); h.run();
+  const result = h.page();
+  assert.match(result.response.body, /最近记录/);
+  assert.match(result.response.body, /已过滤/);
+  assert.match(result.response.body, /form method="post" action="\/clear"/);
+  assert.match(result.response.body, /class="brand-icon"/);
+  assert.match(result.response.body, /rel="icon" type="image\/svg\+xml"/);
+  assert.match(plugin, /#!icon = https:\/\/raw\.githubusercontent\.com\/teaoea\/shell\/main\/plugins\/Bilibili\/assets\/bilibili\.png/);
+  assert.equal(readFileSync(new URL('../assets/bilibili.png', import.meta.url)).subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  assert.ok(!result.response.body.includes(secret));
+  assert.match(h.page('/clear', 'POST').response.body, /还没有记录/);
+  const off = h.run({ $request: { url: 'http://bilibili-logs.invalid/' }, $response: undefined, $argument: {} });
+  assert.match(off.response.body, /已关闭/);
+});
+test('newly enabled logging notifies once with browser URL and does not leak secrets', () => {
+  const h = harness(); h.run(); h.run();
+  assert.equal(h.notifications.length, 1);
+  assert.equal(h.notifications[0][3].openUrl, 'http://bilibili-logs.invalid/');
+  assert.ok(!JSON.stringify(h.notifications).includes(secret));
+  h.run({ $argument: { log_enabled: false } });
+  h.run();
+  assert.equal(h.notifications.length, 2);
+});
+test('cron detects switch without traffic; manual entry always offers log page', () => {
+  const h = harness();
+  const task = { $request: undefined, $response: undefined, $script: { name: 'Bilibili 日志开启提醒' } };
+  h.run({ ...task, $argument: {} });
+  assert.equal(h.notifications.length, 0);
+  h.run(task); h.run(task);
+  assert.equal(h.notifications.length, 1);
+  h.run({ ...task, $script: { name: 'Bilibili 打开日志页' }, $argument: {} });
+  assert.equal(h.notifications.length, 2);
+  assert.equal(h.writes(), 0);
 });
 test('logger routes are disjoint and optional metadata hook does not buffer body', () => {
   const lines = plugin.split('\n').filter(line => line.startsWith('http-response '));
