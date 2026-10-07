@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('../BilibiliEnhance.js', import.meta.url), 'utf8');
 const KEY = 'bilibili.enhance.tabs.v1';
@@ -135,67 +136,53 @@ test('saved selection order controls existing and hidden client tabs and survive
  h.page('/tabs/reset','POST');assert.deepEqual(h.home(home),{});
 });
 
-test('compact touch drag updates preview, cancels safely and keeps selection without network requests',()=>{
+test('numbered selection compacts gaps, appends reselected tabs and submits preview order without requests',()=>{
  const h=harness(frame([]));h.home([...current,{id:41,tab_id:'热门tab',name:'热门',pos:2}]);
- const html=h.page('/tabs').body;
- assert.match(html,/首页标签预览/);assert.match(html,/class="preview-tab first">推荐/);
+ const response=h.page('/tabs'),html=response.body;
+ assert.match(html,/首页标签预览/);assert.match(html,/class="tab-number" aria-hidden="true">1/);
  assert.ok(html.indexOf('完成后保存并重新打开 B 站。</p>')<html.indexOf('<section class="preview-card"'));
  assert.ok(html.indexOf('<section class="preview-card"')<html.indexOf('<div id="tab-list"'));
- assert.match(html,/grid-template-columns:repeat\(2/);assert.match(html,/touch-action:none/);assert.doesNotMatch(html,/data-move/);
+ assert.doesNotMatch(html,/drag-handle|pointerdown|touchstart/);
  const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
- assert.doesNotMatch(script,/fetch\(|XMLHttpRequest|setInterval|innerHTML/);
- const rows=[],handlers={},frames=new Map(),timers=new Map();let hit=null,frameId=0,scrolls=0,timerId=0;const captures=new Set();
- function row(id){const r={id,input:{checked:true},name:{textContent:id},classList:{add(){},remove(){}}};
-  r.handle={pressed:'false',focus(){},setAttribute(k,v){this.pressed=v;},closest:s=>s.includes('drag-handle')?r.handle:s.includes('tab-row')?r:null};
-  r.closest=s=>s.includes('tab-row')?r:null;
-  Object.defineProperties(r,{previousElementSibling:{get:()=>rows[rows.indexOf(r)-1]},nextElementSibling:{get:()=>rows[rows.indexOf(r)+1]||null}});
-  r.querySelector=s=>s.includes('input')?r.input:s.includes('drag-handle')?r.handle:r.name;
-  return r;
- }
- rows.push(row('recommend'),row('<img src=x onerror=alert(1)>'),row('third'));
- const original=[...rows];
- const preview={children:[],appendChild(item){this.children.push(item);}};
+ assert.doesNotMatch(script,/fetch\(|XMLHttpRequest|setInterval|innerHTML|requestAnimationFrame/);
+ const rows=[],handlers={};
+ function row(name,checked){const r={input:{checked},name:{textContent:name},number:{}};
+  r.querySelector=selector=>selector.includes('input')?r.input:selector==='.tab-number'?r.number:r.name;return r;}
+ rows.push(row('recommend',true),row('<img src=x onerror=alert(1)>',true),row('third',false));
+ const original=[...rows],preview={children:[],appendChild(item){this.children.push(item);}};
  Object.defineProperty(preview,'textContent',{set(){this.children=[];}});
- const status={},save={};
- const list={children:rows,contains:b=>rows.includes(b)||rows.some(r=>r.handle===b),addEventListener:(name,fn)=>{handlers[name]=fn;},
- setPointerCapture:id=>captures.add(id),hasPointerCapture:id=>captures.has(id),releasePointerCapture:id=>captures.delete(id),
- appendChild:a=>{rows.splice(rows.indexOf(a),1);rows.push(a);},
- insertBefore:(a,b)=>{rows.splice(rows.indexOf(a),1);rows.splice(b?rows.indexOf(b):rows.length,0,a);}};
- vm.runInNewContext(script,{document:{getElementById:id=>({'tab-list':list,'tab-preview':preview,'preview-status':status,'tabs-save':save})[id],createElement:()=>({}),elementFromPoint:()=>hit,addEventListener:(name,fn)=>{handlers[name]=fn;}},
- window:{innerHeight:800,ontouchstart:null,scrollBy(){scrolls++;}},setTimeout:fn=>{timers.set(++timerId,fn);return timerId;},clearTimeout:id=>timers.delete(id),requestAnimationFrame:fn=>{frames.set(++frameId,fn);return frameId;},cancelAnimationFrame:id=>frames.delete(id)});
- const event=(r,id=1)=>({target:r.handle,pointerId:id,button:0,isPrimary:true,clientX:40,clientY:300,preventDefault(){}});
- assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));assert.equal(frames.size,0);
- handlers.pointerdown(event(original[0]));assert.equal(captures.has(1),true);assert.equal(frames.size,1);
- hit=original[2];handlers.pointermove(event(original[0]));assert.deepEqual(rows.map(r=>r.id),[original[1].id,'third','recommend']);
- assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));assert.equal(preview.children[0].className,'preview-tab first');
- handlers.pointermove({...event(original[0]),clientY:799});const tick=[...frames.values()][0];tick();assert.equal(scrolls,1);
- handlers.pointerup(event(original[0]));assert.equal(captures.size,0);assert.equal(original[0].handle.pressed,'false');
- const after=[...rows];handlers.pointerdown(event(original[0]));hit=original[1];handlers.pointermove(event(original[0]));handlers.pointercancel(event(original[0]));assert.deepEqual(rows,after);
- handlers.pointerdown(event(original[0]));hit=original[1];handlers.pointermove(event(original[0]));handlers.keydown({...event(original[0]),key:'Escape'});assert.deepEqual(rows,after);
- handlers.keydown({...event(original[0]),key:'ArrowLeft'});assert.deepEqual(rows.map(r=>r.id),[original[1].id,'recommend','third']);
- handlers.keydown({...event(original[0]),key:'ArrowRight'});assert.deepEqual(rows,after);
- rows[0].input.checked=false;handlers.change();assert.equal(preview.children.length,2);
- rows.forEach(r=>r.input.checked=false);handlers.change();assert.equal(save.disabled,true);assert.match(preview.children[0].textContent,/至少选择/);
- rows[0].input.checked=true;handlers.change();assert.equal(save.disabled,false);assert.match(status.textContent,/已选 1 项/);
- handlers.pointerdown({...event(original[0]),isPrimary:false});assert.equal(captures.size,0);
- handlers.pointerdown({...event(original[0]),button:2});assert.equal(captures.size,0);
+ const status={},save={},form={addEventListener:(name,fn)=>handlers[name]=fn};
+ const list={children:rows,closest:()=>form,addEventListener:(name,fn)=>handlers[name]=fn,
+  appendChild:r=>{rows.splice(rows.indexOf(r),1);rows.push(r);}};
+ vm.runInNewContext(script,{document:{getElementById:id=>({'tab-list':list,'tab-preview':preview,'preview-status':status,'tabs-save':save})[id],createElement:()=>({})}});
+ const change=(r,checked)=>{r.input.checked=checked;handlers.change({target:r.input});};
+ const names=()=>preview.children.map(x=>x.textContent);
+ assert.deepEqual(names(),['recommend',original[1].name.textContent]);
+ assert.deepEqual(rows.map(r=>r.number.textContent),['1','2','']);
+ change(original[0],false);assert.equal(original[1].number.textContent,'1');
+ change(original[2],true);change(original[0],true);
+ assert.deepEqual(names(),[original[1].name.textContent,'third','recommend']);
+ assert.deepEqual(rows,original);assert.deepEqual(rows.map(r=>r.number.textContent),['3','1','2']);
+ handlers.submit({preventDefault(){assert.fail('valid form prevented');}});
+ assert.deepEqual(rows,[original[1],original[2],original[0]]);
+ assert.deepEqual(rows.map(r=>r.name.textContent),names());
+ original.forEach(r=>change(r,false));assert.equal(save.disabled,true);
+ let prevented=false;handlers.submit({preventDefault(){prevented=true;}});assert.equal(prevented,true);
+ change(original[2],true);assert.equal(original[2].number.textContent,'1');assert.equal(save.disabled,false);
  assert.equal(h.requests.length,0);
- // Touch Events must work without pointer capture, while compatibility pointer events are ignored.
- const touch={identifier:7,clientX:40,clientY:300};let prevented=0;
- const touchEvent=(target,touches=[touch])=>({target,touches,changedTouches:[touch],preventDefault(){prevented++;}});
- const touchBefore=[...rows];
- handlers.pointerdown({...event(rows[0]),pointerType:'touch'});assert.equal(captures.size,0);
- handlers.touchstart(touchEvent(rows[0].handle));assert.equal(captures.size,0);assert.ok(prevented>0);
- hit=rows[2];handlers.touchmove(touchEvent(rows[0].handle));assert.notDeepEqual(rows,touchBefore);
- assert.deepEqual(preview.children.filter(x=>x.className!=='preview-empty').map(x=>x.textContent),rows.filter(r=>r.input.checked).map(r=>r.id));
- handlers.touchend(touchEvent(touchBefore[0].handle,[]));const touchAfter=[...rows];
- const click={preventDefault(){prevented++;},stopPropagation(){}};handlers.click(click);
- handlers.touchstart(touchEvent(rows[0].handle));hit=rows[2];handlers.touchmove(touchEvent(rows[0].handle));handlers.touchcancel();assert.deepEqual(rows,touchAfter);
- // Long press the whole chip, then cancel safely; scrolling before activation does not reorder.
- handlers.touchstart(touchEvent(rows[0]));assert.equal(timers.size,1);
- const activate=[...timers.values()][0];timers.clear();activate();hit=rows[2];handlers.touchmove(touchEvent(rows[0]));handlers.touchcancel();assert.deepEqual(rows,touchAfter);
- handlers.touchstart(touchEvent(rows[0]));handlers.touchmove(touchEvent(rows[0],[{...touch,clientY:320}]));assert.equal(timers.size,0);assert.deepEqual(rows,touchAfter);
- handlers.touchend(touchEvent(rows[0],[]));assert.equal(timers.size,0);
+});
+
+test('actual tabs response permits exactly its fixed script hash, including POST pages, while logs stay script-free',()=>{
+ const h=harness(frame([]));h.home(current);
+ for(const [path,method,body] of [['/tabs','GET'],['/tabs/save','POST','tab=tab%3A推荐tab'],['/tabs/reset','POST'],['/tabs/add','POST','name=a&url=https%3A%2F%2Fexample.com'],['/tabs/load','POST']]){
+  const response=h.page(path,method,body),script=response.body.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const digest=createHash('sha256').update(script).digest('base64');
+  const policy=response.headers['Content-Security-Policy'];
+  assert.ok(policy.includes("script-src 'sha256-"+digest+"';"));
+  assert.match(policy,/default-src 'none'/);assert.doesNotMatch(policy,/script-src[^;]*(?:unsafe-inline|unsafe-eval|https?:|\*)/);
+ }
+ assert.doesNotMatch(h.page('/').headers['Content-Security-Policy'],/script-src/);
+ assert.doesNotMatch(h.page('/tabs-missing').headers['Content-Security-Policy'],/script-src/);
 });
 
 test('unchanged homepage catalogs avoid persistent writes and saved settings survive independent script executions',()=>{

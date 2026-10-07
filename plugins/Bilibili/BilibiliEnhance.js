@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.10.1；更新时间：2026-10-07
+ * 版本：1.10.2；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -299,121 +299,50 @@
   function tabsPage(message = '') {
     const state = readTabs();
     const ordered = state.selected === null ? state.catalog : state.selected.map(id => state.catalog.find(tab => tab.id === id)).filter(Boolean).concat(state.catalog.filter(tab => !state.selected.includes(tab.id)));
-    const rows = ordered.map(tab => '<div class="tab-row"><label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
-      ((state.selected === null ? !['region', 'custom'].includes(tab.source) || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label>' + (tab.source === 'custom' ? '<button class="delete-custom" type="submit" form="custom-delete" name="id" value="' + escapeHTML(tab.id) + '" aria-label="删除自定义标签：' + escapeHTML(tab.name) + '">×</button>' : '') + '<button type="button" class="drag-handle" aria-label="拖动排序：' + escapeHTML(tab.name) + '" title="拖动排序；键盘方向键也可移动">≡</button></div>').join('');
     const selectedTabs = ordered.filter(tab => state.selected === null ? !['region', 'custom'].includes(tab.source) || tab.enabled === true : state.selected.includes(tab.id));
+    const rows = ordered.map(tab => {
+      const index = selectedTabs.indexOf(tab);
+      return '<div class="tab-row"><label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' + (index >= 0 ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span><span class="tab-number" aria-hidden="true">' + (index >= 0 ? index + 1 : '') + '</span></label>' + (tab.source === 'custom' ? '<button class="delete-custom" type="submit" form="custom-delete" name="id" value="' + escapeHTML(tab.id) + '" aria-label="删除自定义标签：' + escapeHTML(tab.name) + '">×</button>' : '') + '</div>';
+    }).join('');
     const preview = selectedTabs.map((tab, index) => '<span class="preview-tab' + (index === 0 ? ' first' : '') + '">' + escapeHTML(tab.name) + '</span>').join('');
     // 所有调整与预览只在页面内完成；点击保存才提交，不轮询或逐项请求。
     const previewScript = `<script>(function(){
       var list=document.getElementById("tab-list"),preview=document.getElementById("tab-preview"),status=document.getElementById("preview-status"),save=document.getElementById("tabs-save");
       if(!list)return;
+      var rows=Array.from(list.children),selected=rows.filter(function(row){return row.querySelector("input[name=tab]").checked;});
       function update(){
-        var rows=list.children,names=[];
-        for(var i=0;i<rows.length;i++){
-          var input=rows[i].querySelector("input[name=tab]");
-          if(input&&input.checked)names.push(rows[i].querySelector("label span").textContent);
-        }
-        if(!preview)return;
+        rows.forEach(function(row){var index=selected.indexOf(row);row.querySelector(".tab-number").textContent=index<0?"":String(index+1);});
         preview.textContent="";
-        names.forEach(function(name,index){var item=document.createElement("span");item.className="preview-tab"+(index===0?" first":"");item.textContent=name;preview.appendChild(item);});
-        if(!names.length){var empty=document.createElement("span");empty.className="preview-empty";empty.textContent="请至少选择一个标签";preview.appendChild(empty);}
-        status.textContent="已选 "+names.length+" 项 · 按此顺序显示";
-        save.disabled=names.length===0;
+        selected.forEach(function(row,index){var item=document.createElement("span");item.className="preview-tab"+(index===0?" first":"");item.textContent=row.querySelector("label span").textContent;preview.appendChild(item);});
+        if(!selected.length){var empty=document.createElement("span");empty.className="preview-empty";empty.textContent="请至少选择一个标签";preview.appendChild(empty);}
+        status.textContent="已选 "+selected.length+" 项 · 按序号显示";
+        save.disabled=selected.length===0;
       }
-      var drag=null,animation=0,pending=null,ignoreClick=false;
-      function place(x,y){
-        var target=document.elementFromPoint(x,y),row=target&&target.closest(".tab-row");
-        if(!row||!list.contains(row)||row===drag.row)return;
-        var rows=Array.from(list.children),down=rows.indexOf(drag.row)<rows.indexOf(row);
-        list.insertBefore(drag.row,down?row.nextElementSibling:row);update();
-      }
-      function scroll(){
-        if(!drag)return;
-        var edge=64,height=window.innerHeight,delta=drag.y<edge?-12:drag.y>height-edge?12:0;
-        if(delta){window.scrollBy(0,delta);place(drag.x,drag.y);}
-        animation=requestAnimationFrame(scroll);
-      }
-      function finish(cancel){
-        if(!drag)return;
-        var ended=drag;drag=null;cancelAnimationFrame(animation);
-        if(cancel)ended.order.forEach(function(row){list.appendChild(row);});
-        ended.row.classList.remove("dragging");ended.handle.setAttribute("aria-pressed","false");
-        if(ended.mode==="pointer"&&typeof list.hasPointerCapture==="function"&&list.hasPointerCapture(ended.id))list.releasePointerCapture(ended.id);
-        update();ended.handle.focus({preventScroll:true});
-      }
-      function begin(row,handle,id,x,y,mode){
-        drag={row:row,handle:handle,id:id,x:x,y:y,mode:mode,order:Array.from(list.children)};
-        row.classList.add("dragging");handle.setAttribute("aria-pressed","true");
-        if(mode==="pointer"&&typeof list.setPointerCapture==="function"){
-          try{list.setPointerCapture(id);}catch(_){}
-        }
-        animation=requestAnimationFrame(scroll);
-      }
-      function clearPending(){if(pending){clearTimeout(pending.timer);pending=null;}}
-      list.addEventListener("pointerdown",function(event){
-        // iPhone 触摸走非被动 Touch Events，避免浏览器把拖动交给滚动／取消指针。
-        if(event.pointerType==="touch"&&"ontouchstart" in window)return;
-        var handle=event.target.closest(".drag-handle");
-        if(!handle||!list.contains(handle)||drag||event.isPrimary===false||event.button!==0)return;
-        event.preventDefault();ignoreClick=false;
-        begin(handle.closest(".tab-row"),handle,event.pointerId,event.clientX,event.clientY,"pointer");
+      list.addEventListener("change",function(event){
+        var row=rows.find(function(item){return item.querySelector("input[name=tab]")===event.target;});
+        if(!row)return;
+        selected=selected.filter(function(item){return item!==row;});
+        if(event.target.checked)selected.push(row);
+        update();
       });
-      document.addEventListener("pointermove",function(event){
-        if(!drag||drag.mode!=="pointer"||event.pointerId!==drag.id)return;
-        event.preventDefault();drag.x=event.clientX;drag.y=event.clientY;place(drag.x,drag.y);
+      list.closest("form").addEventListener("submit",function(event){
+        if(!selected.length){event.preventDefault();return;}
+        // 原生表单按 DOM 顺序提交；仅在保存时重排，勾选时保持列表位置稳定。
+        selected.forEach(function(row){list.appendChild(row);});
+        rows.filter(function(row){return selected.indexOf(row)<0;}).forEach(function(row){list.appendChild(row);});
       });
-      document.addEventListener("pointerup",function(event){if(drag&&drag.mode==="pointer"&&event.pointerId===drag.id)finish(false);});
-      document.addEventListener("pointercancel",function(event){if(drag&&drag.mode==="pointer"&&event.pointerId===drag.id)finish(true);});
-      list.addEventListener("touchstart",function(event){
-        clearPending();ignoreClick=false;
-        if(drag||event.touches.length!==1||event.target.closest(".delete-custom"))return;
-        var row=event.target.closest(".tab-row");if(!row||!list.contains(row))return;
-        var touch=event.touches[0],handle=row.querySelector(".drag-handle");
-        if(event.target.closest(".drag-handle")){
-          event.preventDefault();begin(row,handle,touch.identifier,touch.clientX,touch.clientY,"touch");
-        }else{
-          var candidate={row:row,handle:handle,id:touch.identifier,x:touch.clientX,y:touch.clientY};
-          candidate.timer=setTimeout(function(){if(pending!==candidate)return;pending=null;ignoreClick=true;begin(row,handle,candidate.id,candidate.x,candidate.y,"touch");},280);
-          pending=candidate;
-        }
-      },{passive:false});
-      document.addEventListener("touchmove",function(event){
-        if(pending){
-          var first=Array.from(event.touches).find(function(t){return t.identifier===pending.id;});
-          if(!first||Math.abs(first.clientX-pending.x)>8||Math.abs(first.clientY-pending.y)>8)clearPending();
-        }
-        if(!drag||drag.mode!=="touch")return;
-        var touch=Array.from(event.touches).find(function(t){return t.identifier===drag.id;});
-        if(!touch)return;
-        event.preventDefault();drag.x=touch.clientX;drag.y=touch.clientY;place(drag.x,drag.y);
-      },{passive:false});
-      document.addEventListener("touchend",function(event){
-        clearPending();if(!drag||drag.mode!=="touch")return;
-        if(Array.from(event.changedTouches).some(function(t){return t.identifier===drag.id;})){
-          event.preventDefault();ignoreClick=true;finish(false);
-        }
-      },{passive:false});
-      document.addEventListener("touchcancel",function(){clearPending();if(drag&&drag.mode==="touch"){ignoreClick=true;finish(true);}});
-      list.addEventListener("click",function(event){if(ignoreClick){event.preventDefault();event.stopPropagation();ignoreClick=false;}},true);
-      list.addEventListener("keydown",function(event){
-        if(event.key==="Escape"&&drag){event.preventDefault();finish(true);return;}
-        var handle=event.target.closest(".drag-handle");if(!handle||!list.contains(handle)||drag)return;
-        var row=handle.closest(".tab-row"),up=["ArrowUp","ArrowLeft"].includes(event.key),down=["ArrowDown","ArrowRight"].includes(event.key);
-        if(!up&&!down)return;event.preventDefault();var next=up?row.previousElementSibling:row.nextElementSibling;
-        if(next){list.insertBefore(row,up?next:next.nextElementSibling);update();handle.focus({preventScroll:true});}
-      });
-      list.addEventListener("change",update);update();
+      update();
     })();</script>`;
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
-      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}.catalog-count{font-size:13px;margin:8px 0}details{font-size:14px;margin-top:16px}summary{cursor:pointer}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}#tab-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tab-row{display:flex;align-items:center;min-width:0;min-height:44px;border:1px solid #8883;border-radius:10px;background:light-dark(#fff,#20222b)}.tab-row label{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;flex:1;min-width:0;gap:7px;padding:8px 0 8px 9px;border:0;align-items:center;font-size:14px;line-height:1.3}.tab-row input{flex:none;width:18px;height:18px;margin:0}.tab-row span{overflow-wrap:anywhere}.delete-custom{flex:none;width:24px;height:44px;margin:0;padding:0;background:transparent;color:#888;font-size:19px}.custom-form label{display:block;padding:8px 0;border:0}.custom-form input{display:block;box-sizing:border-box;width:100%;height:42px;margin-top:6px;padding:8px 10px;border:1px solid #8884;border-radius:8px;background:light-dark(#fff,#20222b);color:inherit;font:inherit}.drag-handle{flex:none;width:32px;min-height:44px;padding:0;margin:0;background:transparent;color:#888;font-size:23px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.drag-handle:focus-visible{outline:2px solid #fb7299;outline-offset:-3px}.tab-row.dragging{border-color:#fb7299;background:#fb729922;box-shadow:0 0 0 2px #fb729933}.tab-row.dragging .drag-handle{cursor:grabbing;color:#fb7299}@media(min-width:540px){#tab-list{grid-template-columns:repeat(3,minmax(0,1fr))}}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
+      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}.catalog-count{font-size:13px;margin:8px 0}details{font-size:14px;margin-top:16px}summary{cursor:pointer}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}#tab-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tab-row{display:flex;align-items:center;min-width:0;min-height:44px;border:1px solid #8883;border-radius:10px;background:light-dark(#fff,#20222b)}.tab-row label{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;flex:1;min-width:0;gap:7px;padding:8px 0 8px 9px;border:0;align-items:center;font-size:14px;line-height:1.3}.tab-row label{position:relative;cursor:pointer}.tab-row input{position:absolute;opacity:0;width:1px;height:1px;margin:0}.tab-number{order:-1;flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1.5px solid #8888;border-radius:7px;font-size:13px;font-weight:700;line-height:1}.tab-row input:checked~.tab-number{background:#fb7299;border-color:#fb7299;color:white}.tab-row input:focus-visible~.tab-number{outline:2px solid #fb7299;outline-offset:3px}.tab-row span{overflow-wrap:anywhere}.delete-custom{flex:none;width:24px;height:44px;margin:0;padding:0;background:transparent;color:#888;font-size:19px}.custom-form label{display:block;padding:8px 0;border:0}.custom-form input{display:block;box-sizing:border-box;width:100%;height:42px;margin-top:6px;padding:8px 10px;border:1px solid #8884;border-radius:8px;background:light-dark(#fff,#20222b);color:inherit;font:inherit}@media(min-width:540px){#tab-list{grid-template-columns:repeat(3,minmax(0,1fr))}}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
       (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
       '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>获取未启用的客户端分区与服务；已获取后无需重复加载。</p>' +
-      '<p>勾选显示，按住 ≡ 拖动，或长按标签后排序，预览同步更新。完成后保存并重新打开 B 站。</p>' +
+      '<p>按想要的顺序勾选标签，方框内的 1、2、3 就是显示顺序，预览同步更新。完成后保存并重新打开 B 站。</p>' +
       '<section class="preview-card" aria-label="首页标签预览"><div class="preview-title"><strong>首页标签预览</strong><small id="preview-status" aria-live="polite">已选 ' + selectedTabs.length + ' 项 · 按此顺序显示</small></div><div id="tab-preview">' + (preview || '<span class="preview-empty">请至少选择一个标签</span>') + '</div></section>' +
       '<p class="catalog-count">可选 ' + state.catalog.length + ' 项 · 分区与服务 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项</p>' +
       (rows ? '<form method="post" action="/tabs/save"><div id="tab-list">' + rows + '</div><button id="tabs-save" type="submit">保存选择与排序</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
-      '<form id="custom-delete" method="post" action="/tabs/delete"></form><details><summary>手动添加标签</summary><form class="custom-form" method="post" action="/tabs/add"><label>标签名称<input type="text" name="name" maxlength="64" placeholder="例如：a" required></label><label>对应 URL<input type="text" name="url" maxlength="2048" placeholder="https://example.com 或 bilibili://…" autocapitalize="none" autocorrect="off" spellcheck="false" required></label><p>支持网页链接和 B 站客户端链接。添加后勾选、拖动并保存；自定义项右侧 × 可删除。</p><button type="submit">添加标签</button></form></details>' +
-      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><details><summary>使用说明</summary><p>标签按从左到右、从上到下排序。至少保留一项，新获取项默认不勾选。按住右侧拖动柄直接移动，或长按标签约 0.3 秒再拖动；普通滑动仍可滚动列表，拖到屏幕边缘也可滚动；手势取消会恢复本次拖动前的顺序。键盘方向键也可排序。预览突出第一项仅示意排列，不改变客户端默认选中项。</p><p>设置保存在本机，不依赖日志开关。保存后无需再运行管理按钮或获取全部标签；维持自定义效果需保持插件启用。</p></details></main>' + previewScript + '</body></html>';
+      '<form id="custom-delete" method="post" action="/tabs/delete"></form><details><summary>手动添加标签</summary><form class="custom-form" method="post" action="/tabs/add"><label>标签名称<input type="text" name="name" maxlength="64" placeholder="例如：a" required></label><label>对应 URL<input type="text" name="url" maxlength="2048" placeholder="https://example.com 或 bilibili://…" autocapitalize="none" autocorrect="off" spellcheck="false" required></label><p>支持网页链接和 B 站客户端链接。添加后按所需顺序勾选并保存；自定义项右侧 × 可删除。</p><button type="submit">添加标签</button></form></details>' +
+      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><details><summary>使用说明</summary><p>第一个勾选的标签为 1，第二个为 2，依次排列。取消勾选后后续序号自动补齐，再勾选会排到最后；要重新排序，可取消相关标签后按目标顺序勾选。至少保留一项，新获取项默认不勾选。预览突出第一项仅示意排列，不改变客户端默认选中项。</p><p>设置保存在本机，不依赖日志开关。保存后无需再运行管理按钮或获取全部标签；维持自定义效果需保持插件启用。</p></details></main>' + previewScript + '</body></html>';
   }
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function options(raw) {
@@ -597,19 +526,21 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.9.0</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.10.2</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
+    const path = (local[1] || '/').split('?')[0];
+    // 只允许首页标签页的固定脚本；脚本变更必须同步摘要，测试会校验。
+    const tabsScriptPolicy = "script-src 'sha256-0BbgFCsss1aVNptOhjtmvWrzy9SSHck5fYPcBSBoR+U='; ";
     function respond(status, type, body, extra = {}) {
       return $done({ response: { status, headers: Object.assign({
         'Content-Type': type + '; charset=utf-8', 'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+        'Content-Security-Policy': (type === 'text/html' && /^\/tabs(?:\/|$)/.test(path) ? tabsScriptPolicy : '') + "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
       }, extra), body } });
     }
     try {
       if (!syncLogging(config)) throw new Error('storage');
-      const path = (local[1] || '/').split('?')[0];
       const method = request.method || 'GET';
       if (path.startsWith('/tabs')) {
         if (path === '/tabs' && method === 'GET') return respond(200, 'text/html', tabsPage());
