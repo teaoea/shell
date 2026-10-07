@@ -2,7 +2,7 @@
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeRuntime.js
  * 功能：为共享请求包和响应包适配 Loon、Quantumult X、Surge 与 Stash 的平台接口。
- * 版本：1.0.1
+ * 版本：1.1.0
  * 更新时间：2026-10-07
  */
 
@@ -77,6 +77,46 @@ function ytRuntimeLogControl(options) {
     }
   } catch (_) {}
   return result;
+}
+
+/**
+ * 功能：Loon 日志总开关首次开启时自动开始并提示入口；观察到关闭时复用日志页清理。
+ * 更新时间：2026-10-07
+ * @param {Object} options 已解析的规则参数。
+ * @param {Function} control 本地开始或清理操作，返回合成响应；不发送网络请求。
+ * @returns {void} 通知或存储失败不影响原请求处理；手动暂停不会因后续请求自动恢复。
+ */
+function ytRuntimeLoonLogging(options, control) {
+  if (ytRuntimePlatform() !== 'Loon' || typeof $request === 'undefined') return;
+  var flag = options.log_enabled;
+  if (flag !== true && flag !== 'true' && flag !== false && flag !== 'false') return;
+  var enabled = flag === true || flag === 'true', url = String($request.url || '');
+  var api = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search|config|log_event|player|player\/ad_break|get_watch|reel\/reel_watch_sequence)(?:\?[^#]*)?$/i.test(url);
+  var local = /^http:\/\/youtube-logs\.invalid(?::80)?\/?(?:\?[^#]*)?$/.test(url) && String($request.method || 'GET').toUpperCase() === 'GET';
+  var media = enabled && /^https:\/\/[\w-]+\.googlevideo\.com\/(?:videoplayback|initplayback)(?:\?[^#]*)?$/i.test(url);
+  if (!api && !local && !media) return;
+  try {
+    var store = ytRuntimeStore();
+    if (!store) return;
+    var key = 'ytads.logger.loon-control.v1', state = store.read(key);
+    if (!enabled) {
+      if (state !== 'on' && state !== 'pending') return;
+      var cleared = control('/clear');
+      if (cleared && cleared.status === 303) store.write('off', key);
+      return;
+    }
+    if (state !== 'on' && state !== 'pending') {
+      var started = control('/start');
+      if (!started || started.status !== 303 || store.write('pending', key) !== true) return;
+      state = 'pending';
+    }
+    // 页面访问不提示；首次命中的 YouTube 流量提示一次，不尝试判断 App 生命周期。
+    if (state === 'pending' && !local && store.write('on', key) === true) {
+      if (typeof $notification !== 'undefined' && typeof $notification.post === 'function') {
+        $notification.post('YouTube 日志', '日志工具已开启', '点击打开日志页，标记播放状态或下载日志。关闭日志工具会清空记录。', {openUrl:'http://youtube-logs.invalid/'});
+      }
+    }
+  } catch (_) {}
 }
 
 /**

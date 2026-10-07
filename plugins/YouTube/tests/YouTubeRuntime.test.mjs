@@ -7,6 +7,88 @@ const bundle=phase=>fs.readFileSync(new URL(`../dist/${phase}.min.js`,import.met
 function context(extra={}) { const outputs=[];return {outputs,Uint8Array,ArrayBuffer,TextDecoder,TextEncoder,console:{log(){}},$done(v){outputs.push(v);},...extra}; }
 function qx(extra={}) {return context({$prefs:{valueForKey(){return null;},setValueForKey(){return true;},removeValueForKey(){return true;}},$task:{},...extra});}
 function run(code,c){vm.runInNewContext(code,c,{timeout:2000});return c;}
+
+test('Loon logging starts automatically, notifies once, respects page pause and clears its own data on disable',()=>{
+ const store=new Map([['unrelated-plugin','keep']]),notices=[];
+ const invoke=(url,enabled=true,method='GET',extra={})=>{
+  const c=context({$loon:'Loon', $argument:{log_enabled:enabled,log_level:'info'},$request:{url,method,headers:{}},
+   $notification:{post(...args){notices.push(args);}},
+   $persistentStore:{read:key=>store.get(key),write(value,key){if(value===undefined)store.delete(key);else store.set(key,value);return true;}},...extra});
+  run(bundle(extra.$response?'response':'request'),c);assert.equal(c.outputs.length,1);return c;
+ };
+ const api='https://youtubei.googleapis.com/youtubei/v1/browse',base='http://youtube-logs.invalid';
+ invoke(api);
+ const first=JSON.parse(store.get('ytads.logger.config.v1'));
+ assert.equal(first.enabled,true);assert.equal(notices.length,1);assert.equal(notices[0][3].openUrl,base+'/');
+ invoke(api);assert.equal(notices.length,1);
+ assert.ok(JSON.parse(store.get('ytads.logger.entries.v2')).entries.length>=2);
+ invoke(base+'/pause',true,'POST');invoke(api);
+ assert.equal(JSON.parse(store.get('ytads.logger.config.v1')).enabled,false,'manual pause must survive later YouTube traffic');
+ const prefix='ytads.capture.'+first.session+'.fixture.';
+ store.set(prefix+'0','safe-sample');
+ store.set('ytads.logger.entries.v2',JSON.stringify({session:first.session,captureBytes:11,entries:[{captureRef:{prefix,chunks:1}}]}));
+ store.set('ytads.logger.YouTubeFeed.v1','legacy-summary');
+ invoke(api,false);
+ assert.equal(JSON.parse(store.get('ytads.logger.config.v1')).enabled,false);
+ assert.equal(JSON.parse(store.get('ytads.logger.entries.v2')).entries.length,0);
+ assert.equal(store.has(prefix+'0'),false);assert.equal(store.has('ytads.logger.YouTubeFeed.v1'),false);
+ assert.equal(store.get('unrelated-plugin'),'keep');assert.equal(store.get('ytads.logger.loon-control.v1'),'off');
+ invoke(api,true);
+ assert.equal(notices.length,2);assert.equal(JSON.parse(store.get('ytads.logger.config.v1')).enabled,true);
+});
+
+test('Loon log-page visit starts logging quietly and API response later sends the entry notification',()=>{
+ const store=new Map(),notices=[];
+ const invoke=(phase,url,response)=>{
+  const c=context({$loon:'Loon',$argument:{log_enabled:true},$request:{url,method:'GET'},
+   $persistentStore:{read:key=>store.get(key),write(value,key){store.set(key,value);return true;}},
+   $notification:{post(...args){notices.push(args);}},...(response?{$response:response}:{})});
+  run(bundle(phase),c);assert.equal(c.outputs.length,1);return c;
+ };
+ invoke('request','http://youtube-logs.invalid/');
+ assert.equal(JSON.parse(store.get('ytads.logger.config.v1')).enabled,true);assert.equal(notices.length,0);
+ invoke('response','https://youtubei.googleapis.com/youtubei/v1/next',{status:200,headers:{'Content-Type':'application/json'},body:'{}'});
+ assert.equal(notices.length,1);assert.equal(store.get('ytads.logger.loon-control.v1'),'on');
+});
+
+test('Loon disabled media never starts lifecycle or reads storage, headers or body',()=>{
+ for(const phase of ['request','response']){
+  const request={url:'https://rr1.googlevideo.com/videoplayback?sig=private'},response={status:200};
+  for(const value of [request,response])for(const key of ['body','headers'])Object.defineProperty(value,key,{get(){throw Error('media accessed');}});
+  const c=context({$loon:'Loon',$argument:{log_enabled:false},$request:request,
+   $persistentStore:{read(){throw Error('storage accessed');},write(){throw Error('storage accessed');}},
+   $notification:{post(){throw Error('notification attempted');}},...(phase==='response'?{$response:response}:{})});
+  run(bundle(phase),c);assert.equal(c.outputs.length,1);assert.deepEqual(Object.keys(c.outputs[0]),[]);
+ }
+});
+
+test('Loon notification or control storage failures do not break ad cleanup',()=>{
+ for(const failure of ['read','notify']){
+  const store=new Map();
+  const c=context({$loon:'Loon',$argument:{log_enabled:true},$request:{url:'https://youtubei.googleapis.com/youtubei/v1/player',method:'POST'},
+   $response:{status:200,headers:{'Content-Type':'application/json'},body:'{"adPlacements":[{}],"playabilityStatus":{}}'},
+   $persistentStore:{read(key){if(failure==='read'&&key==='ytads.logger.loon-control.v1')throw Error('storage failure');return store.get(key);},write(value,key){store.set(key,value);return true;}},
+   $notification:{post(){throw Error('notification failure');}}});
+  run(bundle('response'),c);assert.equal(c.outputs.length,1);assert.equal(JSON.parse(c.outputs[0].body).adPlacements,undefined);
+ }
+});
+test('Loon failed chunk deletion retains the index and retries cleanup on later disabled API traffic',()=>{
+ const session='clear-retry',prefix='ytads.capture.'+session+'.sample.',store=new Map([
+  ['ytads.logger.loon-control.v1','on'],['ytads.logger.config.v1',JSON.stringify({enabled:true,session})],
+  ['ytads.logger.entries.v2',JSON.stringify({session,captureBytes:3,entries:[{captureRef:{prefix,chunks:1}}]})],
+  [prefix+'0','sample'],['unrelated-plugin','keep']
+ ]);
+ let fail=true;
+ const invoke=()=>{
+  const c=context({$loon:'Loon',$argument:{log_enabled:false},$request:{url:'https://youtubei.googleapis.com/youtubei/v1/player/ad_break',method:'POST'},
+   $persistentStore:{read:key=>store.get(key),write(value,key){if(fail&&key===prefix+'0')return false;if(value===undefined)store.delete(key);else store.set(key,value);return true;}}});
+  run(bundle('request'),c);assert.equal(c.outputs.length,1);assert.equal(c.outputs[0].response.status,200);
+ };
+ invoke();assert.equal(store.get('ytads.logger.loon-control.v1'),'on');assert.ok(store.has(prefix+'0'));
+ assert.equal(JSON.parse(store.get('ytads.logger.entries.v2')).entries.length,1);
+ fail=false;invoke();assert.equal(store.has(prefix+'0'),false);assert.equal(store.get('ytads.logger.loon-control.v1'),'off');
+ assert.equal(JSON.parse(store.get('ytads.logger.entries.v2')).entries.length,0);assert.equal(store.get('unrelated-plugin'),'keep');
+});
 test('QX published response removes protobuf ads and preserves unknown bytes',()=>{
  const bytes=Uint8Array.from([18,2,8,0,58,0,162,4,0,154,6,1,7]);
  const c=qx({$request:{url:'https://youtubei.googleapis.com/youtubei/v1/player'},$response:{statusCode:200,headers:{'Content-Type':'application/x-protobuf'},bodyBytes:bytes.buffer},$environment:{sourcePath:'response.min.js#log_enabled=false'}});

@@ -25,7 +25,8 @@ if (process.argv.slice(2).some(value => value !== '--check')) throw new Error('�
 async function compileScript(phase) {
   const modules = await Promise.all(bundles[phase].map(async name => {
     const code = runtimeSource(await fs.readFile(new URL(`src/${name}.js`, root), 'utf8'), name, phase);
-    return `${name}:function ${name}(options){return ytRuntimeInvoke(function($request,$response,$argument,$persistentStore,$done){\n${code}\n},options);}`;
+    const control = name === 'YouTubeLogger' ? `if(localControl){$request={url:'http://youtube-logs.invalid'+localControl.path,method:'POST',headers:{}};$response=undefined;$done=localControl.done;}\n` : '';
+    return `${name}:function ${name}(options,localControl){return ytRuntimeInvoke(function($request,$response,$argument,$persistentStore,$done){\n${control}${code}\n},options);}`;
   }));
   const handlers = `yt${phase === 'request' ? 'Request' : 'Response'}Handlers`;
   const route = phase === 'request'
@@ -44,9 +45,14 @@ async function compileScript(phase) {
     if (typeof $done === 'function') (function(){
       if (${phase === 'request' ? "typeof $response !== 'undefined'" : "typeof $response === 'undefined'"}) return $done({});
       var url = typeof $request !== 'undefined' ? String($request.url || '') : '';
-      // 日志开关是媒体采样的总开关；关闭后不读取采样选项、媒体正文或日志缓存，也不执行日志模块。
+      // Loon 开关变化复用本地开始/清理；关闭的媒体入口仍不读取正文或缓存。
       var media = /^https:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?:videoplayback|initplayback)(?:\\?[^#]*)?$/i.test(url);
       var options = ytRuntimeOptions();
+      ytRuntimeLoonLogging(options,function(path){
+        var result;
+        ${handlers}.YouTubeLogger({log_enabled:true},{path:path,done:function(value){result=value&&value.response;}});
+        return result;
+      });
       if (media && !(options.log_enabled === true || options.log_enabled === 'true')) {
         if (${phase === 'response' ? 'true' : 'false'} && ytRuntimeMediaHeaders(options)) return;
         return $done({});

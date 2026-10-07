@@ -106,7 +106,42 @@ test('shared exports retain function-specific Onesie summaries', () => {
     ]})]
   ]);
   assert.deepEqual(events(store).map(event => event.summary.source), ['YouTubeConfig','YouTubeConfig']);
-  assert.match(request(store).body, /保留 2 条/);
+  assert.match(request(store).body, /<strong>2<\/strong><span>已保存记录<\/span>/);
+});
+test('page previews only the newest 20 summaries in Shanghai time without reading sample chunks', () => {
+  const session = 'page-preview';
+  const entries = Array.from({length:25}, (_, i) => ({
+    source:'YouTubePlayback', version:'1.0.0', endpoint:'player', level:i===24?'error':'info',
+    time:`2026-10-06T16:00:${String(i).padStart(2,'0')}.123Z`,
+    message:i===24?'sample & "quoted" result':`preview-${String(i).padStart(2,'0')}`
+  }));
+  entries[23].message='user mark: ad-playing';
+  entries[24].captureRef={prefix:`ytads.capture.${session}.sample.`,chunks:1,chars:1,bytes:1,checksum:1};
+  const store = new Map([
+    ['ytads.logger.privacy.v1','structure-only-v1'],
+    [configKey, JSON.stringify({enabled:true,session})],
+    [cacheKey, JSON.stringify({session,captureBytes:1,entries})]
+  ]);
+  const result = execute(logger, store, {
+    $request:{url:base+'/',method:'GET',headers:{}},
+    $persistentStore:{
+      read(key){assert.ok(!key.startsWith('ytads.capture.'),'preview must not load sample bodies');return store.get(key);},
+      write(value,key){if(value===undefined)store.delete(key);else store.set(key,value);return true;}
+    }
+  }).output.response;
+  assert.equal(result.status,200);
+  assert.equal((result.body.match(/<article class="record">/g)||[]).length,20);
+  assert.match(result.body, /10-07 00:00:24\.123/);
+  assert.match(result.body, /sample &amp; &quot;quoted&quot; result/);
+  assert.match(result.body, /<strong>25<\/strong><span>已保存记录/);
+  assert.match(result.body, /<strong>1<\/strong><span>错误记录/);
+  assert.match(result.body, /<strong>1<\/strong><span>手动标记/);
+  assert.match(result.body, /已标记：正在播放广告/);
+  assert.ok(!result.body.includes('preview-04'));
+  assert.ok(result.body.indexOf('preview-23')===-1);
+  assert.ok(result.body.indexOf('preview-22')<result.body.indexOf('preview-05'));
+  assert.ok(!/<details\s+open/.test(result.body));
+  assert.match(result.headers['Content-Security-Policy'], /img-src data:/);
 });
 test('manual entry points to the local page without silently enabling recording', () => {
   const store = new Map();
@@ -200,8 +235,8 @@ test('old per-source caches migrate once to one cache without duplicating export
   for (const source of ['YouTubePlaybackAds','YouTubeFeedAds']) store.set(`ytads.logger.${source}.v1`, JSON.stringify({session:'legacy-session',entries:[{
     time:'2026-10-02T01:00:00.000Z',version:'1.2.1',endpoint:source === 'YouTubePlaybackAds' ? 'player' : 'browse',message:'changed: removed=1'
   }]}));
-  assert.ok(request(store).body.includes('保留 2 条'));
-  assert.ok(request(store).body.includes('保留 2 条'));
+  assert.ok(request(store).body.includes('<strong>2</strong><span>已保存记录</span>'));
+  assert.ok(request(store).body.includes('<strong>2</strong><span>已保存记录</span>'));
   assert.equal(JSON.parse(store.get(cacheKey)).entries.length, 2);
   assert.ok(!store.has('ytads.logger.YouTubePlaybackAds.v1') && !store.has('ytads.logger.YouTubeFeedAds.v1'));
 });
@@ -259,7 +294,7 @@ test('clear rotates session and preserves other scripts storage', () => {
   assert.equal(store.get('unrelated'), 'keep');
   // An in-flight writer from the previous session cannot resurrect old logs.
   store.set(cacheKey, old);
-  assert.ok(request(store).body.includes('保留 0 条'));
+  assert.ok(request(store).body.includes('<strong>0</strong><span>已保存记录</span>'));
 });
 test('clearing can recover corrupt owned storage', () => {
   const store = new Map([[configKey, '{invalid']]);
@@ -319,7 +354,7 @@ test('export ignores stale sessions and malformed records and sorts timestamps',
   store.set(cacheKey, JSON.stringify({session,entries:[row('2026-10-02T02:00:00.000Z'),row('2026-10-02T01:00:00.000Z'), {...row('2026-10-02T01:00:00.000Z'),message:'bad\nline'}]}));
   const valid = store.get(cacheKey);
   store.set(cacheKey, JSON.stringify({session:'stale',entries:[row('2026-10-02T00:00:00.000Z')]}));
-  assert.ok(request(store).body.includes('保留 0 条'));
+  assert.ok(request(store).body.includes('<strong>0</strong><span>已保存记录</span>'));
   store.set(cacheKey, valid);
   request(store,'/pause','POST');
   const manifest=JSON.parse(request(store,'/export-manifest.json').body);

@@ -574,13 +574,18 @@ test('main-page download pauses recording and triggers one file download without
  assert.ok(html.body.includes('[hidden]{display:none!important}'));
  const script=html.body.match(/<script>([\s\S]*)<\/script>/)[1];
  const button={},status={textContent:''},save={hidden:true,clicks:0,click(){this.clicks++;}};let blob;
- const context={document:{getElementById:id=>id==='download'?button:id==='status'?status:save},Blob,
+ const controls={'download':button,'status':status,'save':save,'recording-state':{textContent:'记录中',className:'status on'},'start-recording':{disabled:true},'pause-recording':{disabled:false},'mark-ad':{disabled:false},'mark-content':{disabled:false},'mark-note':{textContent:''}};
+ const context={document:{getElementById:id=>controls[id]||null},Blob,
   URL:{createObjectURL(value){blob=value;return 'blob:local-test';},revokeObjectURL(){}},
   async fetch(path,options={}) {let r=page(store,path.replace(/^\//,''),options.method||'GET');if(r.status===303)r=page(store,'');return {ok:r.status===200,status:r.status,json:async()=>JSON.parse(r.body)};}};
  vm.runInNewContext(script,context,{timeout:5000});
  await button.onclick({preventDefault(){}});
  assert.equal(JSON.parse(store.get(configKey)).enabled,false);
  assert.equal(save.clicks,1);assert.ok(save.download.endsWith('.log'));
+ assert.equal(controls['recording-state'].textContent,'已暂停');assert.equal(controls['recording-state'].className,'status');
+ assert.equal(controls['start-recording'].disabled,false);assert.equal(controls['pause-recording'].disabled,true);
+ assert.equal(controls['mark-ad'].disabled,true);assert.equal(controls['mark-content'].disabled,true);
+ assert.match(controls['mark-note'].textContent,/开始记录后/);
  assert.match(await blob.text(),/EVENT 1/);assert.match(await blob.text(),/Media-Capture-Mode-At-Export: full/);assert.equal(save.hidden,false);
 });
 

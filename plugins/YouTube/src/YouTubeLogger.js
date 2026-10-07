@@ -2,7 +2,7 @@
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：3.2.1
+ * 版本：3.3.0
  * 更新时间：2026-10-07
  * 运行环境：Loon JavaScript
  */
@@ -430,7 +430,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "3.2.1";
+  var VERSION = "3.3.0";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -876,6 +876,13 @@ function (row) {
         if(event.preventDefault)event.preventDefault();
         var pause=await fetch("/pause",{method:"POST",cache:"no-store"});
         if(!pause.ok)throw new Error("暂停失败，请检查 Loon 是否运行。");
+        var recording=document.getElementById("recording-state"), start=document.getElementById("start-recording"), stop=document.getElementById("pause-recording");
+        if(recording){recording.textContent="已暂停";recording.className="status";}
+        if(start)start.disabled=false;
+        if(stop)stop.disabled=true;
+        ["mark-ad","mark-content","mark-quality-auto","mark-quality-highest"].forEach(function(id){var button=document.getElementById(id);if(button)button.disabled=true;});
+        var markNote=document.getElementById("mark-note");
+        if(markNote)markNote.textContent="开始记录后，即可标记广告或正片。";
       }
       status.textContent="正在生成日志文件，请保持 Loon 开启…";
       /**
@@ -1044,26 +1051,38 @@ function (row) {
   }
   /**
    * 功能：生成本地日志管理页面。
-   * 更新时间：2026-10-04T08:54:22+08:00
+   * 更新时间：2026-10-07
    */
   function page(c, rows) {
-    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YouTube 日志</title>' +
-      '<style>body{font:17px system-ui;margin:32px auto;padding:0 24px;max-width:620px;line-height:1.7}button,a{font:inherit}button{margin:6px 0;padding:8px 16px}a{display:block;margin:22px 0}[hidden]{display:none!important}</style>' +
-      '<h1>YouTube 日志</h1><p>状态：' + (c && c.enabled === true ? '正在记录' : '已暂停') + '；保留 ' + rows.length + ' 条。保存级别：' + minimum + '。</p>' +
-      '<form method="post" action="/start"><button>开始记录（保留本次日志）</button></form>' +
-      '<form method="post" action="/pause"><button>暂停记录</button></form>' +
-      '<form method="post" action="/mark-ad"><button>标记：正在播放广告</button></form>' +
-      '<form method="post" action="/mark-content"><button>标记：正在播放正片</button></form>' +
-      (typeof $loon === 'string' && devFlag(args.quality_research) ? '<form method="post" action="/mark-quality-auto"><button>标记：已切换自动画质</button></form><form method="post" action="/mark-quality-highest"><button>标记：已手动选择最高画质</button></form><p>画质研究采样已开启。候选 SABR 字段尚未验证 iOS 协议；格式编号和菜单选择不代表实际渲染画质。小型媒体 POST 请求会读取正文，媒体响应仍按所选采样方式处理。关闭研究开关停止后续请求正文采样。</p>' : '') +
-      '<button id="download" type="button">下载日志</button><p id="status" role="status"></p><a id="save" hidden>保存日志文件</a>' +
-      '<p>开发抓包：' + (devFlag(args.capture_raw) ? '已开启，保存脱敏结构' : '未开启，只保存摘要') + '。媒体采样：' + (args.media_capture_mode === 'full' ? 'full，等待完整媒体响应' : 'headers，仅记录媒体响应头') + '。' +
-      (c && c.haltReason ? '记录已因容量或存储问题停止；请先导出，再清空重试。' : '') + '</p>' +
-      '<p>下载后在 Safari 保存或通过分享菜单存储到“文件”。共用缓存最多 600 条或 128 KiB 索引，脱敏记录另按主插件所选容量保存。达到上限停止记录，保留旧记录。</p>' +
-      '<p>日志工具在主插件手动开启，请先选择容量，再开始记录。媒体采样默认 headers：只记录初始化和 UMP 响应头，不等待媒体正文。需要分析媒体内播放器配置时选择 full，Loon 会等待完整响应；暂停只停止写入，切回 headers 才能停止后续媒体缓冲。浏览、刷新和播放控制接口仍保存可用的脱敏结构。唯一的 .log 文件保存去除查询参数的接口地址、安全传输头、协议字段树、广告标记和处理结果；令牌、Cookie、账号标识、密钥与媒体正文在写入前移除。</p>' +
-      '<p>在主插件选择日志保存级别：info 保存完整脱敏记录，包含浏览、刷新、播放及处理结果；error 只保存错误；debug 保存完整记录并保留调试级别；warn 只保存警告和错误。调整级别只影响新记录，旧记录仍保留。</p>' +
-      '<p>日志中的事件、标记和导出时间均显示上海时间（Asia/Shanghai，UTC+08:00），精确到毫秒；内部时间仍使用 UTC，以兼容旧记录和样本校验。</p>' +
-      '<p>下载日志会自动暂停记录，在当前页面生成一个 .log 并触发下载。完整记录指脚本实际捕获的脱敏数据，不保证覆盖所有网络请求；媒体正文不保存。日志无法读取 Loon 的连接、证书或脚本超时记录。</p>' +
-      '<form method="post" action="/clear"><button>清空日志并暂停（不可恢复）</button></form><script>document.getElementById("download").onclick=' + browserExport.toString() + ';</script></html>';
+    /** 功能：转义页面动态文本，记录不作为 HTML 或脚本解释。更新时间：2026-10-07。 */
+    function escape(value) { return String(value).replace(/[&<>"']/g, function (char) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]; }); }
+    /** 功能：仅为预览转换上海时间，保留毫秒，不修改缓存中的 UTC 时间。更新时间：2026-10-07。 */
+    function time(utc) { var value=Date.parse(utc), date=new Date(value+8*3600000);return Number.isFinite(value)&&Number.isFinite(date.getTime())?date.toISOString().slice(5,23).replace('T',' '):'时间未知'; }
+    var recording=!!(c&&c.enabled===true), halted=!!(c&&c.haltReason), errors=0, marks=0;
+    var budget=[16,32,64].indexOf(Number(args.capture_budget))>=0?Number(args.capture_budget):32;
+    var markLabels={'user mark: ad-playing':'已标记：正在播放广告','user mark: content-playing':'已标记：正在播放正片','user mark: quality-auto-selected':'已标记：已切换自动画质','user mark: quality-highest-manually-selected':'已标记：已手动选择最高画质'};
+    var sourceLabels={YouTubeFeed:'信息流',YouTubePlayback:'播放器',YouTubeConfig:'配置',YouTubeLogger:'日志工具'};
+    for(var i=0;i<rows.length;i++){if(rows[i].level==='error')errors++;if(Object.prototype.hasOwnProperty.call(markLabels,rows[i].message))marks++;}
+    var recent=rows.slice(-20).reverse().map(/** 功能：只预览安全摘要，不读取样本正文或列出请求凭据。更新时间：2026-10-07。 */function(row){
+      var marked=Object.prototype.hasOwnProperty.call(markLabels,row.message), message=marked?markLabels[row.message]:row.message;
+      var phase=row.phase==='request'?'请求':row.phase==='response'?'响应':'摘要';
+      return '<article class="record"><div class="record-head"><time datetime="'+escape(row.time)+'">'+escape(time(row.time))+'</time><span class="result '+(row.level==='error'?'error':row.level==='warn'?'warn':'')+'">'+escape(row.level.toUpperCase())+'</span></div><p class="endpoint">'+(marked?'手动标记':escape(row.endpoint))+'</p><p class="record-message">'+escape(message)+'</p><div class="record-meta"><span>'+escape(sourceLabels[row.source]||'历史记录')+'</span><span>'+phase+'</span>'+(row.captureRef?'<span>含脱敏结构</span>':'')+'</div></article>';
+    }).join('');
+    var icon='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" rx="56" fill="#f03"/><rect x="38" y="66" width="180" height="124" rx="34" fill="#fff"/><path d="M110 98l51 30-51 30z" fill="#f03"/></svg>';
+    var style=':root{color-scheme:light dark;--bg:#f6f7fb;--panel:#fff;--text:#202532;--muted:#6d7485;--line:#e8ebf1;--accent:#ce1738;--soft:#fff0f2;--green:#138356;--danger:#bd3045;--amber:#99600b}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:760px;margin:0 auto;padding:24px 18px 40px;padding-bottom:calc(40px + env(safe-area-inset-bottom))}.brand-icon{width:48px;height:48px;flex:none}.brand-icon svg{display:block;width:100%;height:100%}.heading{display:flex;align-items:center;gap:12px}header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 22px}h1{font-size:24px;letter-spacing:-.5px;margin:0}.eyebrow{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:2px;margin:0 0 5px}.status{font-size:12px;white-space:nowrap;border-radius:24px;padding:6px 12px;background:var(--line);color:var(--muted)}.status.on{background:#e5f5ed;color:var(--green)}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px}.stat,.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px}.stat{padding:16px 12px}.stat strong{display:block;font-size:27px;line-height:1.2}.stat span{display:block;margin-top:7px;color:var(--muted);font-size:12px}.panel{padding:18px;margin-top:16px}h2{font-size:17px;margin:0 0 12px}.section-title{display:flex;justify-content:space-between;align-items:center;gap:8px}.section-title small{font-size:12px;color:var(--muted);font-weight:400}p{margin:8px 0;color:var(--muted)}.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}a,button{-webkit-tap-highlight-color:transparent;display:block;width:100%;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-weight:600;text-decoration:none;text-align:center;padding:12px;min-height:48px;cursor:pointer}.primary{background:var(--accent);color:white;border-color:var(--accent)}form{margin:0}.clear{color:var(--danger);background:var(--soft);border-color:transparent}.clear-form{grid-column:1/-1}.note{font-size:13px;margin-top:14px}.settings{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:14px;color:var(--muted);font-size:12px}.notice{padding:12px 16px;background:var(--soft);color:var(--danger);border-radius:12px;margin-bottom:16px;font-size:13px}.empty{text-align:center;padding:18px 10px}.empty strong{display:block;margin-bottom:8px}.record{border-top:1px solid var(--line);padding:14px 0}.record:last-child{padding-bottom:0}.record-head,.record-meta{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px}.result{color:var(--accent)}.result.error{color:var(--danger)}.result.warn{color:var(--amber)}.endpoint{color:var(--text);font:13px/1.6 ui-monospace,monospace;overflow-wrap:anywhere;margin:9px 0 4px}.record-message{font-size:13px;overflow-wrap:anywhere;margin:4px 0 9px}.record-meta{justify-content:flex-start;flex-wrap:wrap;gap:8px 16px}details{color:var(--muted);font-size:13px}details+details{border-top:1px solid var(--line);margin-top:14px;padding-top:14px}summary{cursor:pointer;color:var(--text);font-weight:600}footer{font-size:12px;color:var(--muted);text-align:center;margin-top:22px}button:disabled{opacity:.45;cursor:default}button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}[hidden]{display:none!important}#status{font-size:13px;overflow-wrap:anywhere}#status:empty{display:none}#save{margin-top:10px}.quality-actions{margin-top:10px}@media(prefers-color-scheme:dark){:root{--bg:#14151b;--panel:#20222c;--text:#f1f2f7;--muted:#a4aabd;--line:#343744;--soft:#35232a;--accent:#ff6e87;--danger:#ff9ba9;--amber:#f0c16f}.status.on{background:#18372d;color:#8de0b8}.primary{color:#29141a}}@media(max-width:360px){main{padding:16px 12px}h1{font-size:21px}.stat{padding:14px 9px}.panel{padding:14px}.actions button,.actions a{padding:11px 8px;font-size:14px}}';
+    return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>YouTube 日志</title><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,'+encodeURIComponent(icon)+'"><style>'+style+'</style></head><body><main>'+
+      '<header><div class="heading"><div class="brand-icon" aria-hidden="true">'+icon+'</div><div><p class="eyebrow">YOUTUBE</p><h1>开发日志</h1></div></div><span id="recording-state" class="status'+(recording?' on':'')+'">'+(recording?'● 记录中':halted?'已停止':'已暂停')+'</span></header>'+
+      (halted?'<div class="notice" role="status">记录已因容量或存储问题停止。请先下载日志，再清空重试。</div>':'')+
+      '<section class="stats" aria-label="日志统计"><div class="stat"><strong>'+rows.length+'</strong><span>已保存记录</span></div><div class="stat"><strong>'+errors+'</strong><span>错误记录</span></div><div class="stat"><strong>'+marks+'</strong><span>手动标记</span></div></section>'+
+      '<section class="panel"><h2>记录管理</h2><div class="actions"><button class="primary" id="download" type="button">下载日志</button><a href="/">刷新记录</a><form method="post" action="/start"><button id="start-recording" type="submit"'+(recording?' disabled':'')+'>开始记录</button></form><form method="post" action="/pause"><button id="pause-recording" type="submit"'+(!recording?' disabled':'')+'>暂停记录</button></form><form class="clear-form" method="post" action="/clear"><button class="clear" type="submit">清空日志并暂停</button></form></div><p id="status" role="status" aria-live="polite"></p><a id="save" hidden>保存日志文件</a><div class="settings"><span>保存级别 '+escape(minimum.toUpperCase())+'</span><span>媒体 '+(args.media_capture_mode==='full'?'完整采样':'仅响应头')+'</span><span>容量 '+budget+' MB</span></div><p class="note">下载会自动暂停，在当前页面生成一个 .log 文件。开始记录会保留已有日志；清空后不可恢复。</p>'+(typeof $loon==='string'?'<p class="note">关闭主插件日志工具后，下次 API 命中会自动清空日志。需要保留时请先下载。</p>':'')+'</section>'+
+      '<section class="panel"><h2>播放标记</h2><div class="actions"><form method="post" action="/mark-ad"><button id="mark-ad" type="submit"'+(!recording?' disabled':'')+'>正在播放广告</button></form><form method="post" action="/mark-content"><button id="mark-content" type="submit"'+(!recording?' disabled':'')+'>正在播放正片</button></form></div>'+
+      (typeof $loon==='string'&&devFlag(args.quality_research)?'<div class="actions quality-actions"><form method="post" action="/mark-quality-auto"><button id="mark-quality-auto" type="submit"'+(!recording?' disabled':'')+'>已切换自动画质</button></form><form method="post" action="/mark-quality-highest"><button id="mark-quality-highest" type="submit"'+(!recording?' disabled':'')+'>已选择最高画质</button></form></div>':'')+
+      '<p class="note" id="mark-note">'+(recording?'点击标记当前播放状态，方便在日志中定位问题。':'开始记录后，即可标记广告或正片。')+'</p></section>'+
+      '<section class="panel"><h2 class="section-title">最近记录 <small>最多展示 20 条</small></h2>'+(recent||'<div class="empty"><strong>还没有记录</strong><p>'+(recording?'打开 YouTube 并刷新首页或播放视频，再回来刷新记录。':'点击开始记录，在 YouTube 中复现问题，再回来刷新记录。')+'</p></div>')+'</section>'+
+      '<section class="panel"><details><summary>采样设置与日志级别</summary><p>开发抓包：'+(devFlag(args.capture_raw)?'已开启，保存脱敏结构':'未开启，只保存摘要')+'。媒体默认仅记录响应头，不等待媒体正文；full 完整采样用于开发分析，可能增加播放等待。</p><p>在主插件选择保存级别：info 保存完整脱敏信息；error 只保存错误；debug 保留完整记录和调试级别；warn 保存警告和错误。级别调整仅影响新记录。</p><p>共用索引最多 600 条或 128 KiB，脱敏样本按所选容量保存。达到上限停止记录并保留已有数据，请先下载再清空。</p><p>暂停只停止日志写入；Loon 中关闭日志工具才会同步停用媒体采样，或切回 headers 停止后续媒体正文缓冲。Stash 页面暂停会同步关闭媒体采样。</p>'+
+      (typeof $loon==='string'&&devFlag(args.quality_research)?'<p>画质研究采样已开启。候选 SABR 字段不代表实际渲染画质，菜单选择需结合设备观察；小型媒体 POST 请求会读取正文。研究结束后关闭研究开关。</p>':'')+
+      '</details><details><summary>隐私与记录范围</summary><p>记录仅保存在本机。保存安全传输头、脱敏协议结构、广告标记及处理结果；令牌、Cookie、账号标识、密钥和媒体正文在写入前移除。</p><p>仅记录脚本实际命中的请求，不覆盖所有网络流量。无法读取代理工具的连接、证书和脚本超时记录，并发写入可能丢失部分事件。</p><p>下载后可在 Safari 保存，或通过分享菜单存储到“文件”。</p></details></section>'+
+      '<footer>上海时间 · Asia/Shanghai · UTC+08:00 · 精确到毫秒<br>YouTube 日志 '+VERSION+'</footer></main><script>document.getElementById("download").onclick='+browserExport.toString()+';</script></body></html>';
   }
   /**
    * 功能：根据当前 Loon 请求或响应执行对应处理流程。
@@ -1132,7 +1151,7 @@ function (row) {
 function (r) {
           var ref = r && r.captureRef;
           if (!ref || typeof ref.prefix !== "string" || !/^ytads\.capture\.[a-z0-9-]+\.[a-z0-9-]+\.$/.test(ref.prefix) || !Number.isInteger(ref.chunks) || ref.chunks < 1 || ref.chunks > 256) return;
-          for (var i = 0; i < ref.chunks; i++) $persistentStore.write(undefined, ref.prefix + i);
+          for (var i = 0; i < ref.chunks; i++) if ($persistentStore.write(undefined, ref.prefix + i) !== true) throw new Error("clear-chunk-failed");
         });
         write({session:c.session, entries:[], captureBytes:0}, CACHE);
         SOURCES.forEach(
@@ -1140,7 +1159,7 @@ function (r) {
  * 功能：封装局部作用域或执行当前回调步骤。
  * 更新时间：2026-10-04T08:54:22+08:00
  */
-function (source) { $persistentStore.write(undefined, "ytads.logger." + source + ".v1"); });
+function (source) { if ($persistentStore.write(undefined, "ytads.logger." + source + ".v1") !== true) throw new Error("clear-legacy-failed"); });
       } else {
         if (!c) c = {session:Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12)};
         c.enabled = path === "/start";
@@ -1172,7 +1191,7 @@ function (source) { $persistentStore.write(undefined, "ytads.logger." + source +
     }
     if (path !== "/" && path !== "/download.log") return response(404, "Not found", "text/plain; charset=utf-8");
     var rows = records(c);
-    if (path === "/") return response(200, page(c, rows), "text/html; charset=utf-8", {"Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"});
+    if (path === "/") return response(200, page(c, rows), "text/html; charset=utf-8", {"Content-Security-Policy":"default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"});
 
     return response(303, "", "text/plain; charset=utf-8", {Location:BASE + "export"});
   }
