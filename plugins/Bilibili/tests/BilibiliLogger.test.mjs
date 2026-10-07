@@ -35,11 +35,11 @@ function harness(initial) {
   const page = (path = '/', method = 'GET', headers = {}) => run({ $request: { url: 'http://bilibili-logs.invalid' + path, method, headers }, $response: undefined });
   return { run, page, stored: () => stored, reads: () => reads, writes: () => writes, consoleOutput, notifications, fail() { broken = true; } };
 }
-test('disabled logger does not read or write persistent storage', () => {
+test('disabled logger checks cleanup without creating or appending logs', () => {
   const h = harness();
   h.run({ $argument: {} });
   h.run({ $argument: 'log_enabled=false' });
-  assert.equal(h.reads(), 0); assert.equal(h.writes(), 0);
+  assert.equal(h.reads(), 2); assert.equal(h.writes(), 0);
 });
 test('storage and export exclude secrets from headers, queries, values and keys', () => {
   const h = harness(); h.run();
@@ -83,14 +83,55 @@ test('malformed response errors do not include exception text or raw body', () =
   assert.ok(!h.stored().includes(secret));
   assert.deepEqual(h.consoleOutput, []);
 });
-test('turning logging off keeps prior entries and page can export them', () => {
+test('turning logging off clears prior entries and exports an empty file', () => {
   const h = harness(); h.run();
-  const previous = h.stored();
   h.run({ $argument: { log_enabled: false } });
-  assert.equal(h.stored(), previous);
+  assert.deepEqual(JSON.parse(h.stored()), { events: [], evicted: 0 });
   const result = h.run({ $request: { url: 'http://bilibili-logs.invalid/export' }, $response: undefined, $argument: { log_enabled: false } });
-  assert.equal(JSON.parse(result.response.body.split('\n')[0]).count, 1);
+  assert.equal(JSON.parse(result.response.body.split('\n')[0]).count, 0);
   assert.match(result.response.headers['Content-Disposition'], /bilibili-development\.log/);
+});
+test('export before disabling preserves the downloaded snapshot', () => {
+  const h = harness(); h.run();
+  const file = h.page('/export').response.body;
+  assert.equal(JSON.parse(file.split('\n')[0]).count, 1);
+  h.run({ $argument: { log_enabled: false } });
+  assert.deepEqual(JSON.parse(h.stored()), { events: [], evicted: 0 });
+  assert.equal(JSON.parse(file.split('\n')[0]).count, 1);
+});
+test('timer and page access independently clear logs while disabled', () => {
+  for (const entry of ['timer', 'page']) {
+    const h = harness(); h.run();
+    if (entry === 'timer') h.run({ $request: undefined, $response: undefined, $argument: { log_enabled: false } });
+    else h.run({ $request: { url: 'http://bilibili-logs.invalid/' }, $response: undefined, $argument: { log_enabled: false } });
+    assert.deepEqual(JSON.parse(h.stored()), { events: [], evicted: 0 });
+    const writes = h.writes();
+    h.run({ $request: undefined, $response: undefined, $argument: { log_enabled: false } });
+    assert.equal(h.writes(), writes, 'empty state is not written repeatedly');
+  }
+});
+test('disabling removes legacy or corrupt logs without parsing them', () => {
+  const h = harness('broken_' + secret);
+  const result = h.run({ $request: { url: 'http://bilibili-logs.invalid/export' }, $response: undefined, $argument: {} });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(JSON.parse(h.stored()), { events: [], evicted: 0 });
+  assert.ok(!result.response.body.includes(secret));
+});
+test('cleanup failures preserve data and do not interfere with ad filtering', () => {
+  const h = harness(); h.run();
+  const previous = h.stored(); h.fail();
+  const result = h.run({ $argument: { log_enabled: false } });
+  assert.deepEqual(JSON.parse(result.body).data.items, []);
+  assert.equal(h.stored(), previous);
+  const page = h.run({ $request: { url: 'http://bilibili-logs.invalid/export' }, $response: undefined, $argument: {} });
+  assert.equal(page.response.status, 503);
+});
+test('re-enabling starts fresh and records without a manual start script', () => {
+  const h = harness(); h.run();
+  h.run({ $request: undefined, $response: undefined, $argument: {} });
+  h.run();
+  assert.equal(JSON.parse(h.stored()).events.length, 1);
+  assert.equal(h.notifications.length, 2);
 });
 test('entry count is bounded and oldest event is evicted', () => {
   const h = harness();

@@ -14,7 +14,7 @@ hide_member_shop = switch,false,tag=隐藏会员购入口,desc=默认关闭；�
 hide_publish = switch,false,tag=隐藏发布入口,desc=默认关闭；开启后重新打开 B 站，隐藏导航中的发布入口
 blocked_uids = input,"",tag=UP 主 UID 屏蔽名单,desc=填写数字 UID，多个用空格或逗号分隔，例如 12345 67890；保存后刷新首页，仅过滤能识别 UP 主 UID 的卡片；留空停用
 blocked_keywords = input,"",tag=标题关键词屏蔽,desc=填写要屏蔽的标题关键词，多个用逗号分隔，例如 抽奖，带货；保存后刷新首页，按标题包含关键词过滤，英文不区分大小写；留空停用
-log_enabled = switch,false,tag=开发日志,desc=默认关闭；开启后打开 B 站并刷新首页，出现提醒后点击通知打开日志页；每分钟也会检查，开关本身不会立即弹窗；复现后关闭日志再导出，清空不关闭采集；不保存令牌或正文
+log_enabled = switch,false,tag=开发日志,desc=默认关闭；开启后自动记录，刷新 B 站首页触发提醒，点击通知打开日志页；请先导出再关闭，关闭后在下一次请求、日志页访问或每分钟检查时自动清空记录；不保存令牌或正文
 
 [Rule]
 DOMAIN,bilibili-logs.invalid,DIRECT

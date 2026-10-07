@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon JSON 响应过滤与本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.2.0；更新时间：2026-10-07
+ * 版本：1.3.0；更新时间：2026-10-07
  * 只处理已登记的 JSON 接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -120,6 +120,17 @@
       saveLogs(state);
     } catch (_) { /* 日志故障不得影响过滤，不输出异常内容。 */ }
   }
+  function syncLogging(config) {
+    if (config.log_enabled) return true;
+    try {
+      // 无需解析旧数据：关闭时也能清空损坏或旧版本留下的日志。
+      const raw = $persistentStore.read(LOG_KEY);
+      const empty = JSON.stringify({ events: [], evicted: 0 });
+      if (raw && raw !== empty && $persistentStore.write(empty, LOG_KEY) !== true) return false;
+      if ($persistentStore.read(NOTICE_KEY) === 'on') $persistentStore.write('off', NOTICE_KEY);
+      return true;
+    } catch (_) { return false; }
+  }
   function notifyLogging(config, manual = false) {
     try {
       const previous = $persistentStore.read(NOTICE_KEY);
@@ -144,9 +155,9 @@
       </style></head><body><main><header><div class="heading"><div class="brand-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect width="256" height="256" rx="56" fill="#fb7299"/><g fill="none" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"><path d="M92 44l22 24m50-24l-22 24"/><rect x="49" y="75" width="158" height="121" rx="24"/><path d="M91 112v25m74-25v25m-48 21h22M84 198v12m88-12v12"/></g></svg></div><div><p class="eyebrow">BILIBILI</p><h1>开发日志</h1></div></div><span class="status ${config.log_enabled ? 'on' : ''}">${config.log_enabled ? '● 记录中' : '已关闭'}</span></header>
       ${cleared ? '<div class="success" role="status">记录已清空。' + (config.log_enabled ? '日志仍在开启，新请求会继续记录。' : '日志保持关闭。') + '</div>' : ''}
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
-      <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '复现问题后，在 Loon 中关闭「开发日志」，再导出文件。' : '在 Loon 插件参数中开启「开发日志」，即可开始记录。'}</p></section>
+      <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.2.0</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.3.0</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     function respond(status, type, body, extra = {}) {
@@ -157,6 +168,7 @@
       }, extra), body } });
     }
     try {
+      if (!syncLogging(config)) throw new Error('storage');
       const path = (local[1] || '/').split('?')[0];
       const method = request.method || 'GET';
       if (path === '/clear') {
@@ -192,6 +204,7 @@
     const response = typeof $response === 'object' && $response;
     config = options(typeof $argument === 'undefined' ? null : $argument);
     if (!request) {
+      syncLogging(config);
       const manual = typeof $script === 'object' && $script && $script.name === 'Bilibili 打开日志页';
       notifyLogging(config, manual);
       return $done({});
@@ -204,6 +217,7 @@
     const route = match && paths[match[1]];
     const status = Number(response.statusCode || response.status || 200);
     if (!match) return $done({});
+    syncLogging(config);
     notifyLogging(config);
     if (config.log_enabled) event = {
       time: new Date().toISOString(), endpoint: (route || rpcPaths.includes(match[1])) ? match[1] : 'other_api',
