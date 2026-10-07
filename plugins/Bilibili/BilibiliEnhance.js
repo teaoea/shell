@@ -1,8 +1,8 @@
 /**
- * Bilibili 增强：Loon JSON 响应过滤与本地开发日志。
+ * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.8.0；更新时间：2026-10-07
- * 只处理已登记的 JSON 接口；异常、未知结构与未发生修改的响应原样放行。
+ * 版本：1.9.0；更新时间：2026-10-07
+ * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
   'use strict';
@@ -13,7 +13,7 @@
     blocked_uids: '', blocked_keywords: '', log_enabled: false
   };
   const paths = {
-    '/x/v2/splash/list': 'splash', '/x/v2/splash/show': 'splash',
+    '/x/v2/splash/list': 'splash', '/x/v2/splash/show': 'splash', '/x/v2/splash/event/list2': 'splash',
     '/x/v2/feed/index': 'feed', '/x/v2/feed/index/story': 'feed',
     '/x/resource/show/tab': 'tab', '/x/resource/show/tab/v2': 'tab',
     '/x/v2/search/square': 'search_square', '/x/v2/search/trending/ranking': 'search_trending',
@@ -22,6 +22,104 @@
   };
   const memberPromoFields = ['vip_section', 'vip_section_v2', 'modular_vip_section'];
   const TABS_KEY = 'bilibili.enhance.tabs.v1';
+  const DEFAULT_WORDS_PATH = '/bilibili.app.interface.v1.Search/DefaultWords';
+  const VIDEO_RPC = {
+    '/bilibili.app.view.v1.View/View': 'view', '/bilibili.app.view.v1.View/RelatesFeed': 'view_feed',
+    '/bilibili.app.viewunite.v1.View/View': 'unite', '/bilibili.app.viewunite.v1.View/RelatesFeed': 'unite_feed',
+    '/bilibili.app.view.v1.View/ViewProgress': 'progress', '/bilibili.app.viewunite.v1.View/ViewProgress': 'unite_progress'
+  };
+  function videoAds(raw, route) {
+    if (!raw || !ArrayBuffer.isView(raw)) throw new Error('binary');
+    const frame = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+    if (frame.length < 5 || frame.length > 2097152 || frame[0] > 1) throw new Error('frame');
+    const size = frame[1] * 16777216 + frame[2] * 65536 + frame[3] * 256 + frame[4];
+    if (size !== frame.length - 5) throw new Error('frame');
+    let payload = frame.subarray(5);
+    if (frame[0] === 1) {
+      if (typeof $utils === 'undefined' || typeof $utils.ungzip !== 'function') throw new Error('gzip');
+      payload = $utils.ungzip(payload);
+    }
+    if (!ArrayBuffer.isView(payload) || payload.byteLength > 2097152) throw new Error('size');
+    let removed = 0;
+    function fields(input) {
+      let offset = 0;
+      const result = [];
+      function integer(strict = true) {
+        let n = 0;
+        for (let i = 0; i < 10; i++) {
+          if (offset >= input.length) throw new Error('truncated');
+          const byte = input[offset++]; n += (byte & 127) * Math.pow(2, 7 * i);
+          if (i === 9 && byte > 1) throw new Error('varint');
+          if (!(byte & 128)) { if (strict && !Number.isSafeInteger(n)) throw new Error('integer'); return n; }
+        }
+        throw new Error('varint');
+      }
+      while (offset < input.length) {
+        if (result.length >= 20000) throw new Error('fields');
+        const start = offset, tag = integer(), number = Math.floor(tag / 8), wire = tag % 8;
+        if (!number || number > 536870911) throw new Error('tag');
+        let value;
+        if (wire === 0) value = integer(false);
+        else if (wire === 2) {
+          const length = integer();
+          if (offset + length > input.length) throw new Error('length');
+          value = input.subarray(offset, offset + length); offset += length;
+        } else if (wire === 1 || wire === 5) { offset += wire === 1 ? 8 : 4; if (offset > input.length) throw new Error('truncated'); }
+        else throw new Error('wire');
+        result.push({ number, wire, value, raw: input.subarray(start, offset) });
+      }
+      return result;
+    }
+    function integer(n) { const bytes = []; do { const byte = n % 128; n = Math.floor(n / 128); bytes.push(byte + (n ? 128 : 0)); } while (n); return bytes; }
+    function message(number, bytes) {
+      const head = integer(number * 8 + 2).concat(integer(bytes.length)), result = new Uint8Array(head.length + bytes.length);
+      result.set(head); result.set(bytes, head.length); return result;
+    }
+    function combine(chunks) {
+      const result = new Uint8Array(chunks.reduce((n, chunk) => n + chunk.length, 0));
+      let offset = 0; for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; } return result;
+    }
+    function rewrite(bytes, level) {
+      const chunks = [];
+      for (const field of fields(bytes)) {
+        if (field.wire !== 2) { chunks.push(field.raw); continue; }
+        // 只删除引导层中的关注卡与契约（三连）卡；章节、弹幕和未知字段保留。
+        if ((level === 'guide' && [1, 5].includes(field.number)) || (level === 'unite_guide' && field.number === 3)) { removed++; continue; }
+        if ((level === 'view' && [30, 31, 41, 48].includes(field.number)) || (level === 'unite' && field.number === 7)) { removed++; continue; }
+        if ((level === 'view' && field.number === 10) || (level === 'view_feed' && field.number === 1)) {
+          if (fields(field.value).some(item => item.number === 28 && item.wire === 2 && item.value.length > 0)) { removed++; continue; }
+        }
+        if (['unite_cards', 'unite_feed'].includes(level) && field.number === 1) {
+          if (fields(field.value).some(item => (item.number === 1 && item.wire === 0 && item.value === 5) ||
+            ([6, 11].includes(item.number) && item.wire === 2 && item.value.length > 0))) { removed++; continue; }
+        }
+        const child = level === 'progress' && field.number === 1 ? 'guide' :
+          level === 'unite_progress' && field.number === 1 ? 'unite_guide' :
+          level === 'unite' && field.number === 5 ? 'unite_tab' :
+          level === 'unite_tab' && field.number === 1 ? 'unite_tab_module' :
+          level === 'unite_tab_module' && field.number === 2 ? 'unite_intro' :
+          level === 'unite_intro' && field.number === 2 ? 'unite_module' :
+          level === 'unite_module' && field.number === 22 ? 'unite_cards' : null;
+        if (child) { const before = removed, next = rewrite(field.value, child); chunks.push(before !== removed ? message(field.number, next) : field.raw); }
+        else chunks.push(field.raw);
+      }
+      return combine(chunks);
+    }
+    const next = rewrite(payload, route);
+    if (!removed) return { removed: 0 };
+    const result = new Uint8Array(next.length + 5);
+    result[1] = Math.floor(next.length / 16777216); result[2] = Math.floor(next.length / 65536) % 256;
+    result[3] = Math.floor(next.length / 256) % 256; result[4] = next.length % 256; result.set(next, 5);
+    return { body: result, removed };
+  }
+  function blankDefaultWords() {
+    // DefaultWordsReply：默认显示为空格（视觉空白），避免空串触发 App 兜底推荐。
+    // 2=param，3=show，4=word，5=show_front，7=goto，8=value，9=uri。
+    const payload = [18, 0, 26, 1, 32, 34, 0, 40, 1, 58, 0, 66, 0, 74, 0];
+    return { response: { status: 200, headers: { 'Content-Type': 'application/grpc', 'grpc-status': '0',
+      'grpc-message': '', 'bili-status-code': '0', 'Cache-Control': 'no-store' }, h2_trailers: { 'grpc-status': '0' },
+      body: new Uint8Array([0, 0, 0, 0, payload.length].concat(payload)) } };
+  }
   const REGION_URL = 'https://app.bilibili.com/bilibili.app.show.v1.Mixture/RegionList';
   function publicTabURI(value) {
     if (typeof value !== 'string' || value.length > 1024) return null;
@@ -176,15 +274,16 @@
   }
   function tabsPage(message = '') {
     const state = readTabs();
-    const rows = state.catalog.map(tab => '<label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
-      ((state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label>').join('');
+    const ordered = state.selected === null ? state.catalog : state.selected.map(id => state.catalog.find(tab => tab.id === id)).filter(Boolean).concat(state.catalog.filter(tab => !state.selected.includes(tab.id)));
+    const rows = ordered.map(tab => '<div class="tab-row"><label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
+      ((state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label><div class="move-controls"><button type="button" data-move="up" aria-label="上移' + escapeHTML(tab.name) + '">↑</button><button type="button" data-move="down" aria-label="下移' + escapeHTML(tab.name) + '">↓</button></div></div>').join('');
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
-      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
+      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}.tab-row{display:flex;align-items:center;border-bottom:1px solid #8884}.tab-row label{flex:1;min-width:0;border:0;align-items:center}.tab-row span{overflow-wrap:anywhere}.move-controls{display:flex;gap:6px}.move-controls button{width:40px;height:40px;padding:0;margin:0;background:#fb729922;color:inherit}.move-controls button:disabled{opacity:.25}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
       (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
       '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>点击上方按钮，从 B 站客户端分区接口获取未启用的分区与服务。无需登录，也不使用账号令牌。重新打开 B 站还能收集当前首页标签，再刷新本页。</p>' +
-      '<p>勾选要在首页显示的标签，至少选择一项；保存后重新打开 B 站。已有标签沿用原顺序，新增项追加在后。当前可选 ' + state.catalog.length + ' 项，其中分区列表 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项。新获取的项默认不勾选。</p>' +
-      (rows ? '<form method="post" action="/tabs/save">' + rows + '<button type="submit">保存选择</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
-      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><p>设置仅保存在本机，不依赖开发日志开关。关闭日志不会清除标签选择。</p></main></body></html>';
+      '<p>勾选要在首页显示的标签，至少选择一项；保存后重新打开 B 站。用每项右侧的 ↑／↓ 调整位置，勾选项按页面从上到下的顺序显示在客户端；调整后点击“保存选择与排序”。当前可选 ' + state.catalog.length + ' 项，其中分区列表 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项。新获取的项默认不勾选。</p>' +
+      (rows ? '<form method="post" action="/tabs/save"><div id="tab-list">' + rows + '</div><button type="submit">保存选择与排序</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
+      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><p>设置仅保存在本机，不依赖开发日志开关。关闭日志不会清除标签选择或排序。</p></main><script>(function(){var list=document.getElementById("tab-list");if(!list)return;function update(){var rows=list.children;for(var i=0;i<rows.length;i++){rows[i].querySelector("[data-move=up]").disabled=i===0;rows[i].querySelector("[data-move=down]").disabled=i===rows.length-1;}}list.addEventListener("click",function(event){var button=event.target.closest("button[data-move]");if(!button||!list.contains(button))return;var row=button.closest(".tab-row");var next=button.dataset.move==="up"?row.previousElementSibling:row.nextElementSibling;if(!next)return;if(button.dataset.move==="up")list.insertBefore(row,next);else list.insertBefore(next,row);update();button.focus();});update();})();</script></body></html>';
   }
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function options(raw) {
@@ -259,6 +358,9 @@
   const NOTICE_KEY = 'bilibili.enhance.notice.v1';
   const LIMIT = 300;
   const rpcPaths = [
+    DEFAULT_WORDS_PATH,
+    '/bilibili.app.view.v1.View/ViewProgress', '/bilibili.app.viewunite.v1.View/ViewProgress',
+    '/bilibili.app.view.v1.View/RelatesFeed', '/bilibili.app.viewunite.v1.View/RelatesFeed',
     '/bilibili.app.view.v1.View/View', '/bilibili.app.viewunite.v1.View/View',
     '/bilibili.app.dynamic.v2.Dynamic/DynAll', '/bilibili.app.show.v1.Popular/Index',
     '/bilibili.app.playurl.v1.PlayURL/PlayView', '/bilibili.app.playerunite.v1.Player/PlayViewUnite'
@@ -266,7 +368,7 @@
   const outcomes = ['modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
   const cardTypes = ['small_cover_v2', 'small_cover_v10', 'banner_v8', 'cm_v2', 'cm_double_v9'];
   const cardGotos = ['av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
-  const fields = ['data', 'type', 'items', 'list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'].concat(memberPromoFields);
+  const fields = ['data', 'type', 'items', 'list', 'event_list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'].concat(memberPromoFields);
   function kind(value) {
     return value === null ? 'null' : Array.isArray(value) ? 'array' : object(value) ? 'object' :
       ['string', 'number', 'boolean'].includes(typeof value) ? typeof value : 'other';
@@ -364,7 +466,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.8.0</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.9.0</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     function respond(status, type, body, extra = {}) {
@@ -404,7 +506,7 @@
           state.selected = selected;
         }
         if (!saveTabs(state)) return respond(503, 'text/plain', '标签设置保存失败，请稍后重试。');
-        return respond(200, 'text/html', tabsPage(path === '/tabs/reset' ? '已恢复全部标签，请重新打开 B 站。' : '选择已保存，请重新打开 B 站。'));
+        return respond(200, 'text/html', tabsPage(path === '/tabs/reset' ? '已恢复全部标签，请重新打开 B 站。' : '选择与排序已保存，请重新打开 B 站。'));
       }
       if (path === '/clear') {
         if (method !== 'POST') return respond(405, 'text/plain', '请使用页面清空按钮', { Allow: 'POST' });
@@ -450,9 +552,39 @@
     }
     const local = /^http:\/\/bilibili-logs\.invalid(?::80)?(\/[^#]*)?$/.exec(String(request.url || ''));
     if (local) return localPage(request, local, config);
+    const videoMatch = /^https:\/\/(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?(\/bilibili\.app\.(?:view|viewunite)\.v1\.View\/(?:View|RelatesFeed|ViewProgress))(?:\?[^#]*)?$/.exec(String(request.url || ''));
+    if (videoMatch && request.method === 'POST') {
+      if (!response) {
+        const headers = Object.assign({}, request.headers || {});
+        for (const key of Object.keys(headers)) if (key.toLowerCase() === 'grpc-accept-encoding') delete headers[key];
+        headers['grpc-accept-encoding'] = 'identity';
+        return $done({ headers });
+      }
+      syncLogging(config); notifyLogging(config);
+      const status = Number(response.statusCode || response.status || 200);
+      if (config.log_enabled) event = { time: new Date().toISOString(), endpoint: videoMatch[1], method: 'POST', status,
+        body_length: ArrayBuffer.isView(response.body) ? response.body.byteLength : 0, before: 0, after: 0, removed: 0 };
+      if (status < 200 || status >= 300) return finish({}, 'http_error');
+      const headers = Object.assign({}, response.headers, response.h2_trailers);
+      const grpcKey = Object.keys(headers).find(key => key.toLowerCase() === 'grpc-status');
+      if (grpcKey && String(headers[grpcKey]) !== '0') return finish({}, 'api_error');
+      try {
+        const result = videoAds(response.body, VIDEO_RPC[videoMatch[1]]);
+        if (event) { event.before = result.removed; event.removed = result.removed; }
+        return finish(result.body ? { body: result.body } : {}, result.body ? 'modified' : 'unchanged');
+      } catch (_) { return finish({}, 'unsupported_body'); }
+    }
+    // 定向本地响应，不读取请求正文或凭据，也不把其他 RPC 纳入正文处理。
+    if (!response && /^https:\/\/(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?\/bilibili\.app\.interface\.v1\.Search\/DefaultWords(?:\?[^#]*)?$/.test(String(request.url || '')) && request.method === 'POST') {
+      syncLogging(config);
+      notifyLogging(config);
+      if (config.log_enabled) event = { time: new Date().toISOString(), endpoint: DEFAULT_WORDS_PATH, method: 'POST', status: 200,
+        body_length: 0, before: 0, after: 0, removed: 0 };
+      return finish(blankDefaultWords(), 'modified');
+    }
     if (!response) return $done({});
     // 不依赖代理脚本环境是否提供 URL 类。
-    const match = /^https:\/\/app\.bilibili\.com(?::443)?(\/[^?#]*)(?:\?[^#]*)?$/.exec(String(request.url || ''));
+    const match = /^https:\/\/(?:app\.bilibili\.com|app\.biliapi\.net)(?::443)?(\/[^?#]*)(?:\?[^#]*)?$/.exec(String(request.url || ''));
     const route = match && paths[match[1]];
     const status = Number(response.statusCode || response.status || 200);
     if (!match) return $done({});
@@ -472,7 +604,7 @@
       route === 'search_defaultwords' ? Array.isArray(body.data) || object(body.data) : object(body.data))) return finish({}, 'unsupported_schema');
     const data = body.data;
     const contentCount = () => Array.isArray(body.data) ? body.data.length :
-      ['items', 'list', 'show', 'tab', 'top', 'bottom'].concat(route === 'search_trending' ? ['top_list'] : [])
+      ['items', 'list', 'event_list', 'show', 'tab', 'top', 'bottom'].concat(route === 'search_trending' ? ['top_list'] : [])
         .reduce((sum, key) => sum + (Array.isArray(data[key]) ? data[key].length : 0), 0) +
         (route === 'mine' ? memberPromoFields.filter(key => Object.prototype.hasOwnProperty.call(data, key) && data[key] !== null).length : 0);
     if (event) {
@@ -508,7 +640,7 @@
       if (Array.isArray(body.data)) {
         if (body.data.length) { body.data = []; changed = true; }
       } else {
-        for (const key of ['show', 'show_name', 'name', 'word', 'keyword', 'param']) if (typeof data[key] === 'string' && data[key] !== '') {
+        for (const key of ['show', 'show_name', 'name', 'word', 'keyword', 'param', 'goto', 'value', 'uri']) if (typeof data[key] === 'string' && data[key] !== '') {
           data[key] = ''; changed = true;
         }
         for (const key of ['list', 'items', 'default_words', 'defaultwords', 'words']) filter(data, key, () => false);
@@ -525,7 +657,7 @@
     }
     if (route === 'splash' && config.remove_splash_ads) {
       // 仅清理开屏投放列表，保留启动配置和其他未知字段。
-      for (const key of ['list', 'show']) if (Array.isArray(data[key]) && data[key].length) {
+      for (const key of ['list', 'show', 'event_list']) if (Array.isArray(data[key]) && data[key].length) {
         data[key] = []; changed = true;
       }
     }
@@ -570,6 +702,11 @@
             data.tab = data.tab.concat(additions.map(tab => ({ id: tab.native_id, tab_id: tab.native_tab_id || String(tab.native_id), name: tab.name, uri: tab.uri, pos: 0 })));
             changed = true;
           }
+          // 按保存时的勾选顺序排列可识别标签；未知结构保留在原槽位。
+          const known = data.tab.filter(item => tabInfo(item)).sort((a, b) => state.selected.indexOf(tabInfo(a).id) - state.selected.indexOf(tabInfo(b).id));
+          let cursor = 0;
+          const ordered = data.tab.map(item => tabInfo(item) ? known[cursor++] : item);
+          if (ordered.some((item, index) => item !== data.tab[index])) { data.tab = ordered; changed = true; }
           if (data.tab !== before) {
             const hasDefault = data.tab.some(item => object(item) && item.default_selected === 1);
             const firstSelected = data.tab.find(item => { const tab = tabInfo(item); return tab && state.selected.includes(tab.id); });

@@ -114,3 +114,45 @@ test('failed homepage supplement retains full regions and reports partial succes
   assert.equal(page.status, 200); assert.match(page.body, /基础首页标签补充失败/);
   assert.equal(JSON.parse(h.store.get(KEY)).catalog.length, 1);
 });
+
+test('saved selection order controls existing and hidden client tabs and survives fetch, refresh and logs closing',()=>{
+ const h=harness(frame([icon(1003,'音乐','bilibili://main/regionv2/detail/1003')]));
+ const popular={id:41,tab_id:'热门tab',name:'热门',pos:2,unknown:{preserve:true}};
+ const unknown={future:'keep'};
+ const home=[...current,unknown,popular];
+ h.home(home);h.page('/tabs/load','POST');
+ const ids=['tab:热门tab','tab:1003','tab:推荐tab'];
+ const save=h.page('/tabs/save','POST',ids.map(id=>'tab='+encodeURIComponent(id)).join('&'));
+ assert.equal(save.status,200);assert.match(save.body,/保存选择与排序/);
+ const rendered=ids.map(id=>save.body.indexOf('value="'+id+'"'));
+ assert.ok(rendered[0]<rendered[1]&&rendered[1]<rendered[2]);
+ const result=JSON.parse(h.home(home).body).data.tab;
+ assert.deepEqual(result,[{...popular,pos:1},unknown,{id:1003,tab_id:'1003',name:'音乐',uri:'bilibili://main/regionv2/detail/1003',pos:3},{...current[0],pos:4}]);
+ assert.deepEqual(h.home(result),{});
+ h.page('/tabs/load','POST');h.page('/');
+ assert.deepEqual(JSON.parse(h.store.get(KEY)).selected,ids);
+ assert.deepEqual(JSON.parse(h.home(home).body).data.tab,result);
+ h.page('/tabs/reset','POST');assert.deepEqual(h.home(home),{});
+});
+
+test('moving a tab in the management page changes form order and keeps checkbox state',()=>{
+ const h=harness(frame([]));h.home([...current,{id:41,tab_id:'热门tab',name:'热门',pos:2}]);
+ const html=h.page('/tabs').body;
+ const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
+ const rows=[];let handler;
+ function row(id){const r={id,checked:true,up:{dataset:{move:'up'},focus(){}},down:{dataset:{move:'down'},focus(){}}};
+  Object.defineProperties(r,{previousElementSibling:{get:()=>rows[rows.indexOf(r)-1]},nextElementSibling:{get:()=>rows[rows.indexOf(r)+1]}});
+  r.querySelector=s=>s.includes('up')?r.up:r.down;
+  for(const b of [r.up,r.down])b.closest=s=>s.includes('tab-row')?r:b;
+  return r;
+ }
+ rows.push(row('recommend'),row('popular'));
+ const list={children:rows,contains:b=>rows.some(r=>r.up===b||r.down===b),addEventListener:(name,fn)=>{handler=fn;},
+ insertBefore:(a,b)=>{rows.splice(rows.indexOf(a),1);rows.splice(rows.indexOf(b),0,a);}};
+ vm.runInNewContext(script,{document:{getElementById:id=>id==='tab-list'?list:null}});
+ assert.equal(rows[0].up.disabled,true);assert.equal(rows[1].down.disabled,true);
+ handler({target:rows[1].up});assert.deepEqual(rows.map(r=>r.id),['popular','recommend']);
+ assert.equal(rows[0].up.disabled,true);assert.equal(rows[1].down.disabled,true);
+ handler({target:rows[0].down});assert.deepEqual(rows.map(r=>r.id),['recommend','popular']);
+ assert.ok(rows.every(r=>r.checked));
+});

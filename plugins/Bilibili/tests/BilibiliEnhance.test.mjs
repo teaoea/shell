@@ -34,6 +34,24 @@ test('default search text is blanked for public app schema without touching meta
     assert.deepEqual(run({ show: '手动输入', word: '输入' }, {}, path), {});
 });
 
+test('legacy default search clears target links and alternate API host is supported', () => {
+  const data = { show: '推荐', uri: 'bilibili://video/123', goto: 'av', value: '123', trackid: 'keep' };
+  const result = run(data, {}, '/x/v2/search/defaultwords', { $request: { url: 'https://app.biliapi.net/x/v2/search/defaultwords', method: 'GET' } });
+  assert.deepEqual(parsed(result), { show: '', uri: '', goto: '', value: '', trackid: 'keep' });
+});
+
+test('mine membership cleanup covers alternate host while preserving identity and normal services', () => {
+  const data = { vip_section: { title: '我的大会员' }, vip_section_v2: { title: '续费' }, modular_vip_section: { title: '会员中心' },
+    vip: { status: 1, type: 2, label: { text: '年度大会员' } }, sections_v2: [{ items: [{ title: '历史记录' }] }] };
+  for (const path of ['/x/v2/account/mine', '/x/v2/account/mine/ipad']) {
+    const result = run(data, {}, path, { $request: { url: 'https://app.biliapi.net' + path, method: 'GET' } });
+    assert.deepEqual(parsed(result), { vip: data.vip, sections_v2: data.sections_v2 });
+    const regex = new RegExp(plugin.split('\n').find(line => line.startsWith('http-response ')).split(' ')[1]);
+    assert.equal(regex.test('https://app.biliapi.net' + path), true);
+    assert.equal(regex.test('https://app.biliapi.net.evil.test' + path), false);
+  }
+});
+
 test('homepage tab collection, selection, fallback, restoration and privacy', () => {
   const store = new Map();
   const overrides = { $persistentStore: { read: key => store.get(key), write: (value, key) => { store.set(key, value); return true; } } };
@@ -245,7 +263,7 @@ test('Loon configuration passes every option and keeps optional filters disabled
     if (type === 'switch') assert.equal(value, name.startsWith('remove_') ? 'true' : 'false');
     else assert.equal(value, '""');
   }
-  assert.match(plugin, /hostname = app\.bilibili\.com\s*$/);
+  assert.match(plugin, /hostname = app\.bilibili\.com,grpc\.biliapi\.net,app\.biliapi\.net\s*$/);
 });
 for (const path of ['/x/v2/account/mine', '/x/v2/account/mine/ipad']) {
   test('mine membership promotion is removed by default without altering account or services: ' + path, () => {
@@ -291,4 +309,19 @@ test('plugin regex covers implemented endpoints and rejects extra suffixes', () 
     assert.equal(regex.test('https://app.bilibili.com' + path + '/extra'), false);
   }
   assert.equal(regex.test('https://app.bilibili.com.evil.test/x/v2/feed/index'), false);
+});
+
+test('splash event list is cleared along with display schedule, while unknown startup settings and switch are preserved',()=>{
+ const path='/x/v2/splash/event/list2';
+ const data={event_list:[{id:1}],show:[{id:1}],pull_interval:1800,future:{keep:1}};
+ assert.deepEqual(parsed(run(data,{},path)),{...data,event_list:[],show:[]});
+ assert.deepEqual(run(data,{remove_splash_ads:false},path),{});
+ assert.deepEqual(run({...data,event_list:[],show:[]},{},path),{});
+ assert.deepEqual(run({event_list:{unknown:1},show:'unknown'},{},path),{});
+ const filter=new RegExp(plugin.split('\n').find(l=>l.startsWith('http-response ')).split(' ')[1]);
+ const meta=new RegExp(plugin.split('\n').find(l=>l.includes('tag=Bilibili 开发元数据日志')).split(' ')[1]);
+ assert.equal(filter.test('https://app.bilibili.com'+path),true);assert.equal(meta.test('https://app.bilibili.com'+path),false);
+ assert.equal(filter.test('https://app.bilibili.com'+path+'/extra'),false);
+ const store=new Map();run(data,{log_enabled:true},path,{$persistentStore:{read:k=>store.get(k),write:(v,k)=>{store.set(k,v);return true;}}});
+ const event=JSON.parse(store.get('bilibili.enhance.logs.v1')).events[0];assert.equal(event.removed,2);assert.equal(event.data_schema.event_list,'array');
 });

@@ -1,7 +1,7 @@
 #!name = Bilibili 增强
 #!author = 可莉唯一的狗、ChatGPT
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/assets/bilibili.png
-#!desc = 支持已识别的开屏及首页广告过滤、直播与游戏推荐过滤、导航精简、首页标签自选、我的页会员推广过滤、搜索框默认词清空、搜索热搜与发现隐藏、UP 主 UID 与标题关键词屏蔽，以及本地开发日志查看、导出和清空。
+#!desc = 支持已识别的开屏及首页广告过滤、直播与游戏推荐过滤、导航精简、首页标签自选与排序、视频页广告过滤、播放中三连与关注浮层移除、我的页会员推广过滤、搜索框默认词清空、搜索热搜与发现隐藏、UP 主 UID 与标题关键词屏蔽，以及本地开发日志查看、导出和清空。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/Bilibili/README.md
 #!tag = Bilibili,去广告,推荐过滤
 
@@ -24,13 +24,18 @@ DOMAIN,bilibili-logs.invalid,DIRECT
 # 功能：每分钟检测日志开关，只在新开启时通知；点击通知打开浏览器。更新时间：2026-10-07
 cron "* * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 日志开启提醒
 generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 打开日志页,img-url=doc.text.magnifyingglass.system
-# 使用：运行此按钮并点击通知，在管理页点击“获取全部标签”，勾选保存，再重新打开 B 站。
+# 使用：运行此按钮并点击通知，在管理页点击“获取全部标签”，勾选标签并用 ↑／↓ 排序，保存后重新打开 B 站。
 generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 首页标签管理,img-url=line.3.horizontal.decrease.circle.system
-# 功能：仅处理已登记的 JSON API，不读取视频媒体或二进制 RPC。更新时间：2026-10-07
-http-response ^https://app\.bilibili\.com(?::443)?/x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?|search/(?:square|trending/ranking|default(?:words)?)|account/mine(?:/ipad)?)|resource/show/tab(?:/v2)?)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,timeout=10,argument=[{remove_splash_ads},{remove_feed_ads},{hide_live},{hide_game},{hide_member_shop},{hide_publish},{hide_search_discovery},{blocked_uids},{blocked_keywords},{log_enabled}],tag=Bilibili 广告与推荐过滤
+# 功能：此规则处理已登记的 JSON API，不读取视频媒体。更新时间：2026-10-07
+http-response ^https://(?:app\.bilibili\.com|app\.biliapi\.net)(?::443)?/x/(?:v2/(?:splash/(?:list|show|event/list2)|feed/index(?:/story)?|search/(?:square|trending/ranking|default(?:words)?)|account/mine(?:/ipad)?)|resource/show/tab(?:/v2)?)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,timeout=10,argument=[{remove_splash_ads},{remove_feed_ads},{hide_live},{hide_game},{hide_member_shop},{hide_publish},{hide_search_discovery},{blocked_uids},{blocked_keywords},{log_enabled}],tag=Bilibili 广告与推荐过滤
 # 功能：其他 app 主机响应只记录元数据，不读取正文；显式排除上面的 JSON 接口，避免重复记录。更新时间：2026-10-07
-http-response ^https://app\.bilibili\.com(?::443)?/(?!x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?|search/(?:square|trending/ranking|default(?:words)?)|account/mine(?:/ipad)?)|resource/show/tab(?:/v2)?)(?:\?|$))[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled}],tag=Bilibili 开发元数据日志
+http-response ^https://app\.bilibili\.com(?::443)?/(?!bilibili\.app\.(?:view|viewunite)\.v1\.View/(?:View|RelatesFeed|ViewProgress)(?:\?|$))(?!bilibili\.app\.interface\.v1\.Search/DefaultWords(?:\?|$))(?!x/(?:v2/(?:splash/(?:list|show|event/list2)|feed/index(?:/story)?|search/(?:square|trending/ranking|default(?:words)?)|account/mine(?:/ipad)?)|resource/show/tab(?:/v2)?)(?:\?|$))[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled}],tag=Bilibili 开发元数据日志
+# 功能：默认清理视频详情及相关推荐广告，以及播放中的三连／关注浮层；保留未知字段，无新增开关。更新时间：2026-10-07
+http-request ^https://(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?/bilibili\.app\.(?:view|viewunite)\.v1\.View/(?:View|RelatesFeed|ViewProgress)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,tag=Bilibili 视频广告压缩协商
+http-response ^https://(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?/bilibili\.app\.(?:view|viewunite)\.v1\.View/(?:View|RelatesFeed|ViewProgress)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,binary-body-mode=true,timeout=10,argument=[{log_enabled}],tag=Bilibili 视频页广告过滤
+# 功能：仅本地响应默认词 RPC，不读取请求正文；搜索结果和输入联想不受影响。更新时间：2026-10-07
+http-request ^https://(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?/bilibili\.app\.interface\.v1\.Search/DefaultWords(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,argument=[{log_enabled}],tag=Bilibili 搜索框默认词清空
 http-request ^http://bilibili-logs\.invalid(?::80)?(?:/[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,timeout=10,argument=[{log_enabled}],tag=Bilibili 本地管理页面
 
 [Mitm]
-hostname = app.bilibili.com
+hostname = app.bilibili.com,grpc.biliapi.net,app.biliapi.net
