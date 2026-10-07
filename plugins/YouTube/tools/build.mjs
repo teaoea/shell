@@ -1,13 +1,14 @@
 /**
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
- * 功能：从保留中文注释的源码生成四平台独立运行的压缩文件；固定工具版本和参数，支持检查产物是否过期。
- * 更新时间：2026-10-06
+ * 功能：按发布阶段裁剪离线分支，再从可读源码生成四平台独立运行的压缩文件；支持产物一致性检查。
+ * 更新时间：2026-10-07
  */
 import fs from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 import {minify} from 'terser';
+import {runtimeSource} from './runtime-source.mjs';
 
 const root = new URL('../', import.meta.url);
 const names = ['YouTubeFeed', 'YouTubePlayback', 'YouTubeConfig', 'YouTubeLogger'];
@@ -23,8 +24,8 @@ if (process.argv.slice(2).some(value => value !== '--check')) throw new Error('�
  */
 async function compileScript(phase) {
   const modules = await Promise.all(bundles[phase].map(async name => {
-    const code = await fs.readFile(new URL(`src/${name}.js`, root), 'utf8');
-    return `${name}:function ${name}(){return ytRuntimeInvoke(function($request,$response,$argument,$persistentStore,$done){\n${code}\n});}`;
+    const code = runtimeSource(await fs.readFile(new URL(`src/${name}.js`, root), 'utf8'), name, phase);
+    return `${name}:function ${name}(options){return ytRuntimeInvoke(function($request,$response,$argument,$persistentStore,$done){\n${code}\n},options);}`;
   }));
   const handlers = `yt${phase === 'request' ? 'Request' : 'Response'}Handlers`;
   const route = phase === 'request'
@@ -37,6 +38,7 @@ async function compileScript(phase) {
        if (/\\/youtubei\\/v1\\/(?:browse|next|search)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubeFeed();
        if (/\\/youtubei\\/v1\\/(?:player|get_watch|reel\\/reel_watch_sequence)(?:\\?[^#]*)?$/i.test(url)) return ${handlers}.YouTubePlayback();
        return ${handlers}.YouTubeLogger();`;
+  const routed = route.replace(/Handlers\.(\w+)\(\)/g, 'Handlers.$1(options)');
   const runtime = await fs.readFile(new URL('src/YouTubeRuntime.js', root), 'utf8');
   const source = `${runtime}\nvar ${handlers}={${modules.join(',\n')}};
     if (typeof $done === 'function') (function(){
@@ -46,10 +48,10 @@ async function compileScript(phase) {
       var media = /^https:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?:videoplayback|initplayback)(?:\\?[^#]*)?$/i.test(url);
       var options = ytRuntimeOptions();
       if (media && !(options.log_enabled === true || options.log_enabled === 'true')) {
-        if (${phase === 'response' ? 'true' : 'false'} && ytRuntimeMediaHeaders()) return;
+        if (${phase === 'response' ? 'true' : 'false'} && ytRuntimeMediaHeaders(options)) return;
         return $done({});
       }
-      ${route}
+      ${routed}
     })();`;
   const hash = createHash('sha256').update(source).digest('hex');
   const result = await minify({[`${phase}.js`]: source}, {

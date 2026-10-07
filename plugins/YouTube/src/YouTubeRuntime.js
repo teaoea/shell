@@ -2,8 +2,8 @@
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeRuntime.js
  * 功能：为共享请求包和响应包适配 Loon、Quantumult X、Surge 与 Stash 的平台接口。
- * 版本：1.0.0
- * 更新时间：2026-10-06
+ * 版本：1.0.1
+ * 更新时间：2026-10-07
  */
 
 /**
@@ -175,10 +175,11 @@ function ytRuntimeFinish(output, options) {
  * 功能：绑定平台适配接口后运行指定模块，保持源码模块可独立测试。
  * 更新时间：2026-10-06
  * @param {Function} handler 当前功能处理器。
+ * @param {Object|undefined} options 主入口已解析的参数；单独调用时延迟解析。
  * @returns {*} 模块执行结果。
  */
-function ytRuntimeInvoke(handler) {
-  var options = ytRuntimeOptions();
+function ytRuntimeInvoke(handler, options) {
+  if (options === undefined) options = ytRuntimeOptions();
   var request = ytRuntimeInput(typeof $request === 'undefined' ? undefined : $request, false);
   var response = ytRuntimeInput(typeof $response === 'undefined' ? undefined : $response, true);
   var done = typeof $done === 'function' ? /** 功能：提交平台结果。更新时间：2026-10-06。 */ function (value) { return ytRuntimeFinish(value, options); } : undefined;
@@ -188,14 +189,15 @@ function ytRuntimeInvoke(handler) {
 /**
  * 功能：圈 X、Surge 与 Stash 的媒体响应头入口清除 Alt-Svc，不访问媒体正文或日志。
  * 更新时间：2026-10-06
+ * @param {Object|undefined} options 当前入口已解析的参数。
  * @returns {boolean} 已提交响应头时返回真。
  */
-function ytRuntimeMediaHeaders() {
+function ytRuntimeMediaHeaders(options) {
   if (ytRuntimePlatform() === 'Loon' || ytRuntimePlatform() === 'native' || typeof $response === 'undefined') return false;
   var headers = Object.assign({}, $response.headers || {});
   var keys = Object.keys(headers);
   for (var i = 0; i < keys.length; i++) if (keys[i].toLowerCase() === 'alt-svc') delete headers[keys[i]];
   headers['Alt-Svc'] = 'clear';
-  ytRuntimeFinish({headers:headers}, ytRuntimeOptions());
+  ytRuntimeFinish({headers:headers}, options === undefined ? ytRuntimeOptions() : options);
   return true;
 }

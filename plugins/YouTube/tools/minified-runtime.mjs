@@ -1,7 +1,7 @@
 /**
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
- * 功能：用两份发布包中的真实功能处理器运行已有回归；包含不再绑定手机的离线协议研究，主入口另有路由测试。
- * 更新时间：2026-10-06
+ * 功能：用发布包真实处理器运行回归；发布包已裁剪的离线协议研究仍检查原源码，主入口另有路由测试。
+ * 更新时间：2026-10-07
  */
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -25,6 +25,11 @@ vm.runInNewContext = function runMinifiedScript(code, ...args) {
   const name = replacements.get(code);
   if (!name) return Reflect.apply(originalRun, vm, [code, ...args]);
   const context = args[0];
+  // 保留离线协议研究测试；这些分支不再进入发布包，不能把它们算作发布入口验证。
+  const url = String(context.$request?.url || '');
+  if (name === 'YouTubePlayback' && (typeof context.$done === 'undefined' || /\/videoplayback\?/.test(url)) || name === 'YouTubeConfig' && /\/initplayback(?:\?|$)/.test(url)) {
+    return Reflect.apply(originalRun, vm, [code, ...args]);
+  }
   const phase = name === 'YouTubeChannelList' ? 'request' : name === 'YouTubeFeed' || typeof context.$response !== 'undefined' || typeof context.$done === 'undefined' ? 'response' : 'request';
   const hadDone = Object.hasOwn(context, '$done'), done = context.$done;
   try {

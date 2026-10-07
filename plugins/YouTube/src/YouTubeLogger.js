@@ -2,8 +2,8 @@
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeLogger.js
  * 功能：管理本地日志会话、完整链路记录、分块校验和单文件导出。
- * 版本：3.1.0
- * 更新时间：2026-10-05
+ * 版本：3.2.1
+ * 更新时间：2026-10-07
  * 运行环境：Loon JavaScript
  */
 /**
@@ -430,7 +430,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var LEGACY_SOURCES = ["YouTubePlayerRequest", "YouTubePlaybackAds", "YouTubeStreamAds", "YouTubeFeedAds", "YouTubeShortsAds", "YouTubeAdBreak", "YouTubeOnesieConfig", "YouTubeInitPlayback"];
   var SOURCES = ACTIVE_SOURCES.concat(LEGACY_SOURCES);
   var BASE = "http://youtube-logs.invalid/";
-  var VERSION = "3.2.0";
+  var VERSION = "3.2.1";
   var LIMIT = 600;
   var API_CAPTURE = /^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch|browse|next|search|reel\/reel_watch_sequence|log_event|config)(?:\?[^#]*)?$/i;
   var MEDIA_CAPTURE = /^https:\/\/[\w-]+\.googlevideo\.com\/(videoplayback|initplayback)(?:\?[^#]*)?$/i;
@@ -441,15 +441,6 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
   var minimum = Object.prototype.hasOwnProperty.call(ranks, args.log_level) ? args.log_level : "info";
 
   var devMessages = [];
-  var devException = null;
-  /**
-   * 功能：保存运行异常的结构化信息，供完整日志导出。
-   * 更新时间：2026-10-04T08:54:22+08:00
-   */
-  function devFailure(error) {
-    if (!devFlag(args.capture_raw)) return;
-    try { devException = {name:String(error.name || "Error"), message:String(error.message || ""), stack:typeof error.stack === "string" ? error.stack : null, code:error.ytNoAdsCode || null}; } catch (_) {}
-  }
   var devStarted = Date.now();
 
   /**
@@ -637,7 +628,7 @@ function (key) { try { $persistentStore.write(undefined, key); } catch (_) {} })
         runtime:typeof $loon === "string" ? $loon : null,
         correlation:{urlMethodHash:devCorrelation(request.method, request.url), exactPairing:false},
         request:request,
-        processing:{exception:devException, executionScript:phase === "request" ? "YouTubeLogger" : source, bodyBuffering:!headersOnly, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
+        processing:{exception:null, executionScript:phase === "request" ? "YouTubeLogger" : source, bodyBuffering:!headersOnly, elapsedMs:Date.now() - devStarted, messages:devMessages.slice(),
           arguments:{development_capture:devFlag(args.capture_raw), background_playback:devFlag(args.background_playback), log_level:args.log_level || "info"}}};
       if (phase === "response" && typeof $response !== "undefined") {
         payload.responseBefore = {status:$response.status, headers:$response.headers || {}, h2_trailers:$response.h2_trailers || {}, body:headersOnly ? {available:false,reason:"headers-only-not-buffered"} : /^(initplayback|ump)$/.test(endpoint)?devMediaBody($response.body,$response.headers):devBody($response.body)};
@@ -1111,8 +1102,13 @@ function (row) {
     var path = match[1] || "/";
     var method = String($request.method || "GET").toUpperCase();
     if (method !== "GET" && method !== "POST") return response(405, "Method not allowed", "text/plain; charset=utf-8", {Allow:"GET, POST"});
-    var origin = $request.headers && ($request.headers.Origin || $request.headers.origin);
-    if (method === "POST" && origin && origin !== "http://youtube-logs.invalid" && origin !== "http://youtube-logs.invalid:80") return response(403, "Foreign origin rejected", "text/plain; charset=utf-8");
+    if (method === "POST") {
+      var requestHeaders = $request.headers || {}, headerNames = Object.keys(requestHeaders);
+      for (var h = 0; h < headerNames.length; h++) {
+        var headerName = headerNames[h].toLowerCase(), headerValue = String(requestHeaders[headerNames[h]]);
+        if (headerName === "origin" && headerValue !== "http://youtube-logs.invalid" && headerValue !== "http://youtube-logs.invalid:80" || headerName === "sec-fetch-site" && headerValue.toLowerCase() === "cross-site") return response(403, "Foreign origin rejected", "text/plain; charset=utf-8");
+      }
+    }
     var c = path === "/clear" ? null : config();
     if (path === "/start" || path === "/pause" || path === "/clear" || path === "/mark-ad" || path === "/mark-content" || path === "/mark-quality-auto" || path === "/mark-quality-highest") {
       if (method !== "POST") return response(405, "Use the buttons on the log page.", "text/plain; charset=utf-8", {Allow:"POST"});

@@ -186,6 +186,12 @@ test('resource limits discard all JSON modifications',()=>{
  let deep={};for(let i=0;i<66;i++)deep={child:deep};
  assert.equal(Object.keys(run(JSON.stringify({contents:[{adSlotRenderer:{}}],deep})).output).length,0);
 });
+test('oversized protobuf field count discards earlier ad removals and preserves the whole response',()=>{
+ const body=initial(cat(msg(1,ad),...Array.from({length:30001},()=>msg(99,[]))));
+ const result=run(body,{type:'application/x-protobuf'});
+ assert.deepEqual(Object.keys(result.output),[]);
+ assert.match(result.logs.join(''),/field-limit/);
+});
 
 test('unknown browse Tab contents are not guessed as list messages',()=>{
  const body=msg(9,msg(58173949,msg(1,msg(58174010,initial(msg(1,ad))))));
@@ -218,6 +224,16 @@ function component(name,{model=emlRoutes[name]?.model??232954548,command=true,ro
 const element=(name,options={})=>msg(153515154,msg(172660663,msg(1,msg(168777401,component(name,options)))));
 const section=(...contents)=>msg(50195462,cat(...contents.map(x=>msg(1,x)),tracking,[64,1]));
 const home=list=>nested([9,58173949,1,58174010,4,49399797],list);
+test('native channel scanning reuses a decoder and separates equal-size byte ranges',()=>{
+ let decoders=0;
+ class CountingDecoder extends TextDecoder {constructor(...args){super(...args);decoders++;}}
+ const card=(id,handle)=>msg(1,section(element('video_lockup_with_attachment',{modelData:channelCommand(id,handle)})));
+ const kept=card(keptId,'@保留'),blocked=card(blockedId,'@屏蔽');
+ const bytes=home(cat(kept,blocked,kept,blocked)),padded=cat([255],bytes,[254]);
+ const output=run(new Uint8Array(padded.buffer,1,bytes.length),{type:'application/x-protobuf',extra:{...channelOptions('@屏蔽'),TextDecoder:CountingDecoder}}).output;
+ assert.deepEqual(Buffer.from(output.body),Buffer.from(home(cat(kept,kept))));
+ assert.equal(decoders,1);
+});
 const divider=()=>section(element('cell_divider',{model:347043917,command:false}));
 const normalEml=()=>section(element('video_lockup_with_attachment',{command:false}));
 for(const name of Object.keys(emlRoutes))test(`sample-derived EML ${name}: removes ad card and its following divider; all other bytes remain exact`,()=>{

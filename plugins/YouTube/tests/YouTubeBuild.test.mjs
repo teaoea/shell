@@ -3,8 +3,38 @@ import vm from 'node:vm';
 import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {runtimeSource} from '../tools/runtime-source.mjs';
 
 const root = new URL('../', import.meta.url);
+
+test('published phase pruning keeps offline sources and excludes unreachable protocol branches', () => {
+  const playback = fs.readFileSync(new URL('src/YouTubePlayback.js', root),'utf8');
+  const config = fs.readFileSync(new URL('src/YouTubeConfig.js', root),'utf8');
+  assert.ok(playback.includes('module.exports = { processUMP:'));
+  assert.ok(config.includes('function aesCtr'));
+  for (const phase of ['request','response']) {
+    const player = runtimeSource(playback,'YouTubePlayback',phase);
+    const configuration = runtimeSource(config,'YouTubeConfig',phase);
+    assert.ok(!player.includes('module.exports = { processUMP:'));
+    assert.ok(!player.includes('function processUMP('));
+    assert.ok(!configuration.includes('function aesCtr'));
+    assert.ok(player.includes('player/get_watch') || player.includes('(?:player|get_watch)'));
+    new vm.Script(player); new vm.Script(configuration);
+  }
+  assert.throws(()=>runtimeSource(config.replace('(?:config|log_event)','(?:new_api|log_event)'),'YouTubeConfig','request'),/已改变/);
+});
+
+test('the shared dispatcher resolves Stash page-controlled options only once per invocation', () => {
+  const code = fs.readFileSync(new URL('dist/request.min.js',root),'utf8');
+  let reads = 0, calls = 0;
+  vm.runInNewContext(code, {
+    $environment:{'stash-version':'test'}, $argument:'log_control=page',
+    $request:{url:'https://www.youtube.com/api/timedtext?lang=ja&v=test'},
+    $persistentStore:{read(){reads++;return null;},write(){throw Error('must not write');}},
+    $done(){calls++;}, console:{log(){}}
+  });
+  assert.equal(calls,1);assert.equal(reads,1);
+});
 
 test('the two published bundles reproduce exactly from current sources and pinned build options', () => {
   const result = spawnSync(process.execPath, [new URL('tools/build.mjs', root).pathname, '--check'], {encoding: 'utf8'});

@@ -2,8 +2,8 @@
  * 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
  * 文件：YouTubeConfig.js
  * 功能：维护 YouTube Onesie 配置；旧初始化请求改写保留供离线回归，当前主插件使用原生空视频响应。
- * 版本：2.2.1
- * 更新时间：2026-10-05
+ * 版本：2.2.2
+ * 更新时间：2026-10-07
  * 运行环境：Loon JavaScript
  */
 /**
@@ -219,7 +219,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
 (function () {
   "use strict";
 
-  var VERSION = "1.0.0";
+  var VERSION = "1.0.1";
   var SOURCE = "YouTubeConfig";
   var STATE_KEY = "ytads.onesie.youtube.v1";
   var LOG_CONFIG = "ytads.logger.config.v1";
@@ -358,6 +358,8 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     var fields = parse(current, budget);
     var client = only(fields, 1, 2), encrypt = only(fields, 2, 2);
     if (!client || !encrypt || client.dataEnd === client.dataStart || encrypt.dataEnd === encrypt.dataStart) fail("incomplete-onesie-config");
+    // 配置只接受有界密钥，避免异常响应产生无法再读取的大型本地缓存。
+    if (client.dataEnd - client.dataStart > 1024 || encrypt.dataEnd - encrypt.dataStart > 1024) fail("oversized-onesie-key");
     var lifetime = only(fields, 3, 0), enabled = only(fields, 30, 0);
     var seconds = lifetime && lifetime.value > 0 && lifetime.value <= 604800 ? lifetime.value : 3600;
     var now = Date.now();
@@ -374,6 +376,7 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
     try {
       var raw = $persistentStore.read(STATE_KEY), state = raw && raw.length <= 8192 ? JSON.parse(raw) : null;
       if (!state || state.schema !== 1 || state.platform !== "youtube" || typeof state.clientKey !== "string" || typeof state.encryptKey !== "string") return null;
+      if (!state.clientKey.length || !state.encryptKey.length || state.clientKey.length > 1368 || state.encryptKey.length > 1368) return null;
       if (!Number.isFinite(state.expiresAt) || state.expiresAt <= Date.now()) { $persistentStore.write(undefined, STATE_KEY); return null; }
       return state;
     } catch (_) { return null; }
@@ -384,7 +387,8 @@ function(k){if(v[k]!==undefined)out[k]=v[k];});if(v.url)out.url=url(v.url);if(v.
    */
   function writeState(state) {
     if (typeof $persistentStore === "undefined") return false;
-    return $persistentStore.write(JSON.stringify(state), STATE_KEY) === true;
+    var serialized = JSON.stringify(state);
+    return serialized.length <= 8192 && $persistentStore.write(serialized, STATE_KEY) === true;
   }
   /**
    * 功能：执行 filteredHeaders 对应的内部处理步骤。

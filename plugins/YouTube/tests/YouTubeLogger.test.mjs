@@ -294,6 +294,23 @@ test('control routes require POST and reject foreign origins; unknown routes do 
   const other = execute(logger, store, {$request:{url:'https://youtube.com/',method:'GET'}});
   assert.equal(Object.keys(other.output).length, 0);
 });
+test('control routes reject mixed-case and conflicting origins or cross-site POST before writing', () => {
+  for (const headers of [
+    {oRiGiN:'http://evil.test'}, {Origin:base, origin:'http://evil.test'},
+    {'SEC-FETCH-SITE':'cross-site'}, {Origin:base, 'sEc-FeTcH-sItE':'CROSS-SITE'},
+    {origin:'null'}, {Origin:''}
+  ]) {
+    for (const path of ['/start','/pause','/clear','/mark-ad']) {
+      const store = new Map([[configKey,JSON.stringify({enabled:true,session:'existing'})]]);
+      const before = [...store];
+      assert.equal(request(store,path,'POST','',headers).status,403);
+      assert.deepEqual([...store],before);
+    }
+  }
+  for (const headers of [{}, {oRiGiN:base}, {origin:base+':80','Sec-Fetch-Site':'same-origin'}]) {
+    assert.equal(request(new Map(),'/start','POST','',headers).status,303);
+  }
+});
 test('export ignores stale sessions and malformed records and sorts timestamps', () => {
   const store = new Map();
   request(store, '/start', 'POST');

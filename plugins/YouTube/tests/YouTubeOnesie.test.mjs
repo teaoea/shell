@@ -104,6 +104,19 @@ function configResponse(store, body=makeConfig(), ua=youtubeUA, argument={}) {
 function logEvent(store, ua=youtubeUA, headers={}) {
   return execute(configSource, {store,request:{url:'https://youtubei.googleapis.com/youtubei/v1/log_event',method:'POST',headers:{'User-Agent':ua,...headers},body:Uint8Array.from([8,1])}});
 }
+test('oversized Onesie keys fail open and cannot overwrite a valid bounded cache', () => {
+  const store = new Map();
+  configResponse(store);
+  const previous = store.get(stateKey);
+  for (const body of [makeConfig({client:new Array(1025).fill(1)}), makeConfig({encrypt:new Array(1025).fill(9)})]) {
+    const result = configResponse(store,body);
+    assert.deepEqual(Object.keys(result.output),[]);
+    assert.equal(store.get(stateKey),previous);
+  }
+  assert.deepEqual(Object.keys(configResponse(store,makeConfig({client:new Array(1024).fill(1),encrypt:new Array(1024).fill(9)})).output),[]);
+  assert.ok(store.get(stateKey).length < 8192);
+  assert.equal(JSON.parse(store.get(stateKey)).clientKey.length,1368);
+});
 function initPlayback(store, key, ua=youtubeUA, argument={}, body=makeInit(key), cryptoApi, utilsApi) {
   return execute(initSource, {store,request:{url:'https://rr5---sn-test.googlevideo.com/initplayback?ack=1&sig=PRIVATE',method:'POST',headers:{'User-Agent':ua,'Content-Length':'100','Content-Encoding':'br'},body},argument,cryptoApi,utilsApi});
 }
