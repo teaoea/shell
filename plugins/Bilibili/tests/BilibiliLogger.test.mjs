@@ -352,14 +352,14 @@ test('export identifies exporter and actual producer versions without relabeling
  const h=harness(JSON.stringify({events:[old],evicted:0}));
  h.run({$request:{url:'https://app.bilibili.com/x/v3/splash/config?token='+secret,method:'POST'},$response:{status:200}});
  const exported=h.page('/export').response.body.trim().split('\n').map(JSON.parse);
- assert.equal(exported[0].script_version,'1.11.8');
+ assert.equal(exported[0].script_version,'1.11.9');
  assert.equal(exported[1].script_version,undefined);
- assert.equal(exported[2].script_version,'1.11.8');
+ assert.equal(exported[2].script_version,'1.11.9');
  assert.equal(exported[2].route_hint,'/x/v3/splash/config');
  assert.equal(exported[2].host,'app.bilibili.com');
  assert.ok(!JSON.stringify(exported).includes(secret));
  const scripts=plugin.split('\n').filter(line=>line.includes('script-path='));
- assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.8,/);
+ assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.9,/);
 });
 
 test('impression request and response logging never reads bodies or secrets and has no reject rule',()=>{
@@ -396,4 +396,15 @@ test('additional biligame diagnostic hosts record both phases with exact host bo
   }
   const disabled=harness();disabled.run({$request:request,$response:response,$argument:{log_enabled:false}});assert.equal(disabled.writes(),0);
  }
+});
+
+test('log page places version beside title and exposes request response phases',()=>{
+ const h=harness();const request={url:'https://impression.biligame.com/api/impression/bilibili?token='+secret,method:'GET'};
+ h.run({$request:request,$response:undefined});h.run({$request:request,$response:{status:200}});
+ const html=h.page().response.body;
+ assert.match(html,/<h1>开发日志<span class="page-version">v1\.11\.9<\/span><\/h1>/);
+ assert.match(html,/<footer>时间显示为北京时间<\/footer>/);
+ assert.match(html,/请求发出/);assert.match(html,/响应返回/);
+ assert.equal(JSON.parse(h.stored()).events[0].route_hint,'/api/impression/bilibili');
+ assert.ok(!html.includes(secret));
 });
