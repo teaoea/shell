@@ -24,7 +24,7 @@ DOMAIN,bilibili-logs.invalid,DIRECT
 # 功能：每分钟检测日志开关，只在新开启时通知；点击通知打开浏览器。更新时间：2026-10-07
 cron "* * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 日志开启提醒
 generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 打开日志页,img-url=doc.text.magnifyingglass.system
-# 使用：重新打开 B 站收集标签，运行此按钮并点击通知，勾选标签保存，再重新打开 B 站。
+# 使用：运行此按钮并点击通知，在管理页点击“获取全部标签”，勾选保存，再重新打开 B 站。
 generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 首页标签管理,img-url=line.3.horizontal.decrease.circle.system
 # 功能：仅处理已登记的 JSON API，不读取视频媒体或二进制 RPC。更新时间：2026-10-07
 http-response ^https://app\.bilibili\.com(?::443)?/x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?|search/(?:square|trending/ranking|default(?:words)?)|account/mine(?:/ipad)?)|resource/show/tab(?:/v2)?)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,timeout=10,argument=[{remove_splash_ads},{remove_feed_ads},{hide_live},{hide_game},{hide_member_shop},{hide_publish},{hide_search_discovery},{blocked_uids},{blocked_keywords},{log_enabled}],tag=Bilibili 广告与推荐过滤

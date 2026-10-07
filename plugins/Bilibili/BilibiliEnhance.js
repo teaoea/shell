@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon JSON 响应过滤与本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.7.0；更新时间：2026-10-07
+ * 版本：1.8.0；更新时间：2026-10-07
  * 只处理已登记的 JSON 接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -22,10 +22,32 @@
   };
   const memberPromoFields = ['vip_section', 'vip_section_v2', 'modular_vip_section'];
   const TABS_KEY = 'bilibili.enhance.tabs.v1';
+  const REGION_URL = 'https://app.bilibili.com/bilibili.app.show.v1.Mixture/RegionList';
+  function publicTabURI(value) {
+    if (typeof value !== 'string' || value.length > 1024) return null;
+    // 仅保留公开分区／服务路由以及展示参数。未知路径和凭据参数全部排除。
+    const parts = value.split('?');
+    if (parts.length > 2 || value.includes('#')) return null;
+    const base = parts[0];
+    if (!/^(?:bilibili:\/\/(?:main\/regionv2\/detail\/\d+|pgc\/(?:partition_page|page\/operation_list|cinema|home|cinema-tab)|pegasus\/(?:promo|hottopic)|live\/home|rank\/|game_center|comic\/home|article\/category\/)|https:\/\/(?:www\.bilibili\.com\/(?:blackroom|h5\/match\/data\/home|blackboard\/era\/[\w-]+\.html)|music\.bilibili\.com\/h5\/music-center|mall\.bilibili\.com\/neul-next\/index\.html|m\.bilibili\.com\/cheese\/home))$/.test(base)) return null;
+    const allowed = ['page_name', 'page_id', 'title', 'select_id', 'from', 'page', 'noTitleBar', 'navhide', 'is_live_webview', 'hybrid_set_header', 'native.theme', 'night', 'auto_media_playback', '-Abrowser'];
+    const query = [];
+    for (const pair of (parts[1] || '').split('&')) {
+      const eq = pair.indexOf('=');
+      if (eq < 1) continue;
+      const key = pair.slice(0, eq);
+      if (!allowed.includes(key)) continue;
+      let decoded;
+      try { decoded = decodeURIComponent(pair.slice(eq + 1)); } catch (_) { return null; }
+      if (decoded.length > 64 || !/^[\w\u4e00-\u9fff .-]*$/.test(decoded)) continue;
+      query.push(key + '=' + encodeURIComponent(decoded));
+    }
+    return base + (query.length ? '?' + query.join('&') : '');
+  }
   const escapeHTML = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   function tabInfo(item) {
     if (!object(item) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 64) return null;
-    // 只保存导航 ID 和展示名；不保存跳转地址、账号、请求参数或原始响应。
+    // 当前导航只保存 ID 与展示名；完整分区另保存受限的公开跳转信息。
     const id = typeof item.tab_id === 'string' && /^[\w\u4e00-\u9fff:/.-]{1,96}$/.test(item.tab_id) ? 'tab:' + item.tab_id :
       Number.isSafeInteger(item.id) && item.id >= 0 ? 'id:' + item.id : null;
     return id ? { id, name: item.name } : null;
@@ -40,20 +62,127 @@
   function tabInfoStored(item) {
     if (!object(item) || typeof item.id !== 'string' || !/^(?:tab:[\w\u4e00-\u9fff:/.-]{1,96}|id:\d{1,16})$/.test(item.id) ||
       typeof item.name !== 'string' || !item.name.trim() || item.name.length > 64) return null;
-    return { id: item.id, name: item.name };
+    const result = { id: item.id, name: item.name };
+    const nativeTab = typeof item.native_tab_id === 'string' && /^[\w\u4e00-\u9fff:/.-]{1,96}$/.test(item.native_tab_id) ? item.native_tab_id : String(item.native_id);
+    if (item.source === 'region' && Number.isSafeInteger(item.native_id) && item.native_id > 0 && item.id === 'tab:' + nativeTab) {
+      const uri = publicTabURI(item.uri);
+      if (uri) Object.assign(result, { source: 'region', native_id: item.native_id, native_tab_id: nativeTab, uri, enabled: item.enabled === true });
+    }
+    return result;
   }
   function saveTabs(state) {
     try { return $persistentStore.write(JSON.stringify(state), TABS_KEY) === true; } catch (_) { return false; }
   }
+  function regionTabs(raw) {
+    if (!raw || !ArrayBuffer.isView(raw)) throw new Error('binary');
+    const bytes = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+    if (bytes.length < 5 || bytes.length > 262144 || bytes[0] !== 0) throw new Error('frame');
+    const size = bytes[1] * 16777216 + bytes[2] * 65536 + bytes[3] * 256 + bytes[4];
+    if (size !== bytes.length - 5) throw new Error('length');
+    function fields(input) {
+      let offset = 0;
+      function integer() {
+        let value = 0;
+        for (let i = 0; i < 10; i++) {
+          if (offset >= input.length) throw new Error('truncated');
+          const byte = input[offset++];
+          value += (byte & 127) * Math.pow(2, 7 * i);
+          if (!(byte & 128)) return value;
+        }
+        throw new Error('varint');
+      }
+      const result = [];
+      while (offset < input.length) {
+        if (result.length >= 4096) throw new Error('fields');
+        const tag = integer(), number = Math.floor(tag / 8), wire = tag % 8;
+        if (!Number.isSafeInteger(tag) || number < 1) throw new Error('tag');
+        if (wire === 0) result.push({ number, wire, value: integer() });
+        else if (wire === 2) {
+          const length = integer();
+          if (!Number.isSafeInteger(length) || length < 0 || offset + length > input.length) throw new Error('length');
+          result.push({ number, wire, value: input.subarray(offset, offset + length) }); offset += length;
+        } else if (wire === 1 || wire === 5) {
+          offset += wire === 1 ? 8 : 4;
+          if (offset > input.length) throw new Error('truncated');
+        } else throw new Error('wire');
+      }
+      return result;
+    }
+    function text(data) {
+      if (data.length > 1024) throw new Error('text');
+      let escaped = '';
+      for (const byte of data) escaped += '%' + ('0' + byte.toString(16)).slice(-2);
+      return decodeURIComponent(escaped);
+    }
+    const result = [];
+    for (const group of fields(bytes.subarray(5))) {
+      if (![1, 2].includes(group.number) || group.wire !== 2) continue;
+      for (const icon of fields(group.value)) {
+        if (icon.number !== 2 || icon.wire !== 2) continue;
+        const values = fields(icon.value);
+        const title = values.find(field => field.number === 2 && field.wire === 2);
+        const url = values.find(field => field.number === 3 && field.wire === 2);
+        const id = values.find(field => field.number === 4 && field.wire === 0);
+        if (!title || !url || !id || !Number.isSafeInteger(id.value) || id.value <= 0) continue;
+        const name = text(title.value), uri = publicTabURI(text(url.value));
+        if (!name.trim() || name.length > 64 || !uri) continue;
+        if (!result.some(tab => tab.native_id === id.value)) result.push({ id: 'tab:' + id.value, native_id: id.value, name, uri, source: 'region' });
+        if (result.length > 100) throw new Error('limit');
+      }
+    }
+    if (!result.length) throw new Error('empty');
+    return result;
+  }
+  function fetchRegions(callback) {
+    if (typeof $httpClient === 'undefined' || typeof $httpClient.post !== 'function') return callback(false);
+    $httpClient.post({ url: REGION_URL, headers: { 'Content-Type': 'application/grpc', 'grpc-accept-encoding': 'identity' },
+      body: new Uint8Array(5), 'binary-mode': true, 'auto-cookie': false, 'auto-redirect': false, insecure: false, alpn: 'h2', timeout: 3000 }, (error, response, raw) => {
+      try {
+        if (error || !response || Number(response.status) !== 200) throw new Error('request');
+        const headers = Object.assign({}, response.headers, response.h2_trailers);
+        const grpcKey = Object.keys(headers).find(key => key.toLowerCase() === 'grpc-status');
+        if (grpcKey && String(headers[grpcKey]) !== '0') throw new Error('grpc');
+        const entries = regionTabs(raw), state = readTabs();
+        for (const tab of entries) {
+          const index = state.catalog.findIndex(item => item.id === tab.id);
+          if (index >= 0) state.catalog[index] = Object.assign(tab, { enabled: state.catalog[index].source !== 'region' || state.catalog[index].enabled === true });
+          else if (state.catalog.length < 100) state.catalog.push(tab);
+        }
+        if (!saveTabs(state)) throw new Error('storage');
+        // 匿名首页补充直播／推荐／热门等基础项，不受账号已启用列表限制。
+        if (typeof $httpClient.get !== 'function') return callback(true, entries.length);
+        $httpClient.get({ url: 'https://app.bilibili.com/x/resource/show/tab/v2?mobi_app=iphone&platform=ios&build=80000100',
+          'auto-cookie': false, 'auto-redirect': false, insecure: false, timeout: 3000 }, (error, response, raw) => {
+          try {
+            if (error || !response || Number(response.status) !== 200 || typeof raw !== 'string' || raw.length > 262144) throw new Error('home');
+            const body = JSON.parse(raw);
+            if (body.code !== 0 || !object(body.data) || !Array.isArray(body.data.tab)) throw new Error('schema');
+            const latest = readTabs();
+            for (const item of body.data.tab) {
+              const info = tabInfo(item), uri = object(item) && publicTabURI(item.uri);
+              if (!info || !uri || !Number.isSafeInteger(item.id) || item.id <= 0 || typeof item.tab_id !== 'string') continue;
+              const index = latest.catalog.findIndex(tab => tab.id === info.id);
+              const tab = Object.assign(info, { source: 'region', native_id: item.id, native_tab_id: item.tab_id, uri,
+                enabled: index >= 0 && (latest.catalog[index].source !== 'region' || latest.catalog[index].enabled === true) });
+              if (index >= 0) latest.catalog[index] = tab;
+              else if (latest.catalog.length < 100) latest.catalog.push(tab);
+            }
+            if (!saveTabs(latest)) throw new Error('storage');
+            callback(true, entries.length, true);
+          } catch (_) { callback(true, entries.length, false); }
+        });
+      } catch (_) { callback(false); }
+    });
+  }
   function tabsPage(message = '') {
     const state = readTabs();
     const rows = state.catalog.map(tab => '<label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
-      (state.selected === null || state.selected.includes(tab.id) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label>').join('');
+      ((state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label>').join('');
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
       ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
       (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
-      '<p>先重新打开 B 站，自动收集首页接口返回的全部标签，再刷新本页。勾选要保留的标签，至少选择一项；保存后重新打开 B 站。标签顺序沿用 App 返回的顺序。</p>' +
-      '<p>收集的是本机实际收到的标签，可累积不同响应；服务器未提供的标签无法凭空获取。新标签不会自动加入已保存的选择。当前记录 ' + state.catalog.length + ' 项。</p>' +
+      '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>点击上方按钮，从 B 站客户端分区接口获取未启用的分区与服务。无需登录，也不使用账号令牌。重新打开 B 站还能收集当前首页标签，再刷新本页。</p>' +
+      '<p>勾选要在首页显示的标签，至少选择一项；保存后重新打开 B 站。已有标签沿用原顺序，新增项追加在后。当前可选 ' + state.catalog.length + ' 项，其中分区列表 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项。新获取的项默认不勾选。</p>' +
       (rows ? '<form method="post" action="/tabs/save">' + rows + '<button type="submit">保存选择</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
       '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><p>设置仅保存在本机，不依赖开发日志开关。关闭日志不会清除标签选择。</p></main></body></html>';
   }
@@ -235,7 +364,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.7.0</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.8.0</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     function respond(status, type, body, extra = {}) {
@@ -251,12 +380,14 @@
       const method = request.method || 'GET';
       if (path.startsWith('/tabs')) {
         if (path === '/tabs' && method === 'GET') return respond(200, 'text/html', tabsPage());
-        if (!['/tabs/save', '/tabs/reset'].includes(path)) return respond(404, 'text/plain', '页面不存在');
+        if (!['/tabs/save', '/tabs/reset', '/tabs/load'].includes(path)) return respond(404, 'text/plain', '页面不存在');
         if (method !== 'POST') return respond(405, 'text/plain', '请使用页面按钮', { Allow: 'POST' });
         const headers = request.headers || {};
         const originKey = Object.keys(headers).find(key => key.toLowerCase() === 'origin');
         const origin = originKey && headers[originKey];
         if (origin && origin !== 'null' && !['http://bilibili-logs.invalid', 'http://bilibili-logs.invalid:80'].includes(origin)) return respond(403, 'text/plain', '请在本地标签页操作');
+        if (path === '/tabs/load') return fetchRegions((success, total, homepage) => respond(success ? 200 : 503, 'text/html', tabsPage(success ?
+          '已获取 ' + total + ' 个分区与服务，包含未在首页启用的项。' + (homepage === false ? '基础首页标签补充失败，可稍后重试；分区列表已保留。' : '请勾选并保存。') : '完整列表获取失败，已保留现有标签与选择，请稍后重试。')));
         const state = readTabs();
         if (path === '/tabs/reset') state.selected = null;
         else {
@@ -425,14 +556,20 @@
           const tab = tabInfo(item);
           if (!tab) continue;
           const existing = state.catalog.find(entry => entry.id === tab.id);
-          if (existing) existing.name = tab.name;
+          if (existing) { existing.name = tab.name; if (existing.source === 'region') existing.enabled = true; }
           else if (state.catalog.length < 100) state.catalog.push(tab);
         }
         saveTabs(state);
-        // 当前响应没有任何已选标签时保留原列表，防止首页导航被清空。
-        if (state.selected !== null && data.tab.some(item => { const tab = tabInfo(item); return tab && state.selected.includes(tab.id); })) {
+        const additions = state.selected === null ? [] : state.catalog.filter(tab => tab.source === 'region' && state.selected.includes(tab.id) &&
+          !data.tab.some(item => { const info = tabInfo(item); return info && info.id === tab.id; }));
+        // 已选的隐藏分区可由受限公开路由新增；没有任何可用选项时保留原导航。
+        if (state.selected !== null && (additions.length || data.tab.some(item => { const tab = tabInfo(item); return tab && state.selected.includes(tab.id); }))) {
           const before = data.tab;
           filter(data, 'tab', item => { const tab = tabInfo(item); return !tab || state.selected.includes(tab.id); });
+          if (additions.length) {
+            data.tab = data.tab.concat(additions.map(tab => ({ id: tab.native_id, tab_id: tab.native_tab_id || String(tab.native_id), name: tab.name, uri: tab.uri, pos: 0 })));
+            changed = true;
+          }
           if (data.tab !== before) {
             const hasDefault = data.tab.some(item => object(item) && item.default_selected === 1);
             const firstSelected = data.tab.find(item => { const tab = tabInfo(item); return tab && state.selected.includes(tab.id); });
@@ -459,7 +596,7 @@
     }
     if (event) {
       event.after = contentCount();
-      event.removed = event.before - event.after;
+      event.removed = Math.max(0, event.before - event.after);
     }
     return finish(changed ? { body: json.stringify(body) } : {}, changed ? 'modified' : 'unchanged');
   } catch (_) {
