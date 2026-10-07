@@ -210,3 +210,5 @@ UID／标题黑名单：JSON 首页与 `/x/v2/feed/index/story` 推荐读取 `ar
 开屏排查版本核对：每条新记录的 `script_version` 表示实际处理该请求的脚本版本；导出文件首行的 `script_version` 表示导出页面使用的脚本版本。没有该字段的旧记录版本未知。插件脚本地址带版本参数，更新插件配置后会使用新的脚本地址。若开屏仍出现，记录显示时间，并在导出前确认日志页底部版本。
 
 游戏广告域名排查：默认规则 `DOMAIN,impression.biligame.com,REJECT` 仅拦截该主机，不扩大至 `biligame.com`。已有[实际请求记录](https://github.com/the1812/Bilibili-Evolved/issues/3388)显示该主机承载广告曝光回调；请求出现在广告附近不能证明它下发素材，也不能保证拦截上报就能阻止本机缓存广告显示。命中情况请看 Loon 的 Reject 记录；域名规则发生在解密脚本之前，不会写入本插件开发日志。
+
+`impression.biligame.com` 已加入 MitM 主机列表。默认域名 REJECT 命中时仍直接拒绝连接；加入解密列表不会绕过拦截，也不会自动为该主机增加开发日志。

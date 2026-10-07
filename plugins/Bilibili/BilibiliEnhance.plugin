@@ -42,4 +42,4 @@ http-request ^https://(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net
 http-request ^http://bilibili-logs\.invalid(?::80)?(?:/[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js?v=1.11.6,requires-body=true,timeout=10,argument=[{log_enabled}],tag=Bilibili 本地管理页面
 
 [Mitm]
-hostname = app.bilibili.com,grpc.biliapi.net,app.biliapi.net,api.bilibili.com,data.bilibili.com
+hostname = app.bilibili.com,grpc.biliapi.net,app.biliapi.net,api.bilibili.com,data.bilibili.com,impression.biligame.com
