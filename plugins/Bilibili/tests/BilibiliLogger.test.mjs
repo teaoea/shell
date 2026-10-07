@@ -346,3 +346,18 @@ test('unknown splash paths expose only fixed segments and data metadata never re
  for(const text of [h.stored(),h.page('/export').response.body,h.page().response.body])assert.ok(!text.includes(secret));
  assert.match(plugin,/http-response \^https:\/\/data/);
 });
+
+test('export identifies exporter and actual producer versions without relabeling old records',()=>{
+ const old={time:'2026-10-07T10:00:00.000Z',endpoint:'other_api',outcome:'metadata_only',method:'GET',status:200};
+ const h=harness(JSON.stringify({events:[old],evicted:0}));
+ h.run({$request:{url:'https://app.bilibili.com/x/v3/splash/config?token='+secret,method:'POST'},$response:{status:200}});
+ const exported=h.page('/export').response.body.trim().split('\n').map(JSON.parse);
+ assert.equal(exported[0].script_version,'1.11.6');
+ assert.equal(exported[1].script_version,undefined);
+ assert.equal(exported[2].script_version,'1.11.6');
+ assert.equal(exported[2].route_hint,'/x/v3/splash/config');
+ assert.equal(exported[2].host,'app.bilibili.com');
+ assert.ok(!JSON.stringify(exported).includes(secret));
+ const scripts=plugin.split('\n').filter(line=>line.includes('script-path='));
+ assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.6,/);
+});
