@@ -352,14 +352,14 @@ test('export identifies exporter and actual producer versions without relabeling
  const h=harness(JSON.stringify({events:[old],evicted:0}));
  h.run({$request:{url:'https://app.bilibili.com/x/v3/splash/config?token='+secret,method:'POST'},$response:{status:200}});
  const exported=h.page('/export').response.body.trim().split('\n').map(JSON.parse);
- assert.equal(exported[0].script_version,'1.11.9');
+ assert.equal(exported[0].script_version,'1.11.10');
  assert.equal(exported[1].script_version,undefined);
- assert.equal(exported[2].script_version,'1.11.9');
+ assert.equal(exported[2].script_version,'1.11.10');
  assert.equal(exported[2].route_hint,'/x/v3/splash/config');
  assert.equal(exported[2].host,'app.bilibili.com');
  assert.ok(!JSON.stringify(exported).includes(secret));
  const scripts=plugin.split('\n').filter(line=>line.includes('script-path='));
- assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.9,/);
+ assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.10,/);
 });
 
 test('impression request and response logging never reads bodies or secrets and has no reject rule',()=>{
@@ -402,9 +402,25 @@ test('log page places version beside title and exposes request response phases',
  const h=harness();const request={url:'https://impression.biligame.com/api/impression/bilibili?token='+secret,method:'GET'};
  h.run({$request:request,$response:undefined});h.run({$request:request,$response:{status:200}});
  const html=h.page().response.body;
- assert.match(html,/<h1>开发日志<span class="page-version">v1\.11\.9<\/span><\/h1>/);
+ assert.match(html,/<h1>开发日志<span class="page-version">v1\.11\.10<\/span><\/h1>/);
  assert.match(html,/<footer>时间显示为北京时间<\/footer>/);
  assert.match(html,/请求发出/);assert.match(html,/响应返回/);
  assert.equal(JSON.parse(h.stored()).events[0].route_hint,'/api/impression/bilibili');
  assert.ok(!html.includes(secret));
+});
+
+test('biligame apex and subdomains log safely while rejecting unrelated domains',()=>{
+ const line=plugin.split('\n').find(l=>l.startsWith('http-request ')&&l.includes('tag=Bilibili 游戏服务'));
+ const re=new RegExp(line.split(' ')[1]);
+ for(const host of ['biligame.com','www.biligame.com','unknown.biligame.com','secret-label.cdn.biligame.com']){
+  const h=harness();const url='https://'+host+'/api/config?token='+secret;
+  assert.ok(re.test(url));h.run({$request:{url,method:'GET'},$response:undefined});
+  const expected=host.replace('unknown','{other}').replace('secret-label','{other}');
+  assert.equal(JSON.parse(h.stored()).events[0].host,expected);
+  assert.ok(h.page('/export').response.body.includes(expected));
+  assert.ok(!h.page('/export').response.body.includes(secret));
+ }
+ const h=harness();const label=secret.toLowerCase().replaceAll('_','-');h.run({$request:{url:'https://'+label+'.biligame.com/api?token='+secret},$response:undefined});
+ assert.ok(!h.stored().includes(label));assert.ok(!h.stored().includes(secret));
+ for(const host of ['evilbiligame.com','biligame.com.evil.test','-invalid.biligame.com'])assert.ok(!re.test('https://'+host+'/api'));
 });
