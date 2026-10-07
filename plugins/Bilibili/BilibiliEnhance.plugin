@@ -1,20 +1,20 @@
 #!name = Bilibili 增强
 #!author = 可莉唯一的狗、ChatGPT
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/assets/bilibili.png
-#!desc = 过滤已识别的 JSON 开屏及首页广告，可选推荐过滤与导航精简。开发日志默认关闭，在 http://bilibili-logs.invalid/ 查看状态、导出和清空；仅保存白名单元数据与结构类型。二进制接口暂不去广告，需实机验证。需开启 MitM 并信任证书。
+#!desc = 支持已识别的开屏及首页广告过滤、直播与游戏推荐过滤、导航精简、UP 主 UID 与标题关键词屏蔽，以及本地开发日志查看、导出和清空。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/Bilibili/README.md
 #!tag = Bilibili,去广告,推荐过滤
 
 [Argument]
-remove_splash_ads = switch,true,tag=过滤开屏广告,desc=清空已识别 JSON 开屏接口的投放列表；本机已有广告缓存可能仍显示
-remove_feed_ads = switch,true,tag=过滤首页广告,desc=移除已识别广告卡片和横幅广告；保留普通视频及未知卡片
-hide_live = switch,false,tag=隐藏直播推荐,desc=仅隐藏首页可识别直播推荐卡片，不影响直播入口或播放
-hide_game = switch,false,tag=隐藏游戏推广,desc=隐藏首页游戏推荐卡片及导航中的游戏中心
-hide_member_shop = switch,false,tag=隐藏会员购入口,desc=仅精简导航入口，不修改会员权益
-hide_publish = switch,false,tag=隐藏发布入口,desc=仅隐藏导航中的发布入口
-blocked_uids = input,"",tag=UP 主 UID 屏蔽名单,desc=多个数字 UID 用空格或逗号分隔；只过滤首页能识别 args.up_id 的卡片，留空停用
-blocked_keywords = input,"",tag=标题关键词屏蔽,desc=多个关键词用逗号分隔；仅对首页卡片标题做字面包含匹配，留空停用
-log_enabled = switch,false,tag=开发日志,desc=开启后请打开 B 站并刷新首页，出现提醒后点击通知打开浏览器日志页；也会每分钟检查一次，开启开关不会立即弹窗；可查看、导出及清空记录，不保存令牌或正文
+remove_splash_ads = switch,true,tag=过滤开屏广告,desc=默认开启；需开启 MitM 并安装和信任 Loon 证书，重新打开 B 站后生效；仅过滤已识别开屏投放，本机广告缓存可能仍显示
+remove_feed_ads = switch,true,tag=过滤首页广告,desc=默认开启；需开启 MitM 并信任证书，刷新首页以加载过滤结果；移除已识别广告卡片和横幅广告，普通视频保留；部分新版接口暂未覆盖
+hide_live = switch,false,tag=隐藏直播推荐,desc=默认关闭；开启后刷新首页，隐藏可识别的直播推荐卡片；直播入口和播放不受影响
+hide_game = switch,false,tag=隐藏游戏推广,desc=默认关闭；开启后刷新首页，隐藏游戏推荐卡片；重新打开 B 站可加载导航中的游戏中心隐藏结果
+hide_member_shop = switch,false,tag=隐藏会员购入口,desc=默认关闭；开启后重新打开 B 站，隐藏导航中的会员购入口；不改变会员权益
+hide_publish = switch,false,tag=隐藏发布入口,desc=默认关闭；开启后重新打开 B 站，隐藏导航中的发布入口
+blocked_uids = input,"",tag=UP 主 UID 屏蔽名单,desc=填写数字 UID，多个用空格或逗号分隔，例如 12345 67890；保存后刷新首页，仅过滤能识别 UP 主 UID 的卡片；留空停用
+blocked_keywords = input,"",tag=标题关键词屏蔽,desc=填写要屏蔽的标题关键词，多个用逗号分隔，例如 抽奖，带货；保存后刷新首页，按标题包含关键词过滤，英文不区分大小写；留空停用
+log_enabled = switch,false,tag=开发日志,desc=默认关闭；开启后打开 B 站并刷新首页，出现提醒后点击通知打开日志页；每分钟也会检查，开关本身不会立即弹窗；复现后关闭日志再导出，清空不关闭采集；不保存令牌或正文
 
 [Rule]
 DOMAIN,bilibili-logs.invalid,DIRECT
