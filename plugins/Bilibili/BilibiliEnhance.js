@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.9.0；更新时间：2026-10-07
+ * 版本：1.9.1；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -277,13 +277,44 @@
     const ordered = state.selected === null ? state.catalog : state.selected.map(id => state.catalog.find(tab => tab.id === id)).filter(Boolean).concat(state.catalog.filter(tab => !state.selected.includes(tab.id)));
     const rows = ordered.map(tab => '<div class="tab-row"><label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
       ((state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label><div class="move-controls"><button type="button" data-move="up" aria-label="上移' + escapeHTML(tab.name) + '">↑</button><button type="button" data-move="down" aria-label="下移' + escapeHTML(tab.name) + '">↓</button></div></div>').join('');
+    const selectedTabs = ordered.filter(tab => state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id));
+    const preview = selectedTabs.map((tab, index) => '<span class="preview-tab' + (index === 0 ? ' first' : '') + '">' + escapeHTML(tab.name) + '</span>').join('');
+    // 所有调整与预览只在页面内完成；点击保存才提交，不轮询或逐项请求。
+    const previewScript = `<script>(function(){
+      var list=document.getElementById("tab-list"),preview=document.getElementById("tab-preview"),status=document.getElementById("preview-status"),save=document.getElementById("tabs-save");
+      if(!list)return;
+      function update(){
+        var rows=list.children,names=[];
+        for(var i=0;i<rows.length;i++){
+          rows[i].querySelector("[data-move=up]").disabled=i===0;
+          rows[i].querySelector("[data-move=down]").disabled=i===rows.length-1;
+          var input=rows[i].querySelector("input[name=tab]");
+          if(input&&input.checked)names.push(rows[i].querySelector("label span").textContent);
+        }
+        if(!preview)return;
+        preview.textContent="";
+        names.forEach(function(name,index){var item=document.createElement("span");item.className="preview-tab"+(index===0?" first":"");item.textContent=name;preview.appendChild(item);});
+        if(!names.length){var empty=document.createElement("span");empty.className="preview-empty";empty.textContent="请至少选择一个标签";preview.appendChild(empty);}
+        status.textContent="已选 "+names.length+" 项 · 按此顺序显示";
+        save.disabled=names.length===0;
+      }
+      list.addEventListener("click",function(event){
+        var button=event.target.closest("button[data-move]");if(!button||!list.contains(button))return;
+        var row=button.closest(".tab-row"),next=button.dataset.move==="up"?row.previousElementSibling:row.nextElementSibling;
+        if(!next)return;
+        if(button.dataset.move==="up")list.insertBefore(row,next);else list.insertBefore(next,row);
+        update();button.focus();
+      });
+      list.addEventListener("change",update);update();
+    })();</script>`;
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
-      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}.tab-row{display:flex;align-items:center;border-bottom:1px solid #8884}.tab-row label{flex:1;min-width:0;border:0;align-items:center}.tab-row span{overflow-wrap:anywhere}.move-controls{display:flex;gap:6px}.move-controls button{width:40px;height:40px;padding:0;margin:0;background:#fb729922;color:inherit}.move-controls button:disabled{opacity:.25}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
+      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}.tab-row{display:flex;align-items:center;border-bottom:1px solid #8884}.tab-row label{flex:1;min-width:0;border:0;align-items:center}.tab-row span{overflow-wrap:anywhere}.move-controls{display:flex;gap:6px}.move-controls button{width:40px;height:40px;padding:0;margin:0;background:#fb729922;color:inherit}.move-controls button:disabled{opacity:.25}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
       (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
+      '<section class="preview-card" aria-label="首页标签预览"><div class="preview-title"><strong>首页标签预览</strong><small id="preview-status" aria-live="polite">已选 ' + selectedTabs.length + ' 项 · 按此顺序显示</small></div><div id="tab-preview">' + (preview || '<span class="preview-empty">请至少选择一个标签</span>') + '</div></section>' +
       '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>点击上方按钮，从 B 站客户端分区接口获取未启用的分区与服务。无需登录，也不使用账号令牌。重新打开 B 站还能收集当前首页标签，再刷新本页。</p>' +
-      '<p>勾选要在首页显示的标签，至少选择一项；保存后重新打开 B 站。用每项右侧的 ↑／↓ 调整位置，勾选项按页面从上到下的顺序显示在客户端；调整后点击“保存选择与排序”。当前可选 ' + state.catalog.length + ' 项，其中分区列表 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项。新获取的项默认不勾选。</p>' +
-      (rows ? '<form method="post" action="/tabs/save"><div id="tab-list">' + rows + '</div><button type="submit">保存选择与排序</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
-      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><p>设置仅保存在本机，不依赖开发日志开关。关闭日志不会清除标签选择或排序。</p></main><script>(function(){var list=document.getElementById("tab-list");if(!list)return;function update(){var rows=list.children;for(var i=0;i<rows.length;i++){rows[i].querySelector("[data-move=up]").disabled=i===0;rows[i].querySelector("[data-move=down]").disabled=i===rows.length-1;}}list.addEventListener("click",function(event){var button=event.target.closest("button[data-move]");if(!button||!list.contains(button))return;var row=button.closest(".tab-row");var next=button.dataset.move==="up"?row.previousElementSibling:row.nextElementSibling;if(!next)return;if(button.dataset.move==="up")list.insertBefore(row,next);else list.insertBefore(next,row);update();button.focus();});update();})();</script></body></html>';
+      '<p>勾选要在首页显示的标签，至少选择一项；保存后重新打开 B 站。用每项右侧的 ↑／↓ 调整位置，勾选项按页面从上到下的顺序显示在客户端；勾选和移动后，上方预览立即同步，可左右滑动查看；预览突出第一项，仅示意排列，不改变客户端默认选中项。调整后点击“保存选择与排序”。当前可选 ' + state.catalog.length + ' 项，其中分区列表 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项。新获取的项默认不勾选。</p>' +
+      (rows ? '<form method="post" action="/tabs/save"><div id="tab-list">' + rows + '</div><button id="tabs-save" type="submit">保存选择与排序</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
+      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><p>设置仅保存在本机，不依赖开发日志开关。关闭日志不会清除标签选择或排序。保存后无需再运行管理按钮或获取全部标签；只在客户端请求首页标签时应用配置，维持自定义效果需保持插件启用。</p></main>' + previewScript + '</body></html>';
   }
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function options(raw) {
@@ -684,14 +715,17 @@
     if (route === 'tab') {
       if (Array.isArray(data.tab)) {
         const state = readTabs();
+        let catalogChanged = false;
         for (const item of data.tab) {
           const tab = tabInfo(item);
           if (!tab) continue;
           const existing = state.catalog.find(entry => entry.id === tab.id);
-          if (existing) { existing.name = tab.name; if (existing.source === 'region') existing.enabled = true; }
-          else if (state.catalog.length < 100) state.catalog.push(tab);
+          if (existing) {
+            if (existing.name !== tab.name) { existing.name = tab.name; catalogChanged = true; }
+            if (existing.source === 'region' && existing.enabled !== true) { existing.enabled = true; catalogChanged = true; }
+          } else if (state.catalog.length < 100) { state.catalog.push(tab); catalogChanged = true; }
         }
-        saveTabs(state);
+        if (catalogChanged) saveTabs(state);
         const additions = state.selected === null ? [] : state.catalog.filter(tab => tab.source === 'region' && state.selected.includes(tab.id) &&
           !data.tab.some(item => { const info = tabInfo(item); return info && info.id === tab.id; }));
         // 已选的隐藏分区可由受限公开路由新增；没有任何可用选项时保留原导航。

@@ -135,24 +135,49 @@ test('saved selection order controls existing and hidden client tabs and survive
  h.page('/tabs/reset','POST');assert.deepEqual(h.home(home),{});
 });
 
-test('moving a tab in the management page changes form order and keeps checkbox state',()=>{
+test('live preview follows checkbox and order changes locally, safely displaying names and preventing empty saves',()=>{
  const h=harness(frame([]));h.home([...current,{id:41,tab_id:'热门tab',name:'热门',pos:2}]);
  const html=h.page('/tabs').body;
+ assert.match(html,/首页标签预览/);assert.match(html,/class="preview-tab first">推荐/);
  const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
- const rows=[];let handler;
- function row(id){const r={id,checked:true,up:{dataset:{move:'up'},focus(){}},down:{dataset:{move:'down'},focus(){}}};
+ assert.doesNotMatch(script,/fetch\(|XMLHttpRequest|setInterval|setTimeout|innerHTML/);
+ const rows=[],handlers={};
+ function row(id){const r={id,input:{checked:true},name:{textContent:id},up:{dataset:{move:'up'},focus(){}},down:{dataset:{move:'down'},focus(){}}};
   Object.defineProperties(r,{previousElementSibling:{get:()=>rows[rows.indexOf(r)-1]},nextElementSibling:{get:()=>rows[rows.indexOf(r)+1]}});
-  r.querySelector=s=>s.includes('up')?r.up:r.down;
+  r.querySelector=s=>s.includes('up')?r.up:s.includes('down')?r.down:s.includes('input')?r.input:r.name;
   for(const b of [r.up,r.down])b.closest=s=>s.includes('tab-row')?r:b;
   return r;
  }
- rows.push(row('recommend'),row('popular'));
- const list={children:rows,contains:b=>rows.some(r=>r.up===b||r.down===b),addEventListener:(name,fn)=>{handler=fn;},
+ rows.push(row('recommend'),row('<img src=x onerror=alert(1)>'));
+ const preview={children:[],appendChild(item){this.children.push(item);}};
+ Object.defineProperty(preview,'textContent',{set(){this.children=[];}});
+ const status={},save={};
+ const list={children:rows,contains:b=>rows.some(r=>r.up===b||r.down===b),addEventListener:(name,fn)=>{handlers[name]=fn;},
  insertBefore:(a,b)=>{rows.splice(rows.indexOf(a),1);rows.splice(rows.indexOf(b),0,a);}};
- vm.runInNewContext(script,{document:{getElementById:id=>id==='tab-list'?list:null}});
+ vm.runInNewContext(script,{document:{getElementById:id=>({'tab-list':list,'tab-preview':preview,'preview-status':status,'tabs-save':save})[id],createElement:()=>({})}});
+ assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));
  assert.equal(rows[0].up.disabled,true);assert.equal(rows[1].down.disabled,true);
- handler({target:rows[1].up});assert.deepEqual(rows.map(r=>r.id),['popular','recommend']);
+ handlers.click({target:rows[1].up});assert.deepEqual(rows.map(r=>r.id),['<img src=x onerror=alert(1)>','recommend']);
+ assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));
+ assert.equal(preview.children[0].className,'preview-tab first');
  assert.equal(rows[0].up.disabled,true);assert.equal(rows[1].down.disabled,true);
- handler({target:rows[0].down});assert.deepEqual(rows.map(r=>r.id),['recommend','popular']);
- assert.ok(rows.every(r=>r.checked));
+ handlers.click({target:rows[0].down});assert.equal(rows[0].id,'recommend');
+ rows[0].input.checked=false;handlers.change();assert.deepEqual(preview.children.map(x=>x.textContent),[rows[1].id]);
+ rows[1].input.checked=false;handlers.change();assert.equal(save.disabled,true);assert.match(preview.children[0].textContent,/至少选择/);
+ rows[0].input.checked=true;handlers.change();assert.equal(save.disabled,false);assert.match(status.textContent,/已选 1 项/);
+});
+
+test('unchanged homepage catalogs avoid persistent writes and saved settings survive independent script executions',()=>{
+ const h=harness(frame([]));h.home(current);
+ const first=h.writes();h.home(current);h.home(current);assert.equal(h.writes(),first);
+ const popular={id:41,tab_id:'热门tab',name:'热门',pos:2};h.home([...current,popular]);
+ assert.equal(h.writes(),first+1);
+ const ids=['tab:热门tab','tab:推荐tab'];h.page('/tabs/save','POST',ids.map(id=>'tab='+encodeURIComponent(id)).join('&'));
+ const saved=h.writes();const response=h.home([...current,popular]);h.home([...current,popular]);
+ assert.equal(h.writes(),saved);assert.deepEqual(JSON.parse(h.store.get(KEY)).selected,ids);
+ assert.deepEqual(JSON.parse(response.body).data.tab.map(x=>x.name),['热门','推荐']);
+ assert.match(h.page('/tabs').body,/class="preview-tab first">热门/);
+ assert.equal(h.writes(),saved);assert.equal(h.requests.length,0);
+ h.home([...current,{...popular,name:'新热门'}]);assert.equal(h.writes(),saved+1);
+ assert.deepEqual(JSON.parse(h.store.get(KEY)).selected,ids);
 });
