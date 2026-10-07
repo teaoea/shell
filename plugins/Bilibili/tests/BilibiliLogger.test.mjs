@@ -352,14 +352,14 @@ test('export identifies exporter and actual producer versions without relabeling
  const h=harness(JSON.stringify({events:[old],evicted:0}));
  h.run({$request:{url:'https://app.bilibili.com/x/v3/splash/config?token='+secret,method:'POST'},$response:{status:200}});
  const exported=h.page('/export').response.body.trim().split('\n').map(JSON.parse);
- assert.equal(exported[0].script_version,'1.11.7');
+ assert.equal(exported[0].script_version,'1.11.8');
  assert.equal(exported[1].script_version,undefined);
- assert.equal(exported[2].script_version,'1.11.7');
+ assert.equal(exported[2].script_version,'1.11.8');
  assert.equal(exported[2].route_hint,'/x/v3/splash/config');
  assert.equal(exported[2].host,'app.bilibili.com');
  assert.ok(!JSON.stringify(exported).includes(secret));
  const scripts=plugin.split('\n').filter(line=>line.includes('script-path='));
- assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.7,/);
+ assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.8,/);
 });
 
 test('impression request and response logging never reads bodies or secrets and has no reject rule',()=>{
@@ -374,8 +374,26 @@ test('impression request and response logging never reads bodies or secrets and 
  assert.ok(!h.page('/export').response.body.includes(secret));
  assert.doesNotMatch(plugin,/DOMAIN,impression\.biligame\.com,REJECT/);
  for(const kind of ['http-request','http-response']){
-  const line=plugin.split('\n').find(line=>line.startsWith(kind+' ^https://impression'));
+  const line=plugin.split('\n').find(line=>line.startsWith(kind+' ') && line.includes('tag=Bilibili 游戏服务'));
   assert.ok(line);assert.match(line,/requires-body=false/);assert.match(line,/enable=\{log_enabled\}/);
   const re=new RegExp(line.split(' ')[1]);assert.ok(re.test(request.url));assert.ok(!re.test(request.url.replace('impression.biligame.com','impression.biligame.com.evil.test')));
+ }
+});
+
+test('additional biligame diagnostic hosts record both phases with exact host boundaries',()=>{
+ for(const host of ['static.biligame.com','game-data-api.biligame.com']){
+  const h=harness();const request={url:'https://'+host+'/api/'+secret+'/12345?token='+secret,method:'GET'};
+  const response={status:200};Object.defineProperty(response,'body',{get(){throw Error('body must not be read');}});
+  assert.deepEqual(h.run({$request:request,$response:undefined}),{});
+  assert.deepEqual(h.run({$request:request,$response:response}),{});
+  const events=JSON.parse(h.stored()).events;
+  assert.deepEqual(events.map(e=>e.phase),['request','response']);
+  for(const e of events){assert.equal(e.host,host);assert.equal(e.route_hint,'/api/{other}/{other}');}
+  assert.ok(!h.page('/export').response.body.includes(secret));
+  for(const kind of ['http-request','http-response']){
+   const line=plugin.split('\n').find(line=>line.startsWith(kind+' ')&&line.includes('tag=Bilibili 游戏服务'));
+   const re=new RegExp(line.split(' ')[1]);assert.ok(re.test(request.url));assert.ok(!re.test(request.url.replace(host,host+'.evil.test')));
+  }
+  const disabled=harness();disabled.run({$request:request,$response:response,$argument:{log_enabled:false}});assert.equal(disabled.writes(),0);
  }
 });
