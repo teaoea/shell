@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.11.10；更新时间：2026-10-08
+ * 版本：1.11.11；更新时间：2026-10-08
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -476,7 +476,7 @@
       }
     };
   }
-  const SCRIPT_VERSION = '1.11.10';
+  const SCRIPT_VERSION = '1.11.11';
   const LOG_KEY = 'bilibili.enhance.logs.v1';
   const NOTICE_KEY = 'bilibili.enhance.notice.v1';
   const LIMIT = 300;
@@ -512,11 +512,6 @@
     if (typeof path !== 'string' || path.length > 1024 || !path.startsWith('/')) return '/{other}';
     return '/' + path.split('/').slice(1, 9).map(part => hintSegments.has(part) ? part : '{other}').join('/');
   }
-  function gameLogHost(value) {
-    if (typeof value !== 'string' || value.length > 253 || !/^(?:(?:\{other\}|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.)*biligame\.com$/.test(value)) return null;
-    const labels = new Set(['impression', 'static', 'game-data-api', 'www', 'api', 'passport', 'app', 'game', 'cdn', 'data', 'ad-bili-data']);
-    return value.split('.').slice(0, -2).map(label => labels.has(label) ? label : '{other}').concat(['biligame', 'com']).join('.');
-  }
   function safeEvent(event) {
     if (!object(event)) return null;
     const endpoints = Object.keys(paths).concat(rpcPaths, ['other_api']);
@@ -532,8 +527,7 @@
     if (['request', 'response'].includes(event.phase)) result.phase = event.phase;
     if (typeof event.script_version === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(event.script_version)) result.script_version = event.script_version;
     if (event.endpoint === 'other_api' && typeof event.route_hint === 'string') result.route_hint = routeHint(event.route_hint);
-    if (['app.bilibili.com', 'app.biliapi.net', 'data.bilibili.com', 'grpc.biliapi.net'].includes(event.host)) result.host = event.host;
-    else if (gameLogHost(event.host)) result.host = gameLogHost(event.host);
+    if (['app.bilibili.com', 'app.biliapi.net', 'data.bilibili.com', 'grpc.biliapi.net', 'impression.biligame.com', 'static.biligame.com', 'game-data-api.biligame.com'].includes(event.host)) result.host = event.host;
     // 不保存接口 message、原始字段名、字段值、标题、UID 或广告对象内容。
     for (const name of ['data_schema', 'item_schema']) {
       result[name] = {};
@@ -619,7 +613,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>未知接口只记固定白名单路径段，其他段隐藏；data.bilibili.com 与 biligame.com 主域及子域仅记元数据，未知子域标签隐藏。二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>未知接口只记固定白名单路径段，其他段隐藏；data.bilibili.com 与已登记的三个 biligame.com 子域仅记元数据。二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     const path = (local[1] || '/').split('?')[0];
@@ -772,7 +766,7 @@
         body_length: 0, before: 0, after: 0, removed: 0 };
       return finish(blankDefaultWords(), 'modified');
     }
-    const impressionMatch = /^https?:\/\/((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*biligame\.com)(?::443)?(\/[^?#]*)(?:\?[^#]*)?$/.exec(String(request.url || ''));
+    const impressionMatch = /^https?:\/\/((?:impression|static|game-data-api)\.biligame\.com)(?::443)?(\/[^?#]*)(?:\?[^#]*)?$/.exec(String(request.url || ''));
     if (impressionMatch) {
       syncLogging(config); notifyLogging(config);
       if (config.log_enabled) event = { time: new Date().toISOString(), endpoint: 'other_api',

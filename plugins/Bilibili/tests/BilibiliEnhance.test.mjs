@@ -266,7 +266,7 @@ test('Loon configuration passes every option and keeps optional filters disabled
     if (type === 'switch') assert.equal(value, 'false');
     else assert.equal(value, '""');
   }
-  assert.match(plugin, /hostname = app\.bilibili\.com,grpc\.biliapi\.net,app\.biliapi\.net,api\.bilibili\.com,data\.bilibili\.com,biligame\.com,\*\.biligame\.com\s*$/);
+  assert.match(plugin, /hostname = app\.bilibili\.com,grpc\.biliapi\.net,app\.biliapi\.net,api\.bilibili\.com,data\.bilibili\.com,impression\.biligame\.com,static\.biligame\.com,game-data-api\.biligame\.com\s*$/);
 });
 for (const path of ['/x/v2/account/mine', '/x/v2/account/mine/ipad']) {
   test('mine membership promotion is removed by default without altering account or services: ' + path, () => {

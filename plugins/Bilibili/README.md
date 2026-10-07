@@ -216,4 +216,5 @@ UID／标题黑名单：JSON 首页与 `/x/v2/feed/index/story` 推荐读取 `ar
 
 日志页面版本显示在“开发日志”标题旁边，每条记录仍保留实际处理版本。曝光主机记录在页面显示“请求发出／响应返回”，便于对照开屏时间。只有进入 HTTP 脚本处理的请求能够记录；Loon 请求列表中仅显示 IP:443 的未解密 TCP 连接不在本工具可观察范围，不能依据时间接近直接认定该 IP 是广告素材源。
 
-游戏服务日志范围已扩展为 `biligame.com` 主域及全部子域（HTTP／HTTPS），MitM 同时登记主域和 `*.biligame.com`。请求和响应分别记录，默认不拦截。已知子域名称保留；未知子域标签统一显示 `{other}`，避免路径或子域中的用户标识进入存储。仅开发日志开启时生效。
+
+游戏服务日志仅登记 `impression.biligame.com`（此前已接入）、`static.biligame.com`、`game-data-api.biligame.com` 三个具体主机；不包含 `biligame.com` 主域或其他子域。MitM 使用相同的具体主机范围，无通配符。
