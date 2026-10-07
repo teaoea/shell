@@ -8,8 +8,8 @@
 [Argument]
 remove_splash_ads = switch,true,tag=过滤开屏广告,desc=默认开启；需开启 MitM 并安装和信任 Loon 证书，重新打开 B 站后生效；仅过滤已识别开屏投放，本机广告缓存可能仍显示
 remove_feed_ads = switch,true,tag=过滤首页广告,desc=默认开启；需开启 MitM 并信任证书，刷新首页以加载过滤结果；移除已识别广告卡片和横幅广告，普通视频保留；部分新版接口暂未覆盖
-hide_live = switch,false,tag=隐藏直播推荐,desc=默认关闭；开启后刷新首页，隐藏已识别的首页直播推荐；刷视频场景由“屏蔽刷视频直播”独立控制；手动直播入口保留
-hide_video_live = switch,false,tag=屏蔽刷视频直播,desc=默认关闭；开启后过滤连续刷视频及视频页推荐中的已识别直播卡片，避免从推荐卡自动进入直播间；保存后重新打开 B 站并刷新推荐；手动直播入口保留
+hide_live = switch,false,tag=隐藏直播推荐,desc=默认关闭；开启后刷新首页，隐藏已识别的首页直播推荐；刷视频场景由“屏蔽视频流直播推荐”独立控制；手动直播入口保留
+hide_video_live = switch,false,tag=屏蔽视频流直播推荐,desc=默认关闭；开启后过滤连续刷视频及视频页推荐中的已识别直播卡片，避免从推荐卡自动进入直播间；保存后重新打开 B 站并刷新推荐；手动直播入口保留
 hide_game = switch,false,tag=隐藏游戏推广,desc=默认关闭；开启后刷新首页，隐藏游戏推荐卡片；重新打开 B 站可加载导航中的游戏中心隐藏结果
 hide_member_shop = switch,false,tag=隐藏会员购入口,desc=默认关闭；开启后隐藏导航中的会员购入口，同时移除推荐流中可识别的会员购商品卡片；保存后刷新首页并重新打开 B 站；不改变会员权益
 hide_publish = switch,false,tag=隐藏发布入口,desc=默认关闭；开启后重新打开 B 站，隐藏导航中的发布入口
