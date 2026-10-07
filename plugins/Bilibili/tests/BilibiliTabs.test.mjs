@@ -135,36 +135,51 @@ test('saved selection order controls existing and hidden client tabs and survive
  h.page('/tabs/reset','POST');assert.deepEqual(h.home(home),{});
 });
 
-test('live preview follows checkbox and order changes locally, safely displaying names and preventing empty saves',()=>{
+test('compact touch drag updates preview, cancels safely and keeps selection without network requests',()=>{
  const h=harness(frame([]));h.home([...current,{id:41,tab_id:'热门tab',name:'热门',pos:2}]);
  const html=h.page('/tabs').body;
  assert.match(html,/首页标签预览/);assert.match(html,/class="preview-tab first">推荐/);
+ assert.ok(html.indexOf('完成后保存并重新打开 B 站。</p>')<html.indexOf('<section class="preview-card"'));
+ assert.ok(html.indexOf('<section class="preview-card"')<html.indexOf('<div id="tab-list"'));
+ assert.match(html,/grid-template-columns:repeat\(2/);assert.match(html,/touch-action:none/);assert.doesNotMatch(html,/data-move/);
  const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
  assert.doesNotMatch(script,/fetch\(|XMLHttpRequest|setInterval|setTimeout|innerHTML/);
- const rows=[],handlers={};
- function row(id){const r={id,input:{checked:true},name:{textContent:id},up:{dataset:{move:'up'},focus(){}},down:{dataset:{move:'down'},focus(){}}};
-  Object.defineProperties(r,{previousElementSibling:{get:()=>rows[rows.indexOf(r)-1]},nextElementSibling:{get:()=>rows[rows.indexOf(r)+1]}});
-  r.querySelector=s=>s.includes('up')?r.up:s.includes('down')?r.down:s.includes('input')?r.input:r.name;
-  for(const b of [r.up,r.down])b.closest=s=>s.includes('tab-row')?r:b;
+ const rows=[],handlers={},frames=new Map();let hit=null,frameId=0,scrolls=0;const captures=new Set();
+ function row(id){const r={id,input:{checked:true},name:{textContent:id},classList:{add(){},remove(){}}};
+  r.handle={pressed:'false',focus(){},setAttribute(k,v){this.pressed=v;},closest:s=>s.includes('drag-handle')?r.handle:r};
+  r.closest=()=>r;
+  Object.defineProperties(r,{previousElementSibling:{get:()=>rows[rows.indexOf(r)-1]},nextElementSibling:{get:()=>rows[rows.indexOf(r)+1]||null}});
+  r.querySelector=s=>s.includes('input')?r.input:r.name;
   return r;
  }
- rows.push(row('recommend'),row('<img src=x onerror=alert(1)>'));
+ rows.push(row('recommend'),row('<img src=x onerror=alert(1)>'),row('third'));
+ const original=[...rows];
  const preview={children:[],appendChild(item){this.children.push(item);}};
  Object.defineProperty(preview,'textContent',{set(){this.children=[];}});
  const status={},save={};
- const list={children:rows,contains:b=>rows.some(r=>r.up===b||r.down===b),addEventListener:(name,fn)=>{handlers[name]=fn;},
- insertBefore:(a,b)=>{rows.splice(rows.indexOf(a),1);rows.splice(rows.indexOf(b),0,a);}};
- vm.runInNewContext(script,{document:{getElementById:id=>({'tab-list':list,'tab-preview':preview,'preview-status':status,'tabs-save':save})[id],createElement:()=>({})}});
- assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));
- assert.equal(rows[0].up.disabled,true);assert.equal(rows[1].down.disabled,true);
- handlers.click({target:rows[1].up});assert.deepEqual(rows.map(r=>r.id),['<img src=x onerror=alert(1)>','recommend']);
- assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));
- assert.equal(preview.children[0].className,'preview-tab first');
- assert.equal(rows[0].up.disabled,true);assert.equal(rows[1].down.disabled,true);
- handlers.click({target:rows[0].down});assert.equal(rows[0].id,'recommend');
- rows[0].input.checked=false;handlers.change();assert.deepEqual(preview.children.map(x=>x.textContent),[rows[1].id]);
- rows[1].input.checked=false;handlers.change();assert.equal(save.disabled,true);assert.match(preview.children[0].textContent,/至少选择/);
+ const list={children:rows,contains:b=>rows.includes(b)||rows.some(r=>r.handle===b),addEventListener:(name,fn)=>{handlers[name]=fn;},
+ setPointerCapture:id=>captures.add(id),hasPointerCapture:id=>captures.has(id),releasePointerCapture:id=>captures.delete(id),
+ appendChild:a=>{rows.splice(rows.indexOf(a),1);rows.push(a);},
+ insertBefore:(a,b)=>{rows.splice(rows.indexOf(a),1);rows.splice(b?rows.indexOf(b):rows.length,0,a);}};
+ vm.runInNewContext(script,{document:{getElementById:id=>({'tab-list':list,'tab-preview':preview,'preview-status':status,'tabs-save':save})[id],createElement:()=>({}),elementFromPoint:()=>hit},
+ window:{innerHeight:800,scrollBy(){scrolls++;}},requestAnimationFrame:fn=>{frames.set(++frameId,fn);return frameId;},cancelAnimationFrame:id=>frames.delete(id)});
+ const event=(r,id=1)=>({target:r.handle,pointerId:id,button:0,isPrimary:true,clientX:40,clientY:300,preventDefault(){}});
+ assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));assert.equal(frames.size,0);
+ handlers.pointerdown(event(original[0]));assert.equal(captures.has(1),true);assert.equal(frames.size,1);
+ hit=original[2];handlers.pointermove(event(original[0]));assert.deepEqual(rows.map(r=>r.id),[original[1].id,'third','recommend']);
+ assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));assert.equal(preview.children[0].className,'preview-tab first');
+ handlers.pointermove({...event(original[0]),clientY:799});const tick=[...frames.values()][0];tick();assert.equal(scrolls,1);
+ handlers.pointerup(event(original[0]));assert.equal(captures.size,0);assert.equal(original[0].handle.pressed,'false');
+ const after=[...rows];handlers.pointerdown(event(original[0]));hit=original[1];handlers.pointermove(event(original[0]));handlers.pointercancel(event(original[0]));assert.deepEqual(rows,after);
+ handlers.pointerdown(event(original[0]));hit=original[1];handlers.pointermove(event(original[0]));handlers.keydown({...event(original[0]),key:'Escape'});assert.deepEqual(rows,after);
+ handlers.keydown({...event(original[0]),key:'ArrowLeft'});assert.deepEqual(rows.map(r=>r.id),[original[1].id,'recommend','third']);
+ handlers.keydown({...event(original[0]),key:'ArrowRight'});assert.deepEqual(rows,after);
+ rows[0].input.checked=false;handlers.change();assert.equal(preview.children.length,2);
+ rows.forEach(r=>r.input.checked=false);handlers.change();assert.equal(save.disabled,true);assert.match(preview.children[0].textContent,/至少选择/);
  rows[0].input.checked=true;handlers.change();assert.equal(save.disabled,false);assert.match(status.textContent,/已选 1 项/);
+ handlers.pointerdown({...event(original[0]),isPrimary:false});assert.equal(captures.size,0);
+ handlers.pointerdown({...event(original[0]),button:2});assert.equal(captures.size,0);
+ assert.equal(h.requests.length,0);
 });
 
 test('unchanged homepage catalogs avoid persistent writes and saved settings survive independent script executions',()=>{

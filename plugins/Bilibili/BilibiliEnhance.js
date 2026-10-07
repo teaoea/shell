@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.9.1；更新时间：2026-10-07
+ * 版本：1.9.2；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -276,7 +276,7 @@
     const state = readTabs();
     const ordered = state.selected === null ? state.catalog : state.selected.map(id => state.catalog.find(tab => tab.id === id)).filter(Boolean).concat(state.catalog.filter(tab => !state.selected.includes(tab.id)));
     const rows = ordered.map(tab => '<div class="tab-row"><label><input type="checkbox" name="tab" value="' + escapeHTML(tab.id) + '"' +
-      ((state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label><div class="move-controls"><button type="button" data-move="up" aria-label="上移' + escapeHTML(tab.name) + '">↑</button><button type="button" data-move="down" aria-label="下移' + escapeHTML(tab.name) + '">↓</button></div></div>').join('');
+      ((state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id)) ? ' checked' : '') + '><span>' + escapeHTML(tab.name) + '</span></label><button type="button" class="drag-handle" aria-label="拖动排序：' + escapeHTML(tab.name) + '" title="拖动排序；键盘方向键也可移动">≡</button></div>').join('');
     const selectedTabs = ordered.filter(tab => state.selected === null ? tab.source !== 'region' || tab.enabled === true : state.selected.includes(tab.id));
     const preview = selectedTabs.map((tab, index) => '<span class="preview-tab' + (index === 0 ? ' first' : '') + '">' + escapeHTML(tab.name) + '</span>').join('');
     // 所有调整与预览只在页面内完成；点击保存才提交，不轮询或逐项请求。
@@ -286,8 +286,6 @@
       function update(){
         var rows=list.children,names=[];
         for(var i=0;i<rows.length;i++){
-          rows[i].querySelector("[data-move=up]").disabled=i===0;
-          rows[i].querySelector("[data-move=down]").disabled=i===rows.length-1;
           var input=rows[i].querySelector("input[name=tab]");
           if(input&&input.checked)names.push(rows[i].querySelector("label span").textContent);
         }
@@ -298,23 +296,60 @@
         status.textContent="已选 "+names.length+" 项 · 按此顺序显示";
         save.disabled=names.length===0;
       }
-      list.addEventListener("click",function(event){
-        var button=event.target.closest("button[data-move]");if(!button||!list.contains(button))return;
-        var row=button.closest(".tab-row"),next=button.dataset.move==="up"?row.previousElementSibling:row.nextElementSibling;
-        if(!next)return;
-        if(button.dataset.move==="up")list.insertBefore(row,next);else list.insertBefore(next,row);
-        update();button.focus();
+      var drag=null,animation=0;
+      function place(x,y){
+        var target=document.elementFromPoint(x,y),row=target&&target.closest(".tab-row");
+        if(!row||!list.contains(row)||row===drag.row)return;
+        var rows=Array.from(list.children),down=rows.indexOf(drag.row)<rows.indexOf(row);
+        list.insertBefore(drag.row,down?row.nextElementSibling:row);update();
+      }
+      function scroll(){
+        if(!drag)return;
+        var edge=64,height=window.innerHeight,delta=drag.y<edge?-12:drag.y>height-edge?12:0;
+        if(delta){window.scrollBy(0,delta);place(drag.x,drag.y);}
+        animation=requestAnimationFrame(scroll);
+      }
+      function finish(cancel){
+        if(!drag)return;
+        var ended=drag;drag=null;cancelAnimationFrame(animation);
+        if(cancel)ended.order.forEach(function(row){list.appendChild(row);});
+        ended.row.classList.remove("dragging");ended.handle.setAttribute("aria-pressed","false");
+        if(list.hasPointerCapture(ended.id))list.releasePointerCapture(ended.id);
+        update();ended.handle.focus({preventScroll:true});
+      }
+      list.addEventListener("pointerdown",function(event){
+        var handle=event.target.closest(".drag-handle");
+        if(!handle||!list.contains(handle)||drag||event.isPrimary===false||event.button!==0)return;
+        event.preventDefault();
+        drag={row:handle.closest(".tab-row"),handle:handle,id:event.pointerId,x:event.clientX,y:event.clientY,order:Array.from(list.children)};
+        list.setPointerCapture(event.pointerId);drag.row.classList.add("dragging");handle.setAttribute("aria-pressed","true");
+        animation=requestAnimationFrame(scroll);
+      });
+      list.addEventListener("pointermove",function(event){
+        if(!drag||event.pointerId!==drag.id)return;
+        event.preventDefault();drag.x=event.clientX;drag.y=event.clientY;place(drag.x,drag.y);
+      });
+      list.addEventListener("pointerup",function(event){if(drag&&event.pointerId===drag.id)finish(false);});
+      list.addEventListener("pointercancel",function(event){if(drag&&event.pointerId===drag.id)finish(true);});
+      list.addEventListener("lostpointercapture",function(){if(drag)finish(true);});
+      list.addEventListener("keydown",function(event){
+        if(event.key==="Escape"&&drag){event.preventDefault();finish(true);return;}
+        var handle=event.target.closest(".drag-handle");if(!handle||!list.contains(handle)||drag)return;
+        var row=handle.closest(".tab-row"),up=["ArrowUp","ArrowLeft"].includes(event.key),down=["ArrowDown","ArrowRight"].includes(event.key);
+        if(!up&&!down)return;event.preventDefault();var next=up?row.previousElementSibling:row.nextElementSibling;
+        if(next){list.insertBefore(row,up?next:next.nextElementSibling);update();handle.focus({preventScroll:true});}
       });
       list.addEventListener("change",update);update();
     })();</script>`;
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
-      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}.tab-row{display:flex;align-items:center;border-bottom:1px solid #8884}.tab-row label{flex:1;min-width:0;border:0;align-items:center}.tab-row span{overflow-wrap:anywhere}.move-controls{display:flex;gap:6px}.move-controls button{width:40px;height:40px;padding:0;margin:0;background:#fb729922;color:inherit}.move-controls button:disabled{opacity:.25}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
+      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}.catalog-count{font-size:13px;margin:8px 0}details{font-size:14px;margin-top:16px}summary{cursor:pointer}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}#tab-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tab-row{display:flex;align-items:center;min-width:0;min-height:44px;border:1px solid #8883;border-radius:10px;background:light-dark(#fff,#20222b)}.tab-row label{flex:1;min-width:0;gap:7px;padding:8px 0 8px 9px;border:0;align-items:center;font-size:14px;line-height:1.3}.tab-row input{flex:none;width:18px;height:18px;margin:0}.tab-row span{overflow-wrap:anywhere}.drag-handle{flex:none;width:32px;min-height:44px;padding:0;margin:0;background:transparent;color:#888;font-size:23px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.drag-handle:focus-visible{outline:2px solid #fb7299;outline-offset:-3px}.tab-row.dragging{border-color:#fb7299;background:#fb729922;box-shadow:0 0 0 2px #fb729933}.tab-row.dragging .drag-handle{cursor:grabbing;color:#fb7299}@media(min-width:540px){#tab-list{grid-template-columns:repeat(3,minmax(0,1fr))}}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
       (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
+      '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>获取未启用的客户端分区与服务；已获取后无需重复加载。</p>' +
+      '<p>勾选显示，按住 ≡ 拖动排序，预览同步更新。完成后保存并重新打开 B 站。</p>' +
       '<section class="preview-card" aria-label="首页标签预览"><div class="preview-title"><strong>首页标签预览</strong><small id="preview-status" aria-live="polite">已选 ' + selectedTabs.length + ' 项 · 按此顺序显示</small></div><div id="tab-preview">' + (preview || '<span class="preview-empty">请至少选择一个标签</span>') + '</div></section>' +
-      '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>点击上方按钮，从 B 站客户端分区接口获取未启用的分区与服务。无需登录，也不使用账号令牌。重新打开 B 站还能收集当前首页标签，再刷新本页。</p>' +
-      '<p>勾选要在首页显示的标签，至少选择一项；保存后重新打开 B 站。用每项右侧的 ↑／↓ 调整位置，勾选项按页面从上到下的顺序显示在客户端；勾选和移动后，上方预览立即同步，可左右滑动查看；预览突出第一项，仅示意排列，不改变客户端默认选中项。调整后点击“保存选择与排序”。当前可选 ' + state.catalog.length + ' 项，其中分区列表 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项。新获取的项默认不勾选。</p>' +
+      '<p class="catalog-count">可选 ' + state.catalog.length + ' 项 · 分区与服务 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项</p>' +
       (rows ? '<form method="post" action="/tabs/save"><div id="tab-list">' + rows + '</div><button id="tabs-save" type="submit">保存选择与排序</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
-      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><p>设置仅保存在本机，不依赖开发日志开关。关闭日志不会清除标签选择或排序。保存后无需再运行管理按钮或获取全部标签；只在客户端请求首页标签时应用配置，维持自定义效果需保持插件启用。</p></main>' + previewScript + '</body></html>';
+      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><details><summary>使用说明</summary><p>标签按从左到右、从上到下排序。至少保留一项，新获取项默认不勾选。按住右侧拖动柄移动，拖到屏幕边缘可滚动；手势取消会恢复本次拖动前的顺序。键盘方向键也可排序。预览突出第一项仅示意排列，不改变客户端默认选中项。</p><p>设置保存在本机，不依赖日志开关。保存后无需再运行管理按钮或获取全部标签；维持自定义效果需保持插件启用。</p></details></main>' + previewScript + '</body></html>';
   }
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function options(raw) {
