@@ -257,7 +257,7 @@ test('unmodified large numbers and malformed numeric JSON are passed through', (
 test('Loon configuration passes every option and keeps optional filters disabled', () => {
   const names = [...plugin.matchAll(/^([a-z_]+) = (switch|input),([^,]+),/gm)];
   const line = plugin.split('\n').find(line => line.startsWith('http-response '));
-  assert.equal(names.length, 11);
+  assert.equal(names.length, 10);
   for (const [, name, type, value] of names) {
     assert.ok(line.includes('{' + name + '}'));
     if (type === 'switch') assert.equal(value, name.startsWith('remove_') ? 'true' : 'false');
@@ -349,16 +349,18 @@ test('story live detection uses actual goto and live URI, without matching video
  const live=[{goto:'live'},{card_goto:'live_rcmd'},{uri:'bilibili://live/123?token=PRIVATE_TOKEN'},{uri:'https://live.bilibili.com/123'}];
  for(const path of ['/x/v2/feed/index','/x/v2/feed/index/story']){
   const data={items:[...keep,...live],config:{auto_play:1},future:42};
-  const option=path.endsWith('/story')?'hide_video_live':'hide_live';
+  const option='hide_live';
   assert.deepEqual(parsed(run(data,{[option]:true},path)),{...data,items:keep});
   assert.deepEqual(run(data,{[option]:false},path),{});
  }
 });
 
-test('homepage live filtering and story live filtering have independent switches',()=>{
+test('one live switch controls both homepage and story recommendations',()=>{
  const data={items:[{goto:'live'},{goto:'vertical_av',title:'普通视频'}]};
- assert.deepEqual(run(data,{hide_video_live:true},'/x/v2/feed/index'),{});
- assert.deepEqual(run(data,{hide_live:true},'/x/v2/feed/index/story'),{});
- assert.deepEqual(parsed(run(data,{hide_video_live:'true'},'/x/v2/feed/index/story')).items,[data.items[1]]);
- assert.deepEqual(run(data,{},'/x/v2/feed/index/story'),{});
+ for(const path of ['/x/v2/feed/index','/x/v2/feed/index/story']){
+  assert.deepEqual(parsed(run(data,{hide_live:true},path)).items,[data.items[1]]);
+  assert.deepEqual(parsed(run(data,{hide_live:'true'},path)).items,[data.items[1]]);
+  assert.deepEqual(run(data,{hide_live:false},path),{});
+  assert.deepEqual(run(data,{},path),{});
+ }
 });

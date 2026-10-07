@@ -13,8 +13,7 @@
 | 我的页会员推广过滤 | 默认移除，无开关 | 隐藏“开通会员／续订会员”推广卡片，保留会员身份、权益及其他页面入口 |
 | 搜索框默认词清空 | 默认处理，无开关 | 清空已识别默认推荐文字；保留手动输入、历史、联想和正常搜索结果 |
 | 首页标签自选、排序、预览与手动添加 | 保留全部 | 本地页面主动获取客户端完整分区列表，含未启用项；按勾选顺序编号排列，实时预览，也可填写名称与 URL 添加自定义项 |
-| 隐藏直播推荐 | 关闭 | 隐藏已识别的首页直播推荐 |
-| 屏蔽视频流直播推荐 | 关闭 | 过滤 Story 连刷及视频页推荐中的已识别直播卡片，避免从这些推荐卡自动进入直播间 |
+| 屏蔽直播内容 | 关闭 | 统一过滤首页、Story 连刷及视频页推荐中的已识别直播卡片，避免从这些推荐卡自动进入直播间 |
 | 隐藏游戏推广 | 关闭 | 移除首页游戏卡片、导航游戏中心 |
 | 隐藏会员购入口 | 关闭 | 隐藏导航中的会员购入口，同时移除推荐流中可识别的会员购商品卡片 |
 | 隐藏发布入口 | 关闭 | 隐藏导航中的发布入口 |
@@ -178,7 +177,7 @@ Loon 的 [通知接口](https://nsloon.app/docs/Script/script_api/#6-通知)支�
 
 ### 覆盖范围与排查
 
-**刷视频时隐藏直播：** 开启独立开关“屏蔽视频流直播推荐”（默认关闭；首页由“隐藏直播推荐”单独控制），更新插件配置与脚本后重新打开 B 站，刷新推荐。JSON 推荐按 `card_goto`／`goto` 的 `live`、`live_rcmd` 或明确的直播跳转 URI 识别；旧版视频推荐按 `Relate.goto`／直播 URI 识别，新版按 `RelateCard` 的 LIVE 类型或直播子卡识别。过滤直播推荐卡，避免该卡片触发“自动进入直播间”倒计时；不全局拦截直播域名，手动直播入口仍可用。不按标题中“直播”字样过滤普通视频。已缓存卡片及未覆盖接口仍可能显示，此设置不修改 App 内部计时器。JSON 字段参考[客户端推荐接口记录](https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/recommend.md)。
+**屏蔽直播内容：** 开启“屏蔽直播内容”（默认关闭，统一控制首页、连续刷视频及视频页推荐），更新插件配置与脚本后重新打开 B 站，刷新推荐。JSON 推荐按 `card_goto`／`goto` 的 `live`、`live_rcmd` 或明确的直播跳转 URI 识别；旧版视频推荐按 `Relate.goto`／直播 URI 识别，新版按 `RelateCard` 的 LIVE 类型或直播子卡识别。过滤直播推荐卡，避免该卡片触发“自动进入直播间”倒计时；不全局拦截直播域名，手动直播入口仍可用。不按标题中“直播”字样过滤普通视频。已缓存卡片及未覆盖接口仍可能显示，此设置不修改 App 内部计时器。JSON 字段参考[客户端推荐接口记录](https://github.com/pskdje/bilibili-API-collect/blob/main/docs/video/recommend.md)。
 
 UID／标题黑名单：JSON 首页与 `/x/v2/feed/index/story` 推荐读取 `args.up_id`、`owner.mid` 或 `author.mid` 及 `title`；旧版视频推荐读取 `Relate.author.mid` 和 `Relate.title`；新版读取 `RelateCard.basic_info.author.mid` 和 `basic_info.title`。64 位 UID 按十进制字符串精确匹配，避免取整误屏蔽相邻 UID。过滤推荐列表，不删除正在播放的视频主体；已缓存推荐需刷新后重新获取。协议字段参考[旧版视频协议](https://github.com/10miaomiao/bilimiao2/blob/b4f6edded1915e79499062e3ff0819c4deba93a2/bilimiao-grpc/proto/src/main/proto/bilibili/app/view/v1/view.proto)及[新版推荐协议包](https://www.npmjs.com/package/@biliverse/protobuf)。
 

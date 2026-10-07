@@ -182,7 +182,7 @@ test('UID and title policies work independently, normalize UID zeros and preserv
 
 test('added continuous routes are exact on all three hosts, excluded from metadata, and receive both arguments',()=>{
  const line=plugin.split('\n').find(line=>line.includes('tag=Bilibili 视频页广告过滤'));
- assert.match(line,/argument=\[\{hide_video_live\},\{blocked_uids\},\{blocked_keywords\},\{log_enabled\}\]/);
+ assert.match(line,/argument=\[\{hide_live\},\{blocked_uids\},\{blocked_keywords\},\{log_enabled\}\]/);
  const regex=new RegExp(line.split(' ')[1]),meta=new RegExp(plugin.split('\n').find(line=>line.includes('tag=Bilibili 开发元数据日志')).split(' ')[1]);
  for(const method of ['PlayerRelates','ContinuousPlay']){
   const path='/bilibili.app.view.v1.View/'+method;
@@ -204,7 +204,7 @@ test('hide live applies to old and unified related/continuous feeds without dist
   const live1=modern?[8,6,...msg(7,str(1,'room'))]:[...str(7,'live'),...str(3,'room')];
   const live2=modern?[...msg(7,str(1,'room'))]:str(9,'bilibili://live/123?token=PRIVATE_TOKEN');
   const meta=str(101,'pagination');const payload=[...meta,...wrap([regular,live1,live2].flatMap(c=>msg(number,c)))];
-  assert.deepEqual([...run(path,frame(payload),{argument:{hide_video_live:true}}).output.body],[...frame([...meta,...wrap(msg(number,regular))])]);
-  assert.deepEqual(JSON.parse(JSON.stringify(run(path,frame(payload),{argument:{hide_video_live:false}}).output)),{});
+  assert.deepEqual([...run(path,frame(payload),{argument:{hide_live:true}}).output.body],[...frame([...meta,...wrap(msg(number,regular))])]);
+  assert.deepEqual(JSON.parse(JSON.stringify(run(path,frame(payload),{argument:{hide_live:false}}).output)),{});
  }
 });
