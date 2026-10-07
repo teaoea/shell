@@ -1,13 +1,12 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.11.2；更新时间：2026-10-07
+ * 版本：1.11.3；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
   'use strict';
   const defaults = {
-    remove_splash_ads: true, remove_feed_ads: true,
     hide_live: false, hide_game: false, hide_member_shop: false,
     hide_publish: false, hide_search_discovery: false,
     blocked_uids: '', blocked_keywords: '', log_enabled: false
@@ -602,7 +601,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.11.2</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.11.3</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     const path = (local[1] || '/').split('?')[0];
@@ -828,13 +827,13 @@
         for (const key of ['list', 'top_list']) filter(data, key, () => false);
       }
     }
-    if (route === 'splash' && config.remove_splash_ads) {
+    if (route === 'splash') {
       // 仅清理开屏投放列表，保留启动配置和其他未知字段。
       for (const key of ['list', 'show', 'event_list']) if (Array.isArray(data[key]) && data[key].length) {
         data[key] = []; changed = true;
       }
     }
-    if (route === 'splash_brand' && config.remove_splash_ads) {
+    if (route === 'splash_brand') {
       // 品牌接口也提供普通插画；只移除有明确广告标记的列表项。
       for (const key of ['list', 'show', 'event_list']) filter(data, key, item => !ad(item));
     }
@@ -847,13 +846,13 @@
       };
       filter(data, 'items', item => {
         if (!object(item)) return true;
-        if (config.remove_feed_ads && ad(item)) return false;
+        if (ad(item)) return false;
         if (config.hide_live &&
           (liveDestination(item.card_goto, item.uri) || liveDestination(item.goto, null))) return false;
         if (config.hide_game && item.card_goto === 'game') return false;
         if (config.hide_member_shop && memberShop(item)) return false;
         if (policy.match(jsonUID(item), item.title)) return false;
-        if (config.remove_feed_ads && item.card_type === 'banner_v8' && item.card_goto === 'banner' && Array.isArray(item.banner_item)) {
+        if (item.card_type === 'banner_v8' && item.card_goto === 'banner' && Array.isArray(item.banner_item)) {
           filter(item, 'banner_item', banner => !object(banner) || banner.type !== 'ad');
           if (item.banner_item.length === 0) return false;
         }

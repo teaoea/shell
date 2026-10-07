@@ -113,8 +113,10 @@ test('empty ad-only banners removed; unknown banners preserved', () => {
   const items = [{ card_type: 'banner_v8', card_goto: 'banner', banner_item: [{ type: 'ad' }] }, unknown];
   assert.deepEqual(parsed(run({ items })).items, [unknown]);
 });
-test('ad switch disabled preserves exact response through no-op completion', () => {
-  assert.deepEqual(run({ items: [{ is_ad: 1 }] }, { remove_feed_ads: false }), {});
+test('ad filtering stays enabled even with obsolete disabled arguments', () => {
+  for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story']) {
+    assert.deepEqual(parsed(run({ items: [{ is_ad: 1 }, video()] }, { remove_feed_ads: false }, path)).items, [video()]);
+  }
 });
 test('live and game content remain by default and are independently optional', () => {
   const items = [video(), video({ card_goto: 'live' }), video({ card_goto: 'game' })];
@@ -140,14 +142,14 @@ test('Loon object, JSON string and query-string arguments produce same result', 
 });
 test('false strings are parsed as false, invalid booleans retain defaults', () => {
   const data = { items: [{ is_ad: 1 }, video({ card_goto: 'live' })] };
-  assert.deepEqual(run(data, 'remove_feed_ads=false&hide_live=false'), {});
+  assert.deepEqual(parsed(run(data, 'remove_feed_ads=false&hide_live=false')).items, [data.items[1]]);
   assert.deepEqual(parsed(run(data, 'remove_feed_ads=garbage&hide_live=garbage')).items, [data.items[1]]);
 });
 for (const path of ['/x/v2/splash/list', '/x/v2/splash/show']) {
   test('splash lists cleaned with startup configuration retained: ' + path, () => {
     const data = { list: [{ id: 1 }], show: [{ id: 2 }], min_interval: 100, unknown: true };
     assert.deepEqual(parsed(run(data, {}, path)), { ...data, list: [], show: [] });
-    assert.deepEqual(run(data, { remove_splash_ads: false }, path), {});
+    assert.deepEqual(run(data, { remove_splash_ads: false }, path), run(data, {}, path));
     assert.deepEqual(run({ show: { unexpected: true } }, {}, path), {});
   });
 }
@@ -257,10 +259,11 @@ test('unmodified large numbers and malformed numeric JSON are passed through', (
 test('Loon configuration passes every option and keeps optional filters disabled', () => {
   const names = [...plugin.matchAll(/^([a-z_]+) = (switch|input),([^,]+),/gm)];
   const line = plugin.split('\n').find(line => line.startsWith('http-response '));
-  assert.equal(names.length, 10);
+  assert.doesNotMatch(plugin, /remove_splash_ads|remove_feed_ads/);
+  assert.equal(names.length, 8);
   for (const [, name, type, value] of names) {
     assert.ok(line.includes('{' + name + '}'));
-    if (type === 'switch') assert.equal(value, name.startsWith('remove_') ? 'true' : 'false');
+    if (type === 'switch') assert.equal(value, 'false');
     else assert.equal(value, '""');
   }
   assert.match(plugin, /hostname = app\.bilibili\.com,grpc\.biliapi\.net,app\.biliapi\.net,api\.bilibili\.com,data\.bilibili\.com\s*$/);
@@ -315,7 +318,7 @@ test('splash event list is cleared along with display schedule, while unknown st
  const path='/x/v2/splash/event/list2';
  const data={event_list:[{id:1}],show:[{id:1}],pull_interval:1800,future:{keep:1}};
  assert.deepEqual(parsed(run(data,{},path)),{...data,event_list:[],show:[]});
- assert.deepEqual(run(data,{remove_splash_ads:false},path),{});
+ assert.deepEqual(run(data,{remove_splash_ads:false},path),run(data,{},path));
  assert.deepEqual(run({...data,event_list:[],show:[]},{},path),{});
  assert.deepEqual(run({event_list:{unknown:1},show:'unknown'},{},path),{});
  const filter=new RegExp(plugin.split('\n').find(l=>l.startsWith('http-response ')).split(' ')[1]);
@@ -331,7 +334,7 @@ test('brand splash filters explicit ads only and preserves ordinary illustration
  const illustration={thumb:'https://example.com/illustration.jpg',thumb_name:'普通插画'};
  const data={list:[illustration,{is_ad:1},{is_ad:'1'},{ad_info:{campaign:1}},null],show:[{is_ad:true},illustration],min_interval:100,future:{keep:true}};
  assert.deepEqual(parsed(run(data,{},path)),{...data,list:[illustration,null],show:[illustration]});
- assert.deepEqual(run(data,{remove_splash_ads:false},path),{});
+ assert.deepEqual(run(data,{remove_splash_ads:false},path),run(data,{},path));
  assert.deepEqual(run({list:[illustration],unknown:true},{},path),{});
  assert.deepEqual(run({list:{unknown:true}},{},path),{});
 });
