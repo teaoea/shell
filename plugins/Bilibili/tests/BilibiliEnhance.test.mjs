@@ -104,10 +104,49 @@ test('malformed parameters fail open without rewriting response', () => {
   assert.deepEqual(run({ items: [{ is_ad: 1 }] }, 'blocked_keywords=%ZZ'), {});
   assert.deepEqual(run({ items: [{ is_ad: 1 }] }, '{broken'), {});
 });
-test('large numeric IDs pass through to avoid precision loss', () => {
-  assert.deepEqual(run({}, {}, undefined, {
+test('large numeric IDs retain their exact literals while ads are filtered', () => {
+  const result = run({}, {}, undefined, {
     $response: { body: '{"code":0,"data":{"items":[{"is_ad":1}],"id":1234567890123456789}}' }
-  }), {});
+  });
+  assert.equal(result.body, '{"code":0,"data":{"items":[],"id":1234567890123456789}}');
+});
+test('member shop switch filters merchandise in both feed routes independently of ads', () => {
+  const products = [{ card_goto: 'mall' }, { uri: 'bilibili://mall/detail/123' },
+    { uri: 'https://mall.bilibili.com/neul/index.html?id=123' },
+    { rcmd_reason_style: { text: '会员购' } }, { desc_button: { text: '会员购' } }];
+  const keep = [video({ title: '会员购商品评测', args: { up_name: '哔哩哔哩会员购' } }),
+    { uri: 'https://mall.bilibili.com.evil.test/' }, { uri: 'bilibili://mallard/home' },
+    { uri: 'https://www.bilibili.com/video/BV123?url=https://mall.bilibili.com/' },
+    { rcmd_reason_style: { text: '会员购商品评测' } }, null];
+  for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story']) {
+    assert.deepEqual(run({ items: [...products, ...keep] }, { remove_feed_ads: false }, path), {});
+    assert.deepEqual(parsed(run({ items: [...products, ...keep] },
+      { hide_member_shop: true, remove_feed_ads: false }, path)).items, keep);
+  }
+});
+test('lossless filtering preserves numbers, escaped strings and unknown keys', () => {
+  const raw = '{"code":0,"data":{"items":[{"card_goto":"mall"}],"large":-1234567890123456789,"exp":1e999,"decimal":9007199254740993.25,"text":"\\u005f_bili_raw_number__0","__bili_raw_number___0":"keep","quoted":"\\\"1234567890123456789\\\""}}';
+  const result = run({}, { hide_member_shop: true }, undefined, { $response: { body: raw } });
+  assert.match(result.body, /"large":-1234567890123456789/);
+  assert.match(result.body, /"exp":1e999/);
+  assert.match(result.body, /"decimal":9007199254740993\.25/);
+  const data = parsed(result);
+  assert.equal(data.text, '__bili_raw_number__0');
+  assert.equal(data.__bili_raw_number___0, 'keep');
+  assert.equal(data.quoted, '"1234567890123456789"');
+  assert.deepEqual(data.items, []);
+});
+test('large owner IDs can be blocked exactly without rounding', () => {
+  const raw = '{"code":0,"data":{"items":[{"args":{"up_id":1234567890123456789}},{"args":{"up_id":1234567890123456788}}]}}';
+  const result = run({}, { blocked_uids: '1234567890123456789' }, undefined, { $response: { body: raw } });
+  assert.equal(result.body, '{"code":0,"data":{"items":[{"args":{"up_id":1234567890123456788}}]}}');
+});
+test('unmodified large numbers and malformed numeric JSON are passed through', () => {
+  for (const raw of ['{"code":0,"data":{"items":[],"id":1234567890123456789}}',
+    '{"code":0,"data":{"items":[{"is_ad":1}],"id":01234567890123456789}}',
+    '{"code":0,"data":{"items":[{"is_ad":1}],"id":1234567890123456789e}}']) {
+    assert.deepEqual(run({}, {}, undefined, { $response: { body: raw } }), {});
+  }
 });
 test('Loon configuration passes every option and keeps optional filters disabled', () => {
   const names = [...plugin.matchAll(/^([a-z_]+) = (switch|input),([^,]+),/gm)];
