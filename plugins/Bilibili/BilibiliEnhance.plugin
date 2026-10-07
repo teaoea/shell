@@ -1,0 +1,29 @@
+#!name = Bilibili 增强
+#!author = 可莉唯一的狗、ChatGPT
+#!desc = 过滤已识别的 JSON 开屏及首页广告，可选推荐过滤与导航精简。开发日志默认关闭，在 http://bilibili-logs.invalid/ 查看状态、导出和清空；仅保存白名单元数据与结构类型。二进制接口暂不去广告，需实机验证。需开启 MitM 并信任证书。
+#!homepage = https://github.com/teaoea/shell/blob/main/plugins/Bilibili/README.md
+#!tag = Bilibili,去广告,推荐过滤
+
+[Argument]
+remove_splash_ads = switch,true,tag=过滤开屏广告,desc=清空已识别 JSON 开屏接口的投放列表；本机已有广告缓存可能仍显示
+remove_feed_ads = switch,true,tag=过滤首页广告,desc=移除已识别广告卡片和横幅广告；保留普通视频及未知卡片
+hide_live = switch,false,tag=隐藏直播推荐,desc=仅隐藏首页可识别直播推荐卡片，不影响直播入口或播放
+hide_game = switch,false,tag=隐藏游戏推广,desc=隐藏首页游戏推荐卡片及导航中的游戏中心
+hide_member_shop = switch,false,tag=隐藏会员购入口,desc=仅精简导航入口，不修改会员权益
+hide_publish = switch,false,tag=隐藏发布入口,desc=仅隐藏导航中的发布入口
+blocked_uids = input,"",tag=UP 主 UID 屏蔽名单,desc=多个数字 UID 用空格或逗号分隔；只过滤首页能识别 args.up_id 的卡片，留空停用
+blocked_keywords = input,"",tag=标题关键词屏蔽,desc=多个关键词用逗号分隔；仅对首页卡片标题做字面包含匹配，留空停用
+log_enabled = switch,false,tag=开发日志,desc=本机保存最近最多 300 条脱敏诊断；不保存令牌、Cookie、查询参数或正文；在 http://bilibili-logs.invalid/ 导出及清空
+
+[Rule]
+DOMAIN,bilibili-logs.invalid,DIRECT
+
+[Script]
+# 功能：仅处理已登记的 JSON API，不读取视频媒体或二进制 RPC。更新时间：2026-10-07
+http-response ^https://app\.bilibili\.com(?::443)?/x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?)|resource/show/tab(?:/v2)?)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,timeout=10,argument=[{remove_splash_ads},{remove_feed_ads},{hide_live},{hide_game},{hide_member_shop},{hide_publish},{blocked_uids},{blocked_keywords},{log_enabled}],tag=Bilibili 广告与推荐过滤
+# 功能：其他 app 主机响应只记录元数据，不读取正文；显式排除上面的 JSON 接口，避免重复记录。更新时间：2026-10-07
+http-response ^https://app\.bilibili\.com(?::443)?/(?!x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?)|resource/show/tab(?:/v2)?)(?:\?|$))[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled}],tag=Bilibili 开发元数据日志
+http-request ^http://bilibili-logs\.invalid(?::80)?(?:/[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,argument=[{log_enabled}],tag=Bilibili 开发日志页面
+
+[Mitm]
+hostname = app.bilibili.com
