@@ -335,3 +335,11 @@ test('brand splash filters explicit ads only and preserves ordinary illustration
  assert.deepEqual(run({list:[illustration],unknown:true},{},path),{});
  assert.deepEqual(run({list:{unknown:true}},{},path),{});
 });
+
+test('JSON story and homepage share UID and title rules using actual recognized author fields',()=>{
+ const raw={items:[{owner:{mid:'123'},title:'普通'},{author:{mid:'456'},title:'普通'},{args:{up_id:'789'},title:'普通'},
+  {owner:{mid:'1234'},title:'普通'},{title:'带货介绍'},{title:'Hello WORLD'},{title:'123'},{uid:'123',title:'缺少 UP 字段'}]};
+ for(const path of ['/x/v2/feed/index','/x/v2/feed/index/story']){
+  assert.deepEqual(parsed(run(raw,{blocked_uids:'123 456 789',blocked_keywords:'带货,world',remove_feed_ads:false},path)).items,[raw.items[3],raw.items[6],raw.items[7]]);
+ }
+});

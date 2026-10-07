@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.10.3；更新时间：2026-10-07
+ * 版本：1.11.0；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -25,11 +25,19 @@
   const DEFAULT_WORDS_PATH = '/bilibili.app.interface.v1.Search/DefaultWords';
   const VIDEO_RPC = {
     '/bilibili.app.view.v1.View/View': 'view', '/bilibili.app.view.v1.View/RelatesFeed': 'view_feed',
+    '/bilibili.app.view.v1.View/PlayerRelates': 'view_feed', '/bilibili.app.view.v1.View/ContinuousPlay': 'view_feed',
     '/bilibili.app.viewunite.v1.View/View': 'unite', '/bilibili.app.viewunite.v1.View/RelatesFeed': 'unite_feed',
     '/bilibili.community.service.dm.v1.DM/DmView': 'dm', '/x/v2/dm/web/view': 'web_dm',
     '/bilibili.app.view.v1.View/ViewProgress': 'progress', '/bilibili.app.viewunite.v1.View/ViewProgress': 'unite_progress'
   };
-  function videoAds(raw, route, framed = true) {
+  function recommendationPolicy(config) {
+    const normalize = value => typeof value === 'string' && /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, '') : null;
+    const uids = new Set(config.blocked_uids.split(/[\s,，;；]+/).map(normalize).filter(Boolean));
+    const keywords = config.blocked_keywords.split(/[\n,，]+/).map(word => word.trim().toLowerCase()).filter(Boolean);
+    return { active: uids.size > 0 || keywords.length > 0, match: (uid, title) =>
+      uids.has(normalize(uid)) || (typeof title === 'string' && keywords.some(word => title.toLowerCase().includes(word))) };
+  }
+  function videoAds(raw, route, framed = true, policy = null) {
     if (!raw || !ArrayBuffer.isView(raw)) throw new Error('binary');
     const frame = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
     if (frame.length > 2097152 || (framed && (frame.length < 5 || frame[0] > 1))) throw new Error('frame');
@@ -80,6 +88,49 @@
       const result = new Uint8Array(chunks.reduce((n, chunk) => n + chunk.length, 0));
       let offset = 0; for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; } return result;
     }
+    function uidText(field) {
+      if (!field || field.wire !== 0) return null;
+      let start = 0;
+      while (field.raw[start++] & 128) {}
+      // 十进制字符串运算，避免 64 位 UID 转成 Number 后丢失精度。
+      let result = '0';
+      for (let i = field.raw.length - 1; i >= start; i--) {
+        let carry = field.raw[i] & 127, next = '';
+        for (let j = result.length - 1; j >= 0; j--) {
+          const n = Number(result[j]) * 128 + carry;
+          next = String(n % 10) + next; carry = Math.floor(n / 10);
+        }
+        result = (carry ? String(carry) : '') + next;
+      }
+      return result === '0' || result.length > 19 || (result.length === 19 && result > '9223372036854775807') ? null : result;
+    }
+    function titleText(field) {
+      if (!field || field.wire !== 2 || field.value.length > 16384) return null;
+      try {
+        let encoded = '';
+        for (const byte of field.value) encoded += '%' + ('0' + byte.toString(16)).slice(-2);
+        return decodeURIComponent(encoded);
+      } catch (_) { return null; }
+    }
+    function recommendationInfo(card, unified) {
+      let info = card, titleNumber = 3, authorNumber = 4, uidNumber = 1;
+      if (unified) {
+        // RelateCard.basic_info(12): title(1), author(11).mid(12)。
+        const type = card.find(field => field.number === 1 && field.wire === 0);
+        if (!type || !Number.isInteger(type.value) || type.value < 1 || type.value > 10) return null;
+        const basic = card.find(field => field.number === 12 && field.wire === 2);
+        if (!basic) return null;
+        info = fields(basic.value); titleNumber = 1; authorNumber = 11; uidNumber = 12;
+      }
+      const author = info.find(field => field.number === authorNumber && field.wire === 2);
+      const uid = author ? uidText(fields(author.value).find(field => field.number === uidNumber && field.wire === 0)) : null;
+      return { uid, title: titleText(info.find(field => field.number === titleNumber && field.wire === 2)) };
+    }
+    function blockedRecommendation(card, unified) {
+      if (!policy || !policy.active) return false;
+      const info = recommendationInfo(card, unified);
+      return info ? policy.match(info.uid, info.title) : false;
+    }
     function rewrite(bytes, level) {
       const chunks = [];
       for (const field of fields(bytes)) {
@@ -94,11 +145,13 @@
         if ((level === 'guide' && [1, 5].includes(field.number)) || (level === 'unite_guide' && field.number === 3)) { removed++; continue; }
         if ((level === 'view' && [30, 31, 41, 48].includes(field.number)) || (level === 'unite' && field.number === 7)) { removed++; continue; }
         if ((level === 'view' && field.number === 10) || (level === 'view_feed' && field.number === 1)) {
-          if (fields(field.value).some(item => item.number === 28 && item.wire === 2 && item.value.length > 0)) { removed++; continue; }
+          const card = fields(field.value);
+          if (card.some(item => item.number === 28 && item.wire === 2 && item.value.length > 0) || blockedRecommendation(card, false)) { removed++; continue; }
         }
         if (['unite_cards', 'unite_feed'].includes(level) && field.number === 1) {
-          if (fields(field.value).some(item => (item.number === 1 && item.wire === 0 && item.value === 5) ||
-            ([6, 11].includes(item.number) && item.wire === 2 && item.value.length > 0))) { removed++; continue; }
+          const card = fields(field.value);
+          if (card.some(item => (item.number === 1 && item.wire === 0 && item.value === 5) ||
+            ([6, 11].includes(item.number) && item.wire === 2 && item.value.length > 0)) || blockedRecommendation(card, true)) { removed++; continue; }
         }
         const child = level === 'progress' && field.number === 1 ? 'guide' :
           level === 'unite_progress' && field.number === 1 ? 'unite_guide' :
@@ -422,6 +475,7 @@
     '/bilibili.app.view.v1.View/ViewProgress', '/bilibili.app.viewunite.v1.View/ViewProgress',
     '/bilibili.app.view.v1.View/RelatesFeed', '/bilibili.app.viewunite.v1.View/RelatesFeed',
     '/bilibili.app.view.v1.View/View', '/bilibili.app.viewunite.v1.View/View',
+    '/bilibili.app.view.v1.View/PlayerRelates', '/bilibili.app.view.v1.View/ContinuousPlay',
     '/bilibili.app.dynamic.v2.Dynamic/DynAll', '/bilibili.app.show.v1.Popular/Index',
     '/bilibili.app.playurl.v1.PlayURL/PlayView', '/bilibili.app.playerunite.v1.Player/PlayViewUnite'
   ];
@@ -537,7 +591,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.10.3</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.11.0</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     const path = (local[1] || '/').split('?')[0];
@@ -657,7 +711,7 @@
     }
     const local = /^http:\/\/bilibili-logs\.invalid(?::80)?(\/[^#]*)?$/.exec(String(request.url || ''));
     if (local) return localPage(request, local, config);
-    const videoMatch = /^https:\/\/(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?(\/(?:bilibili\.app\.(?:view|viewunite)\.v1\.View\/(?:View|RelatesFeed|ViewProgress)|bilibili\.community\.service\.dm\.v1\.DM\/DmView))(?:\?[^#]*)?$/.exec(String(request.url || ''));
+    const videoMatch = /^https:\/\/(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?(\/(?:bilibili\.app\.(?:view\.v1\.View\/(?:View|RelatesFeed|ViewProgress|PlayerRelates|ContinuousPlay)|viewunite\.v1\.View\/(?:View|RelatesFeed|ViewProgress))|bilibili\.community\.service\.dm\.v1\.DM\/DmView))(?:\?[^#]*)?$/.exec(String(request.url || ''));
     const webDmMatch = /^https:\/\/api\.bilibili\.com(?::443)?(\/x\/v2\/dm\/web\/view)(?:\?[^#]*)?$/.exec(String(request.url || ''));
     const binaryMatch = videoMatch || webDmMatch;
     if (binaryMatch && request.method === (webDmMatch ? 'GET' : 'POST')) {
@@ -677,7 +731,7 @@
       const grpcKey = Object.keys(headers).find(key => key.toLowerCase() === 'grpc-status');
       if (grpcKey && String(headers[grpcKey]) !== '0') return finish({}, 'api_error');
       try {
-        const result = videoAds(response.body, VIDEO_RPC[binaryMatch[1]], !webDmMatch);
+        const result = videoAds(response.body, VIDEO_RPC[binaryMatch[1]], !webDmMatch, recommendationPolicy(config));
         if (event) { event.before = result.removed; event.removed = result.removed; }
         return finish(result.body ? { body: result.body } : {}, result.body ? 'modified' : 'unchanged');
       } catch (_) { return finish({}, 'unsupported_body'); }
@@ -774,24 +828,26 @@
       for (const key of ['list', 'show', 'event_list']) filter(data, key, item => !ad(item));
     }
     if (route === 'feed') {
-      const uids = new Set(config.blocked_uids.split(/[\s,，;；]+/).filter(uid => /^\d+$/.test(uid)));
-      // 关键词使用字面包含匹配，以换行或逗号分隔；不执行用户输入的正则表达式。
-      const keywords = config.blocked_keywords.split(/[\n,，]+/).map(word => word.trim().toLowerCase()).filter(Boolean);
+      const policy = recommendationPolicy(config);
+      const jsonUID = item => {
+        const uid = object(item.args) && item.args.up_id !== undefined ? item.args.up_id :
+          object(item.owner) && item.owner.mid !== undefined ? item.owner.mid : object(item.author) ? item.author.mid : undefined;
+        return uid === undefined ? null : json.text(uid);
+      };
       filter(data, 'items', item => {
         if (!object(item)) return true;
         if (config.remove_feed_ads && ad(item)) return false;
         if (config.hide_live && ['live', 'live_rcmd'].includes(item.card_goto)) return false;
         if (config.hide_game && item.card_goto === 'game') return false;
         if (config.hide_member_shop && memberShop(item)) return false;
-        const uid = object(item.args) ? item.args.up_id : undefined;
-        if (uid !== undefined && uids.has(json.text(uid))) return false;
-        if (typeof item.title === 'string' && keywords.some(word => item.title.toLowerCase().includes(word))) return false;
+        if (policy.match(jsonUID(item), item.title)) return false;
         if (config.remove_feed_ads && item.card_type === 'banner_v8' && item.card_goto === 'banner' && Array.isArray(item.banner_item)) {
           filter(item, 'banner_item', banner => !object(banner) || banner.type !== 'ad');
           if (item.banner_item.length === 0) return false;
         }
         return true;
       });
+
     }
     if (route === 'tab') {
       if (Array.isArray(data.tab)) {

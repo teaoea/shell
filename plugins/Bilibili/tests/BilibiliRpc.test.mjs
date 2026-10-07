@@ -14,7 +14,7 @@ function run(path, body, options={}) {
  const response=options.requestOnly?undefined:{status:options.status||200,headers:{'grpc-status':options.grpc||'0'},body};
  const req={url:(options.host||'https://app.bilibili.com')+path+'?token=PRIVATE_TOKEN',method:options.method||'POST',headers:{Authorization:'PRIVATE_TOKEN'}};
  Object.defineProperty(req,'body',{get(){throw Error('request body must not be read');}});
- vm.runInNewContext(source,{$request:req,$response:response,$argument:{log_enabled:true},$utils:options.noGzip?undefined:{ungzip: b=>new Uint8Array(gunzipSync(b))},
+ vm.runInNewContext(source,{$request:req,$response:response,$argument:{log_enabled:true,...options.argument},$utils:options.noGzip?undefined:{ungzip: b=>new Uint8Array(gunzipSync(b))},
  $persistentStore:{read:k=>store.get(k),write:(v,k)=>{store.set(k,v);return true;}},console:{log:v=>consoleOutput.push(v)},$done:v=>{assert.equal(output,undefined);output=v;}},{timeout:1000});
  return { output, store, consoleOutput };
 }
@@ -139,4 +139,59 @@ test('DM hooks are exact, reject other methods and do not affect segmented danma
  assert.equal(webRule.test('https://api.bilibili.com/x/v2/dm/web/view?oid=1'),true);
  for(const url of ['https://api.bilibili.com.evil.test/x/v2/dm/web/view','https://api.bilibili.com/x/v2/dm/web/view/extra','https://api.bilibili.com/x/v2/dm/post','https://api.bilibili.com/x/web-interface/archive/like/triple'])assert.equal(webRule.test(url),false);
  assert.deepEqual(JSON.parse(JSON.stringify(run('/x/v2/dm/web/view',Uint8Array.from(msg(9,str(4,'#ATTENTION#'))),{host:'https://api.bilibili.com',method:'POST'}).output)),{});
+});
+
+const wideVarint=value=>{let n=BigInt(value),out=[];do{let b=Number(n&127n);n>>=7n;out.push(b+(n?128:0));}while(n);return out;};
+const uidField=(number,value)=>[...vi(number*8),...wideVarint(value)];
+const oldRec=(uid,title)=>[...str(3,title),...(uid===null?[]:msg(4,uidField(1,uid))),...str(100,'unknown keep')];
+const newRec=(uid,title)=>[8,1,...msg(12,[...str(1,title),...(uid===null?[]:msg(11,uidField(12,uid)))]),...str(100,'unknown keep')];
+const introCards=cards=>msg(5,msg(1,msg(2,msg(2,[8,22,...msg(22,cards)]))));
+
+test('both blacklists apply to old and unified initial recommendations and subsequent player/continuous feeds',()=>{
+ const big='1234567890123456789',near='1234567890123456788';
+ for(const [path,modern,wrap] of [
+  [view,false,cards=>cards],[unite,true,introCards],
+  ['/bilibili.app.view.v1.View/RelatesFeed',false,cards=>cards],
+  ['/bilibili.app.view.v1.View/PlayerRelates',false,cards=>cards],
+  ['/bilibili.app.view.v1.View/ContinuousPlay',false,cards=>cards],
+  ['/bilibili.app.viewunite.v1.View/RelatesFeed',true,cards=>cards]]){
+  const rec=modern?newRec:oldRec,number=path===view?10:1;
+  const kept=[rec(near,'普通视频'),rec(null,'UID 缺失'),rec('777','axxxb')];
+  const blocked=[rec(big,'普通'),rec('999','带货介绍'),rec('999','Hello WORLD'),rec('999','a.*b')];
+  const meta=str(101,'pagination/current video retained');
+  const payload=[...meta,...wrap([...kept,...blocked].flatMap(item=>msg(number,item)))];
+  const expected=[...meta,...wrap(kept.flatMap(item=>msg(number,item)))];
+  const argument={blocked_uids:big,blocked_keywords:'带货,world,a.*b'};
+  const {output,store}=run(path,frame(payload),{argument});
+  assert.deepEqual([...output.body],[...frame(expected)],path);
+  const event=JSON.parse(store.get('bilibili.enhance.logs.v1')).events[0];assert.equal(event.removed,4);
+  const logs=[...store.values()].join('');assert.ok(!logs.includes(big));assert.ok(!logs.includes('Hello WORLD'));
+  assert.deepEqual(JSON.parse(JSON.stringify(run(path,frame(payload)).output)),{},'empty lists preserve all normal recommendations');
+ }
+});
+
+test('UID and title policies work independently, normalize UID zeros and preserve unknown or undecodable fields',()=>{
+ const kept=oldRec('1234','普通'),blocked=oldRec('123','普通');
+ const path='/bilibili.app.view.v1.View/PlayerRelates';
+ assert.deepEqual([...run(path,frame([...msg(1,kept),...msg(1,blocked)]),{argument:{blocked_uids:'000123'}}).output.body],[...frame(msg(1,kept))]);
+ const invalidTitle=msg(3,[255]);assert.deepEqual(JSON.parse(JSON.stringify(run(path,frame(msg(1,invalidTitle)),{argument:{blocked_keywords:'普通'}}).output)),{});
+ const unknown=[8,99,...msg(12,[...str(1,'带货'),...msg(11,uidField(12,'123'))])];
+ assert.deepEqual(JSON.parse(JSON.stringify(run('/bilibili.app.viewunite.v1.View/RelatesFeed',frame(msg(1,unknown)),{argument:{blocked_uids:'123',blocked_keywords:'带货'}}).output)),{});
+ const titleOnly=oldRec(null,'WORLD');assert.deepEqual([...run(path,frame(msg(1,titleOnly)),{argument:{blocked_keywords:'world'}}).output.body],[...frame([])]);
+});
+
+test('added continuous routes are exact on all three hosts, excluded from metadata, and receive both arguments',()=>{
+ const line=plugin.split('\n').find(line=>line.includes('tag=Bilibili 视频页广告过滤'));
+ assert.match(line,/argument=\[\{blocked_uids\},\{blocked_keywords\},\{log_enabled\}\]/);
+ const regex=new RegExp(line.split(' ')[1]),meta=new RegExp(plugin.split('\n').find(line=>line.includes('tag=Bilibili 开发元数据日志')).split(' ')[1]);
+ for(const method of ['PlayerRelates','ContinuousPlay']){
+  const path='/bilibili.app.view.v1.View/'+method;
+  for(const host of ['https://app.bilibili.com','https://app.biliapi.net','https://grpc.biliapi.net']){
+   assert.equal(regex.test(host+path+'?token=PRIVATE_TOKEN'),true);
+   assert.equal(regex.test(host+path+'/extra'),false);
+   assert.deepEqual([...run(path,frame(msg(1,oldRec('123','普通'))),{host,argument:{blocked_uids:'123'}}).output.body],[...frame([])]);
+  }
+  assert.equal(meta.test('https://app.bilibili.com'+path),false);
+  assert.equal(regex.test('https://app.bilibili.com'+path.replace('view.v1','viewunite.v1')),false);
+ }
 });
