@@ -143,13 +143,13 @@ test('compact touch drag updates preview, cancels safely and keeps selection wit
  assert.ok(html.indexOf('<section class="preview-card"')<html.indexOf('<div id="tab-list"'));
  assert.match(html,/grid-template-columns:repeat\(2/);assert.match(html,/touch-action:none/);assert.doesNotMatch(html,/data-move/);
  const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
- assert.doesNotMatch(script,/fetch\(|XMLHttpRequest|setInterval|setTimeout|innerHTML/);
- const rows=[],handlers={},frames=new Map();let hit=null,frameId=0,scrolls=0;const captures=new Set();
+ assert.doesNotMatch(script,/fetch\(|XMLHttpRequest|setInterval|innerHTML/);
+ const rows=[],handlers={},frames=new Map(),timers=new Map();let hit=null,frameId=0,scrolls=0,timerId=0;const captures=new Set();
  function row(id){const r={id,input:{checked:true},name:{textContent:id},classList:{add(){},remove(){}}};
-  r.handle={pressed:'false',focus(){},setAttribute(k,v){this.pressed=v;},closest:s=>s.includes('drag-handle')?r.handle:r};
-  r.closest=()=>r;
+  r.handle={pressed:'false',focus(){},setAttribute(k,v){this.pressed=v;},closest:s=>s.includes('drag-handle')?r.handle:s.includes('tab-row')?r:null};
+  r.closest=s=>s.includes('tab-row')?r:null;
   Object.defineProperties(r,{previousElementSibling:{get:()=>rows[rows.indexOf(r)-1]},nextElementSibling:{get:()=>rows[rows.indexOf(r)+1]||null}});
-  r.querySelector=s=>s.includes('input')?r.input:r.name;
+  r.querySelector=s=>s.includes('input')?r.input:s.includes('drag-handle')?r.handle:r.name;
   return r;
  }
  rows.push(row('recommend'),row('<img src=x onerror=alert(1)>'),row('third'));
@@ -161,8 +161,8 @@ test('compact touch drag updates preview, cancels safely and keeps selection wit
  setPointerCapture:id=>captures.add(id),hasPointerCapture:id=>captures.has(id),releasePointerCapture:id=>captures.delete(id),
  appendChild:a=>{rows.splice(rows.indexOf(a),1);rows.push(a);},
  insertBefore:(a,b)=>{rows.splice(rows.indexOf(a),1);rows.splice(b?rows.indexOf(b):rows.length,0,a);}};
- vm.runInNewContext(script,{document:{getElementById:id=>({'tab-list':list,'tab-preview':preview,'preview-status':status,'tabs-save':save})[id],createElement:()=>({}),elementFromPoint:()=>hit},
- window:{innerHeight:800,scrollBy(){scrolls++;}},requestAnimationFrame:fn=>{frames.set(++frameId,fn);return frameId;},cancelAnimationFrame:id=>frames.delete(id)});
+ vm.runInNewContext(script,{document:{getElementById:id=>({'tab-list':list,'tab-preview':preview,'preview-status':status,'tabs-save':save})[id],createElement:()=>({}),elementFromPoint:()=>hit,addEventListener:(name,fn)=>{handlers[name]=fn;}},
+ window:{innerHeight:800,ontouchstart:null,scrollBy(){scrolls++;}},setTimeout:fn=>{timers.set(++timerId,fn);return timerId;},clearTimeout:id=>timers.delete(id),requestAnimationFrame:fn=>{frames.set(++frameId,fn);return frameId;},cancelAnimationFrame:id=>frames.delete(id)});
  const event=(r,id=1)=>({target:r.handle,pointerId:id,button:0,isPrimary:true,clientX:40,clientY:300,preventDefault(){}});
  assert.deepEqual(preview.children.map(x=>x.textContent),rows.map(r=>r.id));assert.equal(frames.size,0);
  handlers.pointerdown(event(original[0]));assert.equal(captures.has(1),true);assert.equal(frames.size,1);
@@ -180,6 +180,22 @@ test('compact touch drag updates preview, cancels safely and keeps selection wit
  handlers.pointerdown({...event(original[0]),isPrimary:false});assert.equal(captures.size,0);
  handlers.pointerdown({...event(original[0]),button:2});assert.equal(captures.size,0);
  assert.equal(h.requests.length,0);
+ // Touch Events must work without pointer capture, while compatibility pointer events are ignored.
+ const touch={identifier:7,clientX:40,clientY:300};let prevented=0;
+ const touchEvent=(target,touches=[touch])=>({target,touches,changedTouches:[touch],preventDefault(){prevented++;}});
+ const touchBefore=[...rows];
+ handlers.pointerdown({...event(rows[0]),pointerType:'touch'});assert.equal(captures.size,0);
+ handlers.touchstart(touchEvent(rows[0].handle));assert.equal(captures.size,0);assert.ok(prevented>0);
+ hit=rows[2];handlers.touchmove(touchEvent(rows[0].handle));assert.notDeepEqual(rows,touchBefore);
+ assert.deepEqual(preview.children.filter(x=>x.className!=='preview-empty').map(x=>x.textContent),rows.filter(r=>r.input.checked).map(r=>r.id));
+ handlers.touchend(touchEvent(touchBefore[0].handle,[]));const touchAfter=[...rows];
+ const click={preventDefault(){prevented++;},stopPropagation(){}};handlers.click(click);
+ handlers.touchstart(touchEvent(rows[0].handle));hit=rows[2];handlers.touchmove(touchEvent(rows[0].handle));handlers.touchcancel();assert.deepEqual(rows,touchAfter);
+ // Long press the whole chip, then cancel safely; scrolling before activation does not reorder.
+ handlers.touchstart(touchEvent(rows[0]));assert.equal(timers.size,1);
+ const activate=[...timers.values()][0];timers.clear();activate();hit=rows[2];handlers.touchmove(touchEvent(rows[0]));handlers.touchcancel();assert.deepEqual(rows,touchAfter);
+ handlers.touchstart(touchEvent(rows[0]));handlers.touchmove(touchEvent(rows[0],[{...touch,clientY:320}]));assert.equal(timers.size,0);assert.deepEqual(rows,touchAfter);
+ handlers.touchend(touchEvent(rows[0],[]));assert.equal(timers.size,0);
 });
 
 test('unchanged homepage catalogs avoid persistent writes and saved settings survive independent script executions',()=>{

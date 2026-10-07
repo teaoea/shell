@@ -105,3 +105,38 @@ test('playback progress removes only triple and follow prompts, preserving chapt
  for(const path of ['/x/web-interface/archive/like/triple','/bilibili.app.view.v1.View/Like'])assert.equal(regex.test('https://app.bilibili.com'+path),false);
  assert.ok(!plugin.includes('remove_triple'));
 });
+
+test('exact attention commands are removed from playback guide and app/web DM metadata without changing ordinary comments or subtitles',()=>{
+ const attention=[...str(4,'#ATTENTION#'),...str(5,'三连'),...str(9,'PRIVATE_TOKEN')];
+ const ordinary=[...str(4,'#UP#'),...str(5,'保留互动')];
+ const unknown=str(4,'#ATTENTION#future');
+ const rpc='/bilibili.community.service.dm.v1.DM/DmView';
+ const preserve=[...msg(3,str(1,'字幕')),...msg(6,[8,1]),...msg(22,ordinary),...msg(22,unknown),...str(100,'未知')];
+ for(const host of ['https://app.bilibili.com','https://grpc.biliapi.net','https://app.biliapi.net']){
+  const {output,store}=run(rpc,frame([...preserve,...msg(22,attention)]),{host});
+  assert.deepEqual([...output.body],[...frame(preserve)]);
+  const event=JSON.parse(store.get('bilibili.enhance.logs.v1')).events[0];assert.equal(event.endpoint,rpc);assert.equal(event.removed,1);
+  assert.ok(![...store.values()].join('').includes('PRIVATE_TOKEN'));
+ }
+ const guide=[...msg(2,ordinary),...msg(2,unknown)];
+ assert.deepEqual([...run('/bilibili.app.view.v1.View/ViewProgress',frame(msg(1,[...guide,...msg(2,attention)]))).output.body],[...frame(msg(1,guide))]);
+ const web='/x/v2/dm/web/view';
+ const webKeep=[...msg(4,[8,1]),...msg(10,[8,1]),...msg(9,ordinary),...str(100,'未知')];
+ const result=run(web,Uint8Array.from([...webKeep,...msg(9,attention)]),{host:'https://api.bilibili.com',method:'GET'});
+ assert.deepEqual([...result.output.body],webKeep);
+ assert.equal(JSON.parse(result.store.get('bilibili.enhance.logs.v1')).events[0].method,'GET');
+ assert.deepEqual(JSON.parse(JSON.stringify(run(web,Uint8Array.from(webKeep),{host:'https://api.bilibili.com',method:'GET'}).output)),{});
+});
+
+test('DM hooks are exact, reject other methods and do not affect segmented danmaku or manual interactions',()=>{
+ const rpc='/bilibili.community.service.dm.v1.DM/DmView';
+ const videoRule=new RegExp(plugin.split('\n').find(l=>l.includes('tag=Bilibili 视频页广告过滤')).split(' ')[1]);
+ const metadata=new RegExp(plugin.split('\n').find(l=>l.includes('tag=Bilibili 开发元数据日志')).split(' ')[1]);
+ const webRule=new RegExp(plugin.split('\n').find(l=>l.includes('tag=Bilibili 三连互动浮层过滤')).split(' ')[1]);
+ assert.equal(videoRule.test('https://grpc.biliapi.net'+rpc),true);assert.equal(metadata.test('https://app.bilibili.com'+rpc),false);
+ assert.equal(videoRule.test('https://app.bilibili.com'+rpc+'/extra'),false);
+ assert.equal(videoRule.test('https://app.bilibili.com/bilibili.community.service.dm.v1.DM/DmSegMobile'),false);
+ assert.equal(webRule.test('https://api.bilibili.com/x/v2/dm/web/view?oid=1'),true);
+ for(const url of ['https://api.bilibili.com.evil.test/x/v2/dm/web/view','https://api.bilibili.com/x/v2/dm/web/view/extra','https://api.bilibili.com/x/v2/dm/post','https://api.bilibili.com/x/web-interface/archive/like/triple'])assert.equal(webRule.test(url),false);
+ assert.deepEqual(JSON.parse(JSON.stringify(run('/x/v2/dm/web/view',Uint8Array.from(msg(9,str(4,'#ATTENTION#'))),{host:'https://api.bilibili.com',method:'POST'}).output)),{});
+});

@@ -44,7 +44,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnh
 1. 更新插件和脚本缓存，重新打开 B 站，插件会收集当前首页标签。
 2. 运行“Bilibili 首页标签管理”按钮，点击通知打开管理页，也可直接访问 [本机首页标签管理](http://bilibili-logs.invalid/tabs)。
 3. 点击 **“获取全部标签”**，主动读取客户端分区列表，包含没有在首页启用的分区与服务；无需先在 App 内逐项启用。新获取项默认不勾选，已有选择保留。
-4. 勾选想在首页显示的标签，按住每项右侧的 **≡** 拖动调整位置（手机两列、较宽页面三列，按从左到右、从上到下排列）；拖到屏幕边缘可自动滚动，“完成后保存并重新打开 B 站”说明下方的 **首页标签预览** 会随勾选和移动实时更新，可左右滑动查看。预览突出第一项，只示意排列顺序，不修改客户端默认选中项。点击“保存选择与排序”，再重新打开 B 站。至少保留一项；客户端按已勾选标签在页面中从左到右、从上到下的顺序显示，新增分区也可移动到任意位置。键盘聚焦拖动柄后可用方向键移动；拖动中按 Escape 或手势取消会恢复本次拖动前的顺序。
+4. 勾选想在首页显示的标签，直接拖动每项右侧的 **≡**，或长按标签约 0.3 秒后拖动调整位置（手机两列、较宽页面三列，按从左到右、从上到下排列）；拖到屏幕边缘可自动滚动，“完成后保存并重新打开 B 站”说明下方的 **首页标签预览** 会随勾选和移动实时更新，可左右滑动查看。预览突出第一项，只示意排列顺序，不修改客户端默认选中项。点击“保存选择与排序”，再重新打开 B 站。至少保留一项；客户端按已勾选标签在页面中从左到右、从上到下的顺序显示，新增分区也可移动到任意位置。键盘聚焦拖动柄后可用方向键移动；拖动中按 Escape 或手势取消会恢复本次拖动前的顺序。
 5. 点击“恢复全部标签”取消插件自定义选择与排序，再重新打开 B 站，首页恢复 App 原本返回的标签；不会把全部分区同时铺在首页。
 
 ### 手动添加标签
@@ -61,7 +61,7 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnh
 
 仅点击“获取全部标签”时，向 `https://app.bilibili.com/bilibili.app.show.v1.Mixture/RegionList` 发送匿名二进制 POST，并匿名读取首页导航补充直播、推荐、热门等基础标签；不携带 Cookie、Authorization 或令牌，也不修改服务端账号设置。不需要扩大 MitM 主机范围。独立解析未压缩的 gRPC／Protobuf 分区响应，长度、结构、网络或存储异常时保留现有设置并提示失败，不输出原始响应或异常内容。
 
-选择和顺序使用 Loon 的 [`$persistentStore` 本地持久化存储](https://nsloon.app/docs/Script/script_api/#5-本地存储)，保存在独立的标签设置中。保存后无需再运行管理按钮，也无需重复获取全部标签；重新打开管理页会读取已存设置。预览调整仅在浏览器页面内执行，不请求接口、不轮询，也不逐项保存；点击“保存选择与排序”才提交。首页返回的目录未变化时不重复写入存储。
+选择和顺序使用 Loon 的 [`$persistentStore` 本地持久化存储](https://nsloon.app/docs/Script/script_api/#5-本地存储)，保存在独立的标签设置中。保存后无需再运行管理按钮，也无需重复获取全部标签；重新打开管理页会读取已存设置。手机使用独立的非被动触摸事件处理拖动，桌面使用指针事件；开始拖动后显示粉色边框。长按触发前移动手指会保留普通滚动，拖动取消时恢复开始前的排列。预览调整仅在浏览器页面内执行，不请求接口、不轮询，也不逐项保存；点击“保存选择与排序”才提交。首页返回的目录未变化时不重复写入存储。
 
 **保持客户端自定义标签仍需启用插件。** 持久化存储保存插件的选择与顺序，不会写入 B 站 App 的内部配置；客户端重新请求首页标签时，响应脚本需要读取设置并应用。不能通过保存一次就永久停用响应脚本。标签功能本身没有定时任务或后台轮询。
 
@@ -94,13 +94,16 @@ JSON 广告和推荐过滤匹配 `app.bilibili.com`、`app.biliapi.net`（HTTPS�
 
 - `/bilibili.app.view.v1.View/View` 与 `/bilibili.app.viewunite.v1.View/View`：清理已识别的视频详情广告、播放器下方广告及相关推荐广告卡片。
 - 两组 `View/RelatesFeed`：清理相关推荐分页中的已识别广告卡片。
-- 两组 `View/ViewProgress`：删除旧版引导中的关注卡与契约卡、新版引导中的契约卡（三连／关注浮层），保留章节、其他素材、互动弹幕、视频快照和未知字段。
+- `/bilibili.community.service.dm.v1.DM/DmView`：过滤弹幕元数据中已识别的 `#ATTENTION#` 三连／关注指令，保留字幕、弹幕配置和其他互动内容。
+- 两组 `View/ViewProgress`：删除旧版引导中的关注卡与契约卡、新版引导中的契约卡（三连／关注浮层），同时过滤旧版引导里的 `#ATTENTION#` 三连／关注互动指令；保留章节、其他素材、其他互动弹幕、视频快照和未知字段。
+
+另外定向处理 `api.bilibili.com/x/v2/dm/web/view` 的 GET 原始 Protobuf 响应，只删除 `#ATTENTION#` 互动项，保留分段信息、配置和其他互动项。不处理弹幕发送或手动三连接口。
 
 独立解析已登记字段，未修改字段保留原始二进制字节。请求侧协商不压缩；响应兼容未压缩及 Loon 解压工具支持的 gzip 数据。非成功状态、其他压缩格式、损坏帧、超限数据和未发生修改的响应原样放行。只处理上述接口，不修改播放地址或手动点赞、投币、收藏、关注请求。
 
 开屏补充 `event/list2` 的活动投放列表，保留其他启动配置。已有开屏广告缓存可能继续显示；更新后可在 B 站设置中清理缓存，再重新打开并记录新请求。普通品牌启动图片不按广告一律删除。
 
-字段参考：[公开播放页协议包](https://www.npmjs.com/package/@biliverse/protobuf)、[旧版播放引导协议](https://github.com/10miaomiao/bilimiao2/blob/b4f6edded1915e79499062e3ff0819c4deba93a2/bilimiao-grpc/proto/src/main/proto/bilibili/app/view/v1/view.proto)、[公开开屏活动配置](https://github.com/Destellovo/Surge/blob/main/Bilibili.sgmodule)。本插件独立实现定向处理，不内嵌上游脚本。
+字段参考：[公开播放页协议包](https://www.npmjs.com/package/@biliverse/protobuf)、[旧版播放引导协议](https://github.com/10miaomiao/bilimiao2/blob/b4f6edded1915e79499062e3ff0819c4deba93a2/bilimiao-grpc/proto/src/main/proto/bilibili/app/view/v1/view.proto)、[公开开屏活动配置](https://github.com/Destellovo/Surge/blob/main/Bilibili.sgmodule)。互动指令字段参考：[弹幕协议包](https://www.npmjs.com/package/@biliverse/protobuf)；三连栏与 `#ATTENTION#` 的对应关系参考：[相关研究的接口识别说明](https://www.com.cuhk.edu.hk/publication/liang-journal-2023-cue.pdf)。本插件独立实现定向处理，不内嵌上游脚本。
 
 部分首页、动态和评论接口仍未覆盖，不能承诺全量去广告。视频内部口播、UP 主嵌入画面的推广不在过滤范围内。没有修改登录、会员、付费内容或地区限制，没有后台播放、画质解锁功能。协议和合成测试通过不等于当前手机已加载或实际显示效果已确认。
 
@@ -144,9 +147,9 @@ Loon 的 [通知接口](https://nsloon.app/docs/Script/script_api/#6-通知)支�
 
 ### 覆盖范围与排查
 
-日志记录上述已处理 JSON 与二进制接口的固定路径、处理结果和数量；新增开屏活动、默认词及播放进度路径。JSON 记录白名单结构类型，二进制接口只记录元数据和移除数量，不保存解析出来的字段名或内容。二进制记录的处理前数量为本次识别并移除的广告／引导组件数，处理后为 0，不表示整页视频或推荐总数。
+日志记录上述已处理 JSON 与二进制接口的固定路径、处理结果和数量；新增开屏活动、默认词、播放进度及两类弹幕元数据路径。JSON 记录白名单结构类型，二进制接口只记录元数据和移除数量，不保存解析出来的字段名或内容。二进制记录的处理前数量为本次识别并移除的广告／引导组件数，处理后为 0，不表示整页视频或推荐总数。
 
-`app.bilibili.com` 的其他可解密 HTTP 响应仍只记录元数据，不额外读取正文。部分已登记 RPC 显示固定接口名，其余归为 `other_api`。新增 `grpc.biliapi.net`、`app.biliapi.net` 的 MitM 用于上文精确列出的业务接口，不泛采集这两个主机的其他响应。`api.bilibili.com`、媒体 CDN、QUIC、WebSocket 帧及未解密流量不在日志范围内。
+`app.bilibili.com` 的其他可解密 HTTP 响应仍只记录元数据，不额外读取正文。部分已登记 RPC 显示固定接口名，其余归为 `other_api`。新增 `grpc.biliapi.net`、`app.biliapi.net` 的 MitM 用于上文精确列出的业务接口，不泛采集这两个主机的其他响应。`api.bilibili.com` 仅上述弹幕元数据路径纳入处理与日志；其余路径、媒体 CDN、QUIC、WebSocket 帧及未解密流量不在日志范围内。
 
 持久化接口没有原子追加，多个响应并发时可能丢记录，日志不代表完整网络抓包。存储不可用时过滤继续执行，日志页返回存储不可用提示，避免覆盖已有数据。转换到其他平台后仍需验证本地页面与持久化接口是否兼容。
 

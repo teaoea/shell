@@ -295,7 +295,7 @@ test('search module filtering logs safe counts without search words or history',
 });
 test('logger routes are disjoint and optional metadata hook does not buffer body', () => {
   const lines = plugin.split('\n').filter(line => line.startsWith('http-response '));
-  assert.equal(lines.length, 3);
+  assert.equal(lines.length, 4);
   const [filter, metadata] = lines.map(line => new RegExp(line.split(' ')[1]));
   for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/resource/show/tab/v2',
     '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {

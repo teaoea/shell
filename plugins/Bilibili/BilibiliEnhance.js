@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.10.0；更新时间：2026-10-07
+ * 版本：1.10.1；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -26,16 +26,17 @@
   const VIDEO_RPC = {
     '/bilibili.app.view.v1.View/View': 'view', '/bilibili.app.view.v1.View/RelatesFeed': 'view_feed',
     '/bilibili.app.viewunite.v1.View/View': 'unite', '/bilibili.app.viewunite.v1.View/RelatesFeed': 'unite_feed',
+    '/bilibili.community.service.dm.v1.DM/DmView': 'dm', '/x/v2/dm/web/view': 'web_dm',
     '/bilibili.app.view.v1.View/ViewProgress': 'progress', '/bilibili.app.viewunite.v1.View/ViewProgress': 'unite_progress'
   };
-  function videoAds(raw, route) {
+  function videoAds(raw, route, framed = true) {
     if (!raw || !ArrayBuffer.isView(raw)) throw new Error('binary');
     const frame = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
-    if (frame.length < 5 || frame.length > 2097152 || frame[0] > 1) throw new Error('frame');
+    if (frame.length > 2097152 || (framed && (frame.length < 5 || frame[0] > 1))) throw new Error('frame');
     const size = frame[1] * 16777216 + frame[2] * 65536 + frame[3] * 256 + frame[4];
-    if (size !== frame.length - 5) throw new Error('frame');
-    let payload = frame.subarray(5);
-    if (frame[0] === 1) {
+    if (framed && size !== frame.length - 5) throw new Error('frame');
+    let payload = framed ? frame.subarray(5) : frame;
+    if (framed && frame[0] === 1) {
       if (typeof $utils === 'undefined' || typeof $utils.ungzip !== 'function') throw new Error('gzip');
       payload = $utils.ungzip(payload);
     }
@@ -83,6 +84,12 @@
       const chunks = [];
       for (const field of fields(bytes)) {
         if (field.wire !== 2) { chunks.push(field.raw); continue; }
+        // 精确识别三连／关注互动指令，保留 #UP#、投票和未知互动弹幕。
+        if ((level === 'guide' && field.number === 2) || (level === 'dm' && field.number === 22) || (level === 'web_dm' && field.number === 9)) {
+          const attention = '#ATTENTION#';
+          if (fields(field.value).some(item => item.number === 4 && item.wire === 2 && item.value.length === attention.length &&
+            item.value.every((byte, index) => byte === attention.charCodeAt(index)))) { removed++; continue; }
+        }
         // 只删除引导层中的关注卡与契约（三连）卡；章节、弹幕和未知字段保留。
         if ((level === 'guide' && [1, 5].includes(field.number)) || (level === 'unite_guide' && field.number === 3)) { removed++; continue; }
         if ((level === 'view' && [30, 31, 41, 48].includes(field.number)) || (level === 'unite' && field.number === 7)) { removed++; continue; }
@@ -107,6 +114,7 @@
     }
     const next = rewrite(payload, route);
     if (!removed) return { removed: 0 };
+    if (!framed) return { body: next, removed };
     const result = new Uint8Array(next.length + 5);
     result[1] = Math.floor(next.length / 16777216); result[2] = Math.floor(next.length / 65536) % 256;
     result[3] = Math.floor(next.length / 256) % 256; result[4] = next.length % 256; result.set(next, 5);
@@ -312,7 +320,7 @@
         status.textContent="已选 "+names.length+" 项 · 按此顺序显示";
         save.disabled=names.length===0;
       }
-      var drag=null,animation=0;
+      var drag=null,animation=0,pending=null,ignoreClick=false;
       function place(x,y){
         var target=document.elementFromPoint(x,y),row=target&&target.closest(".tab-row");
         if(!row||!list.contains(row)||row===drag.row)return;
@@ -330,24 +338,63 @@
         var ended=drag;drag=null;cancelAnimationFrame(animation);
         if(cancel)ended.order.forEach(function(row){list.appendChild(row);});
         ended.row.classList.remove("dragging");ended.handle.setAttribute("aria-pressed","false");
-        if(list.hasPointerCapture(ended.id))list.releasePointerCapture(ended.id);
+        if(ended.mode==="pointer"&&typeof list.hasPointerCapture==="function"&&list.hasPointerCapture(ended.id))list.releasePointerCapture(ended.id);
         update();ended.handle.focus({preventScroll:true});
       }
+      function begin(row,handle,id,x,y,mode){
+        drag={row:row,handle:handle,id:id,x:x,y:y,mode:mode,order:Array.from(list.children)};
+        row.classList.add("dragging");handle.setAttribute("aria-pressed","true");
+        if(mode==="pointer"&&typeof list.setPointerCapture==="function"){
+          try{list.setPointerCapture(id);}catch(_){}
+        }
+        animation=requestAnimationFrame(scroll);
+      }
+      function clearPending(){if(pending){clearTimeout(pending.timer);pending=null;}}
       list.addEventListener("pointerdown",function(event){
+        // iPhone 触摸走非被动 Touch Events，避免浏览器把拖动交给滚动／取消指针。
+        if(event.pointerType==="touch"&&"ontouchstart" in window)return;
         var handle=event.target.closest(".drag-handle");
         if(!handle||!list.contains(handle)||drag||event.isPrimary===false||event.button!==0)return;
-        event.preventDefault();
-        drag={row:handle.closest(".tab-row"),handle:handle,id:event.pointerId,x:event.clientX,y:event.clientY,order:Array.from(list.children)};
-        list.setPointerCapture(event.pointerId);drag.row.classList.add("dragging");handle.setAttribute("aria-pressed","true");
-        animation=requestAnimationFrame(scroll);
+        event.preventDefault();ignoreClick=false;
+        begin(handle.closest(".tab-row"),handle,event.pointerId,event.clientX,event.clientY,"pointer");
       });
-      list.addEventListener("pointermove",function(event){
-        if(!drag||event.pointerId!==drag.id)return;
+      document.addEventListener("pointermove",function(event){
+        if(!drag||drag.mode!=="pointer"||event.pointerId!==drag.id)return;
         event.preventDefault();drag.x=event.clientX;drag.y=event.clientY;place(drag.x,drag.y);
       });
-      list.addEventListener("pointerup",function(event){if(drag&&event.pointerId===drag.id)finish(false);});
-      list.addEventListener("pointercancel",function(event){if(drag&&event.pointerId===drag.id)finish(true);});
-      list.addEventListener("lostpointercapture",function(){if(drag)finish(true);});
+      document.addEventListener("pointerup",function(event){if(drag&&drag.mode==="pointer"&&event.pointerId===drag.id)finish(false);});
+      document.addEventListener("pointercancel",function(event){if(drag&&drag.mode==="pointer"&&event.pointerId===drag.id)finish(true);});
+      list.addEventListener("touchstart",function(event){
+        clearPending();ignoreClick=false;
+        if(drag||event.touches.length!==1||event.target.closest(".delete-custom"))return;
+        var row=event.target.closest(".tab-row");if(!row||!list.contains(row))return;
+        var touch=event.touches[0],handle=row.querySelector(".drag-handle");
+        if(event.target.closest(".drag-handle")){
+          event.preventDefault();begin(row,handle,touch.identifier,touch.clientX,touch.clientY,"touch");
+        }else{
+          var candidate={row:row,handle:handle,id:touch.identifier,x:touch.clientX,y:touch.clientY};
+          candidate.timer=setTimeout(function(){if(pending!==candidate)return;pending=null;ignoreClick=true;begin(row,handle,candidate.id,candidate.x,candidate.y,"touch");},280);
+          pending=candidate;
+        }
+      },{passive:false});
+      document.addEventListener("touchmove",function(event){
+        if(pending){
+          var first=Array.from(event.touches).find(function(t){return t.identifier===pending.id;});
+          if(!first||Math.abs(first.clientX-pending.x)>8||Math.abs(first.clientY-pending.y)>8)clearPending();
+        }
+        if(!drag||drag.mode!=="touch")return;
+        var touch=Array.from(event.touches).find(function(t){return t.identifier===drag.id;});
+        if(!touch)return;
+        event.preventDefault();drag.x=touch.clientX;drag.y=touch.clientY;place(drag.x,drag.y);
+      },{passive:false});
+      document.addEventListener("touchend",function(event){
+        clearPending();if(!drag||drag.mode!=="touch")return;
+        if(Array.from(event.changedTouches).some(function(t){return t.identifier===drag.id;})){
+          event.preventDefault();ignoreClick=true;finish(false);
+        }
+      },{passive:false});
+      document.addEventListener("touchcancel",function(){clearPending();if(drag&&drag.mode==="touch"){ignoreClick=true;finish(true);}});
+      list.addEventListener("click",function(event){if(ignoreClick){event.preventDefault();event.stopPropagation();ignoreClick=false;}},true);
       list.addEventListener("keydown",function(event){
         if(event.key==="Escape"&&drag){event.preventDefault();finish(true);return;}
         var handle=event.target.closest(".drag-handle");if(!handle||!list.contains(handle)||drag)return;
@@ -358,15 +405,15 @@
       list.addEventListener("change",update);update();
     })();</script>`;
     return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Bilibili 首页标签</title><style>' +
-      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}.catalog-count{font-size:13px;margin:8px 0}details{font-size:14px;margin-top:16px}summary{cursor:pointer}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}#tab-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tab-row{display:flex;align-items:center;min-width:0;min-height:44px;border:1px solid #8883;border-radius:10px;background:light-dark(#fff,#20222b)}.tab-row label{flex:1;min-width:0;gap:7px;padding:8px 0 8px 9px;border:0;align-items:center;font-size:14px;line-height:1.3}.tab-row input{flex:none;width:18px;height:18px;margin:0}.tab-row span{overflow-wrap:anywhere}.delete-custom{flex:none;width:24px;height:44px;margin:0;padding:0;background:transparent;color:#888;font-size:19px}.custom-form label{display:block;padding:8px 0;border:0}.custom-form input{display:block;box-sizing:border-box;width:100%;height:42px;margin-top:6px;padding:8px 10px;border:1px solid #8884;border-radius:8px;background:light-dark(#fff,#20222b);color:inherit;font:inherit}.drag-handle{flex:none;width:32px;min-height:44px;padding:0;margin:0;background:transparent;color:#888;font-size:23px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.drag-handle:focus-visible{outline:2px solid #fb7299;outline-offset:-3px}.tab-row.dragging{border-color:#fb7299;background:#fb729922;box-shadow:0 0 0 2px #fb729933}.tab-row.dragging .drag-handle{cursor:grabbing;color:#fb7299}@media(min-width:540px){#tab-list{grid-template-columns:repeat(3,minmax(0,1fr))}}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
+      ':root{color-scheme:light dark}body{font:16px/1.7 -apple-system,sans-serif;margin:0;background:light-dark(#f6f7fb,#14151b);color:light-dark(#202532,#f1f2f7)}main{max-width:620px;margin:auto;padding:24px 18px}h1{font-size:26px}.catalog-count{font-size:13px;margin:8px 0}details{font-size:14px;margin-top:16px}summary{cursor:pointer}p{opacity:.75}label{display:flex;gap:12px;padding:14px;border-bottom:1px solid #8884}input{width:22px;height:22px;accent-color:#fb7299}button,a{display:block;box-sizing:border-box;width:100%;padding:13px;margin:12px 0;border:0;border-radius:12px;text-align:center;font:inherit;background:#fb7299;color:white;text-decoration:none}#tab-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tab-row{display:flex;align-items:center;min-width:0;min-height:44px;border:1px solid #8883;border-radius:10px;background:light-dark(#fff,#20222b)}.tab-row label{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;flex:1;min-width:0;gap:7px;padding:8px 0 8px 9px;border:0;align-items:center;font-size:14px;line-height:1.3}.tab-row input{flex:none;width:18px;height:18px;margin:0}.tab-row span{overflow-wrap:anywhere}.delete-custom{flex:none;width:24px;height:44px;margin:0;padding:0;background:transparent;color:#888;font-size:19px}.custom-form label{display:block;padding:8px 0;border:0}.custom-form input{display:block;box-sizing:border-box;width:100%;height:42px;margin-top:6px;padding:8px 10px;border:1px solid #8884;border-radius:8px;background:light-dark(#fff,#20222b);color:inherit;font:inherit}.drag-handle{flex:none;width:32px;min-height:44px;padding:0;margin:0;background:transparent;color:#888;font-size:23px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.drag-handle:focus-visible{outline:2px solid #fb7299;outline-offset:-3px}.tab-row.dragging{border-color:#fb7299;background:#fb729922;box-shadow:0 0 0 2px #fb729933}.tab-row.dragging .drag-handle{cursor:grabbing;color:#fb7299}@media(min-width:540px){#tab-list{grid-template-columns:repeat(3,minmax(0,1fr))}}.preview-card{position:sticky;top:0;z-index:1;padding:14px 0;background:light-dark(#f6f7fb,#14151b);border-bottom:1px solid #8884}.preview-title{display:flex;justify-content:space-between;gap:8px;font-size:14px}.preview-title small{opacity:.65}#tab-preview{display:flex;gap:24px;overflow-x:auto;white-space:nowrap;padding:12px 4px 4px;min-height:32px}.preview-tab{flex:none;font-size:19px;padding-bottom:7px}.preview-tab.first{color:#fb7299;border-bottom:3px solid #fb7299;font-weight:600}.preview-empty{opacity:.6}#tabs-save:disabled{opacity:.4}.message{padding:12px;background:#fb729922;border-radius:12px}</style></head><body><main><h1>首页标签管理</h1>' +
       (message ? '<div class="message" role="status">' + escapeHTML(message) + '</div>' : '') +
       '<form method="post" action="/tabs/load"><button type="submit">获取全部标签</button></form><p>获取未启用的客户端分区与服务；已获取后无需重复加载。</p>' +
-      '<p>勾选显示，按住 ≡ 拖动排序，预览同步更新。完成后保存并重新打开 B 站。</p>' +
+      '<p>勾选显示，按住 ≡ 拖动，或长按标签后排序，预览同步更新。完成后保存并重新打开 B 站。</p>' +
       '<section class="preview-card" aria-label="首页标签预览"><div class="preview-title"><strong>首页标签预览</strong><small id="preview-status" aria-live="polite">已选 ' + selectedTabs.length + ' 项 · 按此顺序显示</small></div><div id="tab-preview">' + (preview || '<span class="preview-empty">请至少选择一个标签</span>') + '</div></section>' +
       '<p class="catalog-count">可选 ' + state.catalog.length + ' 项 · 分区与服务 ' + state.catalog.filter(tab => tab.source === 'region').length + ' 项</p>' +
       (rows ? '<form method="post" action="/tabs/save"><div id="tab-list">' + rows + '</div><button id="tabs-save" type="submit">保存选择与排序</button></form>' : '<p>尚未收到标签，请确认 MitM 已开启并刷新 B 站插件与脚本。</p>') +
       '<form id="custom-delete" method="post" action="/tabs/delete"></form><details><summary>手动添加标签</summary><form class="custom-form" method="post" action="/tabs/add"><label>标签名称<input type="text" name="name" maxlength="64" placeholder="例如：a" required></label><label>对应 URL<input type="text" name="url" maxlength="2048" placeholder="https://example.com 或 bilibili://…" autocapitalize="none" autocorrect="off" spellcheck="false" required></label><p>支持网页链接和 B 站客户端链接。添加后勾选、拖动并保存；自定义项右侧 × 可删除。</p><button type="submit">添加标签</button></form></details>' +
-      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><details><summary>使用说明</summary><p>标签按从左到右、从上到下排序。至少保留一项，新获取项默认不勾选。按住右侧拖动柄移动，拖到屏幕边缘可滚动；手势取消会恢复本次拖动前的顺序。键盘方向键也可排序。预览突出第一项仅示意排列，不改变客户端默认选中项。</p><p>设置保存在本机，不依赖日志开关。保存后无需再运行管理按钮或获取全部标签；维持自定义效果需保持插件启用。</p></details></main>' + previewScript + '</body></html>';
+      '<form method="post" action="/tabs/reset"><button type="submit">恢复全部标签</button></form><a href="/tabs">刷新标签列表</a><details><summary>使用说明</summary><p>标签按从左到右、从上到下排序。至少保留一项，新获取项默认不勾选。按住右侧拖动柄直接移动，或长按标签约 0.3 秒再拖动；普通滑动仍可滚动列表，拖到屏幕边缘也可滚动；手势取消会恢复本次拖动前的顺序。键盘方向键也可排序。预览突出第一项仅示意排列，不改变客户端默认选中项。</p><p>设置保存在本机，不依赖日志开关。保存后无需再运行管理按钮或获取全部标签；维持自定义效果需保持插件启用。</p></details></main>' + previewScript + '</body></html>';
   }
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function options(raw) {
@@ -442,6 +489,7 @@
   const LIMIT = 300;
   const rpcPaths = [
     DEFAULT_WORDS_PATH,
+    '/bilibili.community.service.dm.v1.DM/DmView', '/x/v2/dm/web/view',
     '/bilibili.app.view.v1.View/ViewProgress', '/bilibili.app.viewunite.v1.View/ViewProgress',
     '/bilibili.app.view.v1.View/RelatesFeed', '/bilibili.app.viewunite.v1.View/RelatesFeed',
     '/bilibili.app.view.v1.View/View', '/bilibili.app.viewunite.v1.View/View',
@@ -667,9 +715,12 @@
     }
     const local = /^http:\/\/bilibili-logs\.invalid(?::80)?(\/[^#]*)?$/.exec(String(request.url || ''));
     if (local) return localPage(request, local, config);
-    const videoMatch = /^https:\/\/(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?(\/bilibili\.app\.(?:view|viewunite)\.v1\.View\/(?:View|RelatesFeed|ViewProgress))(?:\?[^#]*)?$/.exec(String(request.url || ''));
-    if (videoMatch && request.method === 'POST') {
+    const videoMatch = /^https:\/\/(?:app\.bilibili\.com|grpc\.biliapi\.net|app\.biliapi\.net)(?::443)?(\/(?:bilibili\.app\.(?:view|viewunite)\.v1\.View\/(?:View|RelatesFeed|ViewProgress)|bilibili\.community\.service\.dm\.v1\.DM\/DmView))(?:\?[^#]*)?$/.exec(String(request.url || ''));
+    const webDmMatch = /^https:\/\/api\.bilibili\.com(?::443)?(\/x\/v2\/dm\/web\/view)(?:\?[^#]*)?$/.exec(String(request.url || ''));
+    const binaryMatch = videoMatch || webDmMatch;
+    if (binaryMatch && request.method === (webDmMatch ? 'GET' : 'POST')) {
       if (!response) {
+        if (webDmMatch) return $done({});
         const headers = Object.assign({}, request.headers || {});
         for (const key of Object.keys(headers)) if (key.toLowerCase() === 'grpc-accept-encoding') delete headers[key];
         headers['grpc-accept-encoding'] = 'identity';
@@ -677,14 +728,14 @@
       }
       syncLogging(config); notifyLogging(config);
       const status = Number(response.statusCode || response.status || 200);
-      if (config.log_enabled) event = { time: new Date().toISOString(), endpoint: videoMatch[1], method: 'POST', status,
+      if (config.log_enabled) event = { time: new Date().toISOString(), endpoint: binaryMatch[1], method: webDmMatch ? 'GET' : 'POST', status,
         body_length: ArrayBuffer.isView(response.body) ? response.body.byteLength : 0, before: 0, after: 0, removed: 0 };
       if (status < 200 || status >= 300) return finish({}, 'http_error');
       const headers = Object.assign({}, response.headers, response.h2_trailers);
       const grpcKey = Object.keys(headers).find(key => key.toLowerCase() === 'grpc-status');
       if (grpcKey && String(headers[grpcKey]) !== '0') return finish({}, 'api_error');
       try {
-        const result = videoAds(response.body, VIDEO_RPC[videoMatch[1]]);
+        const result = videoAds(response.body, VIDEO_RPC[binaryMatch[1]], !webDmMatch);
         if (event) { event.before = result.removed; event.removed = result.removed; }
         return finish(result.body ? { body: result.body } : {}, result.body ? 'modified' : 'unchanged');
       } catch (_) { return finish({}, 'unsupported_body'); }
