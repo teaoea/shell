@@ -295,7 +295,7 @@ test('search module filtering logs safe counts without search words or history',
 });
 test('logger routes are disjoint and optional metadata hook does not buffer body', () => {
   const lines = plugin.split('\n').filter(line => line.startsWith('http-response '));
-  assert.equal(lines.length, 4);
+  assert.equal(lines.length, 5);
   const [filter, metadata] = lines.map(line => new RegExp(line.split(' ')[1]));
   for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/v2/splash/brand/list', '/x/v2/splash/event/list2', '/x/resource/show/tab/v2',
     '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {
@@ -330,4 +330,19 @@ test('rare splash records survive ordinary requests, with only the latest 20 pro
  assert.deepEqual(state.events.filter(event=>paths.includes(event.endpoint)).map(event=>event.time),events.slice(5,25).map(event=>event.time));
  const exported=h.page('/export').response.body;assert.ok(exported.includes(events[24].time));assert.ok(!exported.includes(events[0].time));
  h.run({$argument:{log_enabled:false}});assert.deepEqual(JSON.parse(h.stored()),{events:[],evicted:0});
+});
+
+test('unknown splash paths expose only fixed segments and data metadata never reads bodies',()=>{
+ const h=harness();
+ const response={status:200};
+ Object.defineProperty(response,'body',{get(){throw Error('must not read body');}});
+ for(const host of ['app.bilibili.com','data.bilibili.com']){
+  h.run({$request:{url:'https://'+host+'/x/v3/splash/'+secret+'/%31%32%33?token='+secret,method:'POST'},$response:response});
+ }
+ const events=JSON.parse(h.stored()).events;
+ assert.equal(events.length,2);
+ for(const event of events){assert.equal(event.route_hint,'/x/v3/splash/{other}/{other}');assert.equal(event.outcome,'metadata_only');}
+ assert.equal(events[1].host,'data.bilibili.com');
+ for(const text of [h.stored(),h.page('/export').response.body,h.page().response.body])assert.ok(!text.includes(secret));
+ assert.match(plugin,/http-response \^https:\/\/data/);
 });

@@ -203,3 +203,5 @@ UID／标题黑名单：JSON 首页与 `/x/v2/feed/index/story` 推荐读取 `ar
 实机需要分别确认开屏接口命中、首页广告卡片清理、普通视频保留、可选过滤开关与导航可用性。如果未生效，应先确认接口是否为本版覆盖的 JSON 或二进制路径，再提供脱敏后的响应结构；请勿发送 Cookie、access_key 或账号凭据。
 
 接口与字段参考：[app2smile 的 Bilibili JSON 脚本](https://github.com/app2smile/rules/blob/master/js/bilibili-json.js)。本插件独立实现，未内嵌上游脚本；公开字段参考不等于当前版本的实机证据。
+
+未知接口排查：开发日志对 `other_api` 增加主机和安全路径提示，只保留固定白名单路径段（如 `x/v2/splash`），其他段统一显示为 `{other}`；不保存完整未知路径、查询参数、令牌或正文。`data.bilibili.com` 仅记录元数据，不按整个域名拦截。旧日志不能补回这些信息，需更新插件配置与脚本后重新采集。路径提示用于定位接口类别，并不证明该请求属于广告。
