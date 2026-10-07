@@ -244,11 +244,30 @@ test('cron detects switch without traffic; manual entry always offers log page',
   assert.equal(h.notifications.length, 2);
   assert.equal(h.writes(), 0);
 });
+test('search module filtering logs safe counts without search words or history', () => {
+  const h = harness();
+  h.run({
+    $request: { url: 'https://app.bilibili.com/x/v2/search/square?token=' + secret, method: 'GET' },
+    $response: { status: 200, body: JSON.stringify({ code: 0, data: [
+      { type: 'trending', data: { list: [{ keyword: secret }] } },
+      { type: 'recommend', data: { list: [{ keyword: secret }] } },
+      { type: 'history', title: secret }
+    ] }) },
+    $argument: { log_enabled: true, hide_search_discovery: true }
+  });
+  const event = JSON.parse(h.stored()).events[0];
+  assert.equal(event.endpoint, '/x/v2/search/square');
+  assert.equal(event.outcome, 'modified');
+  assert.equal(event.before, 3); assert.equal(event.after, 1); assert.equal(event.removed, 2);
+  assert.equal(event.data_schema.data, 'array');
+  assert.ok(!h.stored().includes(secret));
+});
 test('logger routes are disjoint and optional metadata hook does not buffer body', () => {
   const lines = plugin.split('\n').filter(line => line.startsWith('http-response '));
   assert.equal(lines.length, 2);
   const [filter, metadata] = lines.map(line => new RegExp(line.split(' ')[1]));
-  for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/resource/show/tab/v2']) {
+  for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/resource/show/tab/v2',
+    '/x/v2/search/square', '/x/v2/search/trending/ranking']) {
     for (const suffix of ['', '?token=' + secret]) {
       const url = 'https://app.bilibili.com' + path + suffix;
       assert.equal(filter.test(url), true); assert.equal(metadata.test(url), false);

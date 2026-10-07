@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon JSON 响应过滤与本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.4.0；更新时间：2026-10-07
+ * 版本：1.5.0；更新时间：2026-10-07
  * 只处理已登记的 JSON 接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -9,12 +9,14 @@
   const defaults = {
     remove_splash_ads: true, remove_feed_ads: true,
     hide_live: false, hide_game: false, hide_member_shop: false,
-    hide_publish: false, blocked_uids: '', blocked_keywords: '', log_enabled: false
+    hide_publish: false, hide_search_discovery: false,
+    blocked_uids: '', blocked_keywords: '', log_enabled: false
   };
   const paths = {
     '/x/v2/splash/list': 'splash', '/x/v2/splash/show': 'splash',
     '/x/v2/feed/index': 'feed', '/x/v2/feed/index/story': 'feed',
-    '/x/resource/show/tab': 'tab', '/x/resource/show/tab/v2': 'tab'
+    '/x/resource/show/tab': 'tab', '/x/resource/show/tab/v2': 'tab',
+    '/x/v2/search/square': 'search_square', '/x/v2/search/trending/ranking': 'search_trending'
   };
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function options(raw) {
@@ -96,7 +98,7 @@
   const outcomes = ['modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
   const cardTypes = ['small_cover_v2', 'small_cover_v10', 'banner_v8', 'cm_v2', 'cm_double_v9'];
   const cardGotos = ['av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
-  const fields = ['items', 'list', 'show', 'top', 'bottom', 'card_type', 'card_goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'];
+  const fields = ['data', 'type', 'items', 'list', 'top_list', 'show', 'top', 'bottom', 'card_type', 'card_goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'];
   function kind(value) {
     return value === null ? 'null' : Array.isArray(value) ? 'array' : object(value) ? 'object' :
       ['string', 'number', 'boolean'].includes(typeof value) ? typeof value : 'other';
@@ -194,7 +196,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.4.0</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.5.0</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     function respond(status, type, body, extra = {}) {
@@ -266,11 +268,14 @@
     const json = losslessJSON(response.body);
     const body = json.value;
     if (!object(body) || body.code !== 0) return finish({}, 'api_error');
-    if (!object(body.data)) return finish({}, 'unsupported_schema');
+    if (!(route === 'search_square' ? Array.isArray(body.data) : object(body.data))) return finish({}, 'unsupported_schema');
     const data = body.data;
+    const contentCount = () => Array.isArray(body.data) ? body.data.length :
+      ['items', 'list', 'show', 'top', 'bottom'].concat(route === 'search_trending' ? ['top_list'] : [])
+        .reduce((sum, key) => sum + (Array.isArray(data[key]) ? data[key].length : 0), 0);
     if (event) {
-      event.data_schema = schema(data);
-      event.before = ['items', 'list', 'show', 'top', 'bottom'].reduce((sum, key) => sum + (Array.isArray(data[key]) ? data[key].length : 0), 0);
+      event.data_schema = Array.isArray(data) ? schema(body) : schema(data);
+      event.before = contentCount();
       const items = Array.isArray(data.items) ? data.items : [];
       event.item_schema = {};
       event.cards = [];
@@ -289,6 +294,15 @@
       const previous = parent[key];
       const next = previous.filter(keep);
       if (next.length !== previous.length) { parent[key] = next; changed = true; }
+    }
+    if (config.hide_search_discovery) {
+      if (route === 'search_square') {
+        // 公开 App 响应的模块类型：trending 为热搜，recommend 为搜索发现。
+        // 保留 history 和所有未知模块，不按标题猜测类型。
+        filter(body, 'data', module => !object(module) || !['trending', 'recommend'].includes(module.type));
+      } else if (route === 'search_trending') {
+        for (const key of ['list', 'top_list']) filter(data, key, () => false);
+      }
     }
     if (route === 'splash' && config.remove_splash_ads) {
       // 仅清理开屏投放列表，保留启动配置和其他未知字段。
@@ -331,7 +345,7 @@
       }
     }
     if (event) {
-      event.after = ['items', 'list', 'show', 'top', 'bottom'].reduce((sum, key) => sum + (Array.isArray(data[key]) ? data[key].length : 0), 0);
+      event.after = contentCount();
       event.removed = event.before - event.after;
     }
     return finish(changed ? { body: json.stringify(body) } : {}, changed ? 'modified' : 'unchanged');

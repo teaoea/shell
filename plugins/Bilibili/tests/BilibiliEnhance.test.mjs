@@ -110,6 +110,37 @@ test('large numeric IDs retain their exact literals while ads are filtered', () 
   });
   assert.equal(result.body, '{"code":0,"data":{"items":[],"id":1234567890123456789}}');
 });
+test('search discovery is opt-in and preserves history and unknown modules', () => {
+  const modules = [{ type: 'trending', title: '热搜', data: { list: [{ keyword: '词条' }] } },
+    { type: 'history', title: '搜索历史' },
+    { type: 'recommend', title: '搜索发现', data: { list: [{ keyword: '推荐' }] } },
+    { type: 'future_module', title: '搜索发现' }, null];
+  const path = '/x/v2/search/square';
+  assert.deepEqual(run(modules, {}, path), {});
+  assert.deepEqual(run(modules, { hide_search_discovery: 'false' }, path), {});
+  for (const options of [{ hide_search_discovery: true }, 'hide_search_discovery=true', '{"hide_search_discovery":true}']) {
+    assert.deepEqual(parsed(run(modules, options, path)), [modules[1], ...modules.slice(3)]);
+  }
+});
+test('search ranking clears both hot lists and preserves metadata', () => {
+  const data = { list: [{ keyword: '热搜' }], top_list: [{ keyword: '置顶' }], trackid: 'keep', future: [1] };
+  const path = '/x/v2/search/trending/ranking';
+  assert.deepEqual(run(data, {}, path), {});
+  assert.deepEqual(parsed(run(data, { hide_search_discovery: true }, path)),
+    { ...data, list: [], top_list: [] });
+  assert.deepEqual(run({ list: [], top_list: [] }, { hide_search_discovery: true }, path), {});
+});
+test('search filtering ignores unexpected schemas and unrelated search APIs', () => {
+  for (const [path, data] of [['/x/v2/search/square', { items: [{ type: 'recommend' }] }],
+    ['/x/v2/search/trending/ranking', [{ type: 'trending' }]],
+    ['/x/v2/search/square', [{ type: 'history' }, { title: '热搜' }]],
+    ['/x/v2/search', { items: [{ type: 'recommend' }] }],
+    ['/x/v2/search/suggest', { list: [{ keyword: '输入联想' }] }],
+    ['/x/v2/search/default', { show_name: '默认词' }],
+    ['/x/v2/search/square/extra', [{ type: 'recommend' }]]]) {
+    assert.deepEqual(run(data, { hide_search_discovery: true }, path), {});
+  }
+});
 test('member shop switch filters merchandise in both feed routes independently of ads', () => {
   const products = [{ card_goto: 'mall' }, { uri: 'bilibili://mall/detail/123' },
     { uri: 'https://mall.bilibili.com/neul/index.html?id=123' },
@@ -151,7 +182,7 @@ test('unmodified large numbers and malformed numeric JSON are passed through', (
 test('Loon configuration passes every option and keeps optional filters disabled', () => {
   const names = [...plugin.matchAll(/^([a-z_]+) = (switch|input),([^,]+),/gm)];
   const line = plugin.split('\n').find(line => line.startsWith('http-response '));
-  assert.equal(names.length, 9);
+  assert.equal(names.length, 10);
   for (const [, name, type, value] of names) {
     assert.ok(line.includes('{' + name + '}'));
     if (type === 'switch') assert.equal(value, name.startsWith('remove_') ? 'true' : 'false');
@@ -170,7 +201,7 @@ test('host/path/method boundaries protect other APIs and lookalike domains', () 
 test('plugin regex covers implemented endpoints and rejects extra suffixes', () => {
   const line = plugin.split('\n').find(line => line.startsWith('http-response '));
   const regex = new RegExp(line.split(' ')[1]);
-  for (const path of ['/x/v2/splash/list', '/x/v2/splash/show', '/x/v2/feed/index', '/x/v2/feed/index/story', '/x/resource/show/tab', '/x/resource/show/tab/v2']) {
+  for (const path of ['/x/v2/splash/list', '/x/v2/splash/show', '/x/v2/feed/index', '/x/v2/feed/index/story', '/x/resource/show/tab', '/x/resource/show/tab/v2', '/x/v2/search/square', '/x/v2/search/trending/ranking']) {
     for (const suffix of ['', '?build=1']) {
       const url = 'https://app.bilibili.com' + path + suffix;
       assert.equal(regex.test(url), true);

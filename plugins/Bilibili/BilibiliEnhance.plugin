@@ -1,7 +1,7 @@
 #!name = Bilibili 增强
 #!author = 可莉唯一的狗、ChatGPT
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/assets/bilibili.png
-#!desc = 支持已识别的开屏及首页广告过滤、直播与游戏推荐过滤、导航精简、UP 主 UID 与标题关键词屏蔽，以及本地开发日志查看、导出和清空。
+#!desc = 支持已识别的开屏及首页广告过滤、直播与游戏推荐过滤、导航精简、搜索热搜与发现隐藏、UP 主 UID 与标题关键词屏蔽，以及本地开发日志查看、导出和清空。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/Bilibili/README.md
 #!tag = Bilibili,去广告,推荐过滤
 
@@ -12,6 +12,7 @@ hide_live = switch,false,tag=隐藏直播推荐,desc=默认关闭；开启后刷
 hide_game = switch,false,tag=隐藏游戏推广,desc=默认关闭；开启后刷新首页，隐藏游戏推荐卡片；重新打开 B 站可加载导航中的游戏中心隐藏结果
 hide_member_shop = switch,false,tag=隐藏会员购入口,desc=默认关闭；开启后隐藏导航中的会员购入口，同时移除推荐流中可识别的会员购商品卡片；保存后刷新首页并重新打开 B 站；不改变会员权益
 hide_publish = switch,false,tag=隐藏发布入口,desc=默认关闭；开启后重新打开 B 站，隐藏导航中的发布入口
+hide_search_discovery = switch,false,tag=隐藏热搜与搜索发现,desc=默认关闭；开启后隐藏搜索框下方的热搜和搜索发现；保留搜索历史与正常搜索结果；保存后退出搜索页再进入，缓存内容可能需要重新打开 B 站
 blocked_uids = input,"",tag=UP 主 UID 屏蔽名单,desc=填写数字 UID，多个用空格或逗号分隔，例如 12345 67890；保存后刷新首页，仅过滤能识别 UP 主 UID 的卡片；留空停用
 blocked_keywords = input,"",tag=标题关键词屏蔽,desc=填写要屏蔽的标题关键词，多个用逗号分隔，例如 抽奖，带货；保存后刷新首页，按标题包含关键词过滤，英文不区分大小写；留空停用
 log_enabled = switch,false,tag=开发日志,desc=默认关闭；开启后自动记录，刷新 B 站首页触发提醒，点击通知打开日志页；请先导出再关闭，关闭后在下一次请求、日志页访问或每分钟检查时自动清空记录；不保存令牌或正文
@@ -24,9 +25,9 @@ DOMAIN,bilibili-logs.invalid,DIRECT
 cron "* * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 日志开启提醒
 generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,timeout=10,argument=[{log_enabled}],tag=Bilibili 打开日志页,img-url=doc.text.magnifyingglass.system
 # 功能：仅处理已登记的 JSON API，不读取视频媒体或二进制 RPC。更新时间：2026-10-07
-http-response ^https://app\.bilibili\.com(?::443)?/x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?)|resource/show/tab(?:/v2)?)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,timeout=10,argument=[{remove_splash_ads},{remove_feed_ads},{hide_live},{hide_game},{hide_member_shop},{hide_publish},{blocked_uids},{blocked_keywords},{log_enabled}],tag=Bilibili 广告与推荐过滤
+http-response ^https://app\.bilibili\.com(?::443)?/x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?|search/(?:square|trending/ranking))|resource/show/tab(?:/v2)?)(?:\?[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=true,timeout=10,argument=[{remove_splash_ads},{remove_feed_ads},{hide_live},{hide_game},{hide_member_shop},{hide_publish},{hide_search_discovery},{blocked_uids},{blocked_keywords},{log_enabled}],tag=Bilibili 广告与推荐过滤
 # 功能：其他 app 主机响应只记录元数据，不读取正文；显式排除上面的 JSON 接口，避免重复记录。更新时间：2026-10-07
-http-response ^https://app\.bilibili\.com(?::443)?/(?!x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?)|resource/show/tab(?:/v2)?)(?:\?|$))[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled}],tag=Bilibili 开发元数据日志
+http-response ^https://app\.bilibili\.com(?::443)?/(?!x/(?:v2/(?:splash/(?:list|show)|feed/index(?:/story)?|search/(?:square|trending/ranking))|resource/show/tab(?:/v2)?)(?:\?|$))[^#]*$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,enable={log_enabled},argument=[{log_enabled}],tag=Bilibili 开发元数据日志
 http-request ^http://bilibili-logs\.invalid(?::80)?(?:/[^#]*)?$ script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/Bilibili/BilibiliEnhance.js,requires-body=false,timeout=10,argument=[{log_enabled}],tag=Bilibili 开发日志页面
 
 [Mitm]
