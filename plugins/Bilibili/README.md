@@ -132,7 +132,7 @@ JSON 广告和推荐过滤匹配 `app.bilibili.com`、`app.biliapi.net`（HTTPS�
 
 开屏补充 `event/list2` 的活动投放列表，保留其他启动配置。已有开屏广告缓存可能继续显示；更新后可在 B 站设置中清理缓存，再重新打开并记录新请求。新增覆盖 `/x/v2/splash/brand/list`，记录该接口处理结果，只过滤 `is_ad`、非空 `ad_info` 等明确广告标记，保留普通品牌插画和未知结构。该接口也用于插画列表，参考[开屏图片采集项目的接口实现](https://github.com/Little-Data/bili_splash_images/blob/main/get_app_splash.py)。截图中存在此接口，并不证明这次低频广告来自它。
 
-`data.bilibili.com` 未加入 MitM：仅有域名连接记录不能确定其具体用途或证明广告来源；当前没有针对它的已验证过滤接口。插件定向解密过滤所需域名，`DIRECT` 路由与是否解密是两个独立设置。
+`data.bilibili.com` 已加入 MitM 解密范围，便于在 Loon 请求记录中查看可解密的具体接口。更新远程插件配置后生效，需要开启 MitM 并信任 Loon 证书。该域名目前没有新增广告过滤规则，也未纳入本插件开发日志采集；解密本身不等于拦截广告。`DIRECT` 路由与是否解密是两个独立设置。
 
 字段参考：[公开播放页协议包](https://www.npmjs.com/package/@biliverse/protobuf)、[旧版播放引导协议](https://github.com/10miaomiao/bilimiao2/blob/b4f6edded1915e79499062e3ff0819c4deba93a2/bilimiao-grpc/proto/src/main/proto/bilibili/app/view/v1/view.proto)、[公开开屏活动配置](https://github.com/Destellovo/Surge/blob/main/Bilibili.sgmodule)。互动指令字段参考：[弹幕协议包](https://www.npmjs.com/package/@biliverse/protobuf)；三连栏与 `#ATTENTION#` 的对应关系参考：[相关研究的接口识别说明](https://www.com.cuhk.edu.hk/publication/liang-journal-2023-cue.pdf)。本插件独立实现定向处理，不内嵌上游脚本。
 
