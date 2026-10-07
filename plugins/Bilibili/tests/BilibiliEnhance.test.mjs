@@ -257,7 +257,7 @@ test('unmodified large numbers and malformed numeric JSON are passed through', (
 test('Loon configuration passes every option and keeps optional filters disabled', () => {
   const names = [...plugin.matchAll(/^([a-z_]+) = (switch|input),([^,]+),/gm)];
   const line = plugin.split('\n').find(line => line.startsWith('http-response '));
-  assert.equal(names.length, 10);
+  assert.equal(names.length, 11);
   for (const [, name, type, value] of names) {
     assert.ok(line.includes('{' + name + '}'));
     if (type === 'switch') assert.equal(value, name.startsWith('remove_') ? 'true' : 'false');
@@ -342,4 +342,23 @@ test('JSON story and homepage share UID and title rules using actual recognized 
  for(const path of ['/x/v2/feed/index','/x/v2/feed/index/story']){
   assert.deepEqual(parsed(run(raw,{blocked_uids:'123 456 789',blocked_keywords:'带货,world',remove_feed_ads:false},path)).items,[raw.items[3],raw.items[6],raw.items[7]]);
  }
+});
+
+test('story live detection uses actual goto and live URI, without matching video titles or misleading hosts',()=>{
+ const keep=[{goto:'vertical_av',title:'直播回放'},{uri:'https://live.bilibili.com.evil.test/1'},{uri:'bilibili://video/1',title:'live'},null];
+ const live=[{goto:'live'},{card_goto:'live_rcmd'},{uri:'bilibili://live/123?token=PRIVATE_TOKEN'},{uri:'https://live.bilibili.com/123'}];
+ for(const path of ['/x/v2/feed/index','/x/v2/feed/index/story']){
+  const data={items:[...keep,...live],config:{auto_play:1},future:42};
+  const option=path.endsWith('/story')?'hide_video_live':'hide_live';
+  assert.deepEqual(parsed(run(data,{[option]:true},path)),{...data,items:keep});
+  assert.deepEqual(run(data,{[option]:false},path),{});
+ }
+});
+
+test('homepage live filtering and story live filtering have independent switches',()=>{
+ const data={items:[{goto:'live'},{goto:'vertical_av',title:'普通视频'}]};
+ assert.deepEqual(run(data,{hide_video_live:true},'/x/v2/feed/index'),{});
+ assert.deepEqual(run(data,{hide_live:true},'/x/v2/feed/index/story'),{});
+ assert.deepEqual(parsed(run(data,{hide_video_live:'true'},'/x/v2/feed/index/story')).items,[data.items[1]]);
+ assert.deepEqual(run(data,{},'/x/v2/feed/index/story'),{});
 });

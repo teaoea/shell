@@ -1,14 +1,14 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.11.0；更新时间：2026-10-07
+ * 版本：1.11.1；更新时间：2026-10-07
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
   'use strict';
   const defaults = {
     remove_splash_ads: true, remove_feed_ads: true,
-    hide_live: false, hide_game: false, hide_member_shop: false,
+    hide_live: false, hide_video_live: false, hide_game: false, hide_member_shop: false,
     hide_publish: false, hide_search_discovery: false,
     blocked_uids: '', blocked_keywords: '', log_enabled: false
   };
@@ -34,7 +34,7 @@
     const normalize = value => typeof value === 'string' && /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, '') : null;
     const uids = new Set(config.blocked_uids.split(/[\s,，;；]+/).map(normalize).filter(Boolean));
     const keywords = config.blocked_keywords.split(/[\n,，]+/).map(word => word.trim().toLowerCase()).filter(Boolean);
-    return { active: uids.size > 0 || keywords.length > 0, match: (uid, title) =>
+    return { hideLive: config.hide_video_live, active: uids.size > 0 || keywords.length > 0, match: (uid, title) =>
       uids.has(normalize(uid)) || (typeof title === 'string' && keywords.some(word => title.toLowerCase().includes(word))) };
   }
   function videoAds(raw, route, framed = true, policy = null) {
@@ -126,6 +126,13 @@
       const uid = author ? uidText(fields(author.value).find(field => field.number === uidNumber && field.wire === 0)) : null;
       return { uid, title: titleText(info.find(field => field.number === titleNumber && field.wire === 2)) };
     }
+    function liveRecommendation(card, unified) {
+      if (!policy || !policy.hideLive) return false;
+      if (unified) return card.some(field => (field.number === 1 && field.wire === 0 && field.value === 6) ||
+        (field.number === 7 && field.wire === 2 && field.value.length > 0));
+      return liveDestination(titleText(card.find(field => field.number === 7 && field.wire === 2)),
+        titleText(card.find(field => field.number === 9 && field.wire === 2)));
+    }
     function blockedRecommendation(card, unified) {
       if (!policy || !policy.active) return false;
       const info = recommendationInfo(card, unified);
@@ -146,12 +153,12 @@
         if ((level === 'view' && [30, 31, 41, 48].includes(field.number)) || (level === 'unite' && field.number === 7)) { removed++; continue; }
         if ((level === 'view' && field.number === 10) || (level === 'view_feed' && field.number === 1)) {
           const card = fields(field.value);
-          if (card.some(item => item.number === 28 && item.wire === 2 && item.value.length > 0) || blockedRecommendation(card, false)) { removed++; continue; }
+          if (card.some(item => item.number === 28 && item.wire === 2 && item.value.length > 0) || liveRecommendation(card, false) || blockedRecommendation(card, false)) { removed++; continue; }
         }
         if (['unite_cards', 'unite_feed'].includes(level) && field.number === 1) {
           const card = fields(field.value);
           if (card.some(item => (item.number === 1 && item.wire === 0 && item.value === 5) ||
-            ([6, 11].includes(item.number) && item.wire === 2 && item.value.length > 0)) || blockedRecommendation(card, true)) { removed++; continue; }
+            ([6, 11].includes(item.number) && item.wire === 2 && item.value.length > 0)) || liveRecommendation(card, true) || blockedRecommendation(card, true)) { removed++; continue; }
         }
         const child = level === 'progress' && field.number === 1 ? 'guide' :
           level === 'unite_progress' && field.number === 1 ? 'unite_guide' :
@@ -429,6 +436,10 @@
     return ['cm_v2', 'cm_double_v9'].includes(item.card_type) &&
       ['ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'].includes(item.card_goto);
   }
+  function liveDestination(goto, uri) {
+    return ['live', 'live_rcmd'].includes(goto) || (typeof uri === 'string' &&
+      /^(?:bilibili:\/\/live(?:[/?#]|$)|https?:\/\/live\.bilibili\.com(?::443)?(?:[/?#]|$))/i.test(uri));
+  }
   function memberShop(item) {
     // 只识别商品跳转／明确的会员购标签，不按视频标题或 UP 主名称过滤。
     if (item.card_goto === 'mall') return true;
@@ -481,8 +492,8 @@
   ];
   const outcomes = ['modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
   const cardTypes = ['small_cover_v2', 'small_cover_v10', 'banner_v8', 'cm_v2', 'cm_double_v9'];
-  const cardGotos = ['av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
-  const fields = ['data', 'type', 'items', 'list', 'event_list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'].concat(memberPromoFields);
+  const cardGotos = ['av', 'vertical_av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
+  const fields = ['data', 'type', 'items', 'list', 'event_list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'].concat(memberPromoFields);
   function kind(value) {
     return value === null ? 'null' : Array.isArray(value) ? 'array' : object(value) ? 'object' :
       ['string', 'number', 'boolean'].includes(typeof value) ? typeof value : 'other';
@@ -591,7 +602,7 @@
       <section class="stats" aria-label="日志统计"><div class="stat"><strong>${state.events.length}</strong><span>已保存记录</span></div><div class="stat"><strong>${removed}</strong><span>已移除项目</span></div><div class="stat"><strong>${state.evicted}</strong><span>已淘汰记录</span></div></section>
       <section class="panel"><h2>记录管理</h2><div class="actions"><a class="primary" href="/export" download="bilibili-development.log">导出日志</a><a href="/">刷新记录</a><form method="post" action="/clear"><button class="clear" type="submit">清空记录</button></form></div><p class="note">${config.log_enabled ? '开启后自动记录。请先导出文件，再关闭日志；关闭后会自动清空记录。' : '日志已关闭，记录会自动清空。开启「开发日志」后刷新 B 站首页即可自动记录。'}</p></section>
       <section class="panel"><h2>最近记录 <small style="font-size:12px;color:var(--muted);font-weight:400">最多展示 20 条</small></h2>${rows || '<div class="empty"><strong>还没有记录</strong><p>' + (config.log_enabled ? '打开 Bilibili 并刷新首页，再回来刷新记录。' : '开启日志后，打开 Bilibili 并刷新首页。') + '</p></div>'}</section>
-      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.11.0</footer></main></body></html>`;
+      <section class="panel"><details><summary>隐私与记录范围</summary><p>记录仅保存在本机，最多保留 300 条，其中最近 20 条开屏记录优先保留；导出可查看全部保留记录。只保存接口类别、处理结果、数量和白名单结构类型，不保存令牌、Cookie、查询参数、标题、UID 或原始正文。</p><p>仅记录可被 Loon 解密的 app.bilibili.com 响应；二进制接口只记元数据。并发请求可能丢失部分记录。</p></details></section><footer>时间显示为北京时间 · Bilibili 增强 1.11.1</footer></main></body></html>`;
   }
   function localPage(request, local, config) {
     const path = (local[1] || '/').split('?')[0];
@@ -778,7 +789,7 @@
       for (const item of items.slice(0, 200)) if (object(item)) {
         Object.assign(event.item_schema, schema(item));
         const type = cardTypes.includes(item.card_type) ? item.card_type : 'other';
-        const goto = cardGotos.includes(item.card_goto) ? item.card_goto : 'other';
+        const goto = cardGotos.includes(item.card_goto) ? item.card_goto : cardGotos.includes(item.goto) ? item.goto : 'other';
         const found = event.cards.find(card => card.type === type && card.goto === goto);
         if (found) found.count++;
         else if (event.cards.length < 20) event.cards.push({ type, goto, count: 1 });
@@ -837,7 +848,8 @@
       filter(data, 'items', item => {
         if (!object(item)) return true;
         if (config.remove_feed_ads && ad(item)) return false;
-        if (config.hide_live && ['live', 'live_rcmd'].includes(item.card_goto)) return false;
+        if ((match[1] === '/x/v2/feed/index/story' ? config.hide_video_live : config.hide_live) &&
+          (liveDestination(item.card_goto, item.uri) || liveDestination(item.goto, null))) return false;
         if (config.hide_game && item.card_goto === 'game') return false;
         if (config.hide_member_shop && memberShop(item)) return false;
         if (policy.match(jsonUID(item), item.title)) return false;

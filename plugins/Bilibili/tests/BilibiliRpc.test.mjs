@@ -182,7 +182,7 @@ test('UID and title policies work independently, normalize UID zeros and preserv
 
 test('added continuous routes are exact on all three hosts, excluded from metadata, and receive both arguments',()=>{
  const line=plugin.split('\n').find(line=>line.includes('tag=Bilibili 视频页广告过滤'));
- assert.match(line,/argument=\[\{blocked_uids\},\{blocked_keywords\},\{log_enabled\}\]/);
+ assert.match(line,/argument=\[\{hide_video_live\},\{blocked_uids\},\{blocked_keywords\},\{log_enabled\}\]/);
  const regex=new RegExp(line.split(' ')[1]),meta=new RegExp(plugin.split('\n').find(line=>line.includes('tag=Bilibili 开发元数据日志')).split(' ')[1]);
  for(const method of ['PlayerRelates','ContinuousPlay']){
   const path='/bilibili.app.view.v1.View/'+method;
@@ -193,5 +193,18 @@ test('added continuous routes are exact on all three hosts, excluded from metada
   }
   assert.equal(meta.test('https://app.bilibili.com'+path),false);
   assert.equal(regex.test('https://app.bilibili.com'+path.replace('view.v1','viewunite.v1')),false);
+ }
+});
+
+test('hide live applies to old and unified related/continuous feeds without disturbing ordinary videos or pagination',()=>{
+ for(const [path,modern,wrap,number] of [[view,false,c=>c,10],[unite,true,introCards,1],
+  ['/bilibili.app.view.v1.View/PlayerRelates',false,c=>c,1],['/bilibili.app.view.v1.View/ContinuousPlay',false,c=>c,1],
+  ['/bilibili.app.view.v1.View/RelatesFeed',false,c=>c,1],['/bilibili.app.viewunite.v1.View/RelatesFeed',true,c=>c,1]]){
+  const regular=modern?newRec('123','直播回放视频'):oldRec('123','直播回放视频');
+  const live1=modern?[8,6,...msg(7,str(1,'room'))]:[...str(7,'live'),...str(3,'room')];
+  const live2=modern?[...msg(7,str(1,'room'))]:str(9,'bilibili://live/123?token=PRIVATE_TOKEN');
+  const meta=str(101,'pagination');const payload=[...meta,...wrap([regular,live1,live2].flatMap(c=>msg(number,c)))];
+  assert.deepEqual([...run(path,frame(payload),{argument:{hide_video_live:true}}).output.body],[...frame([...meta,...wrap(msg(number,regular))])]);
+  assert.deepEqual(JSON.parse(JSON.stringify(run(path,frame(payload),{argument:{hide_video_live:false}}).output)),{});
  }
 });
