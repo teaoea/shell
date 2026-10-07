@@ -329,13 +329,15 @@ test('splash event list is cleared along with display schedule, while unknown st
  const event=JSON.parse(store.get('bilibili.enhance.logs.v1')).events[0];assert.equal(event.removed,2);assert.equal(event.data_schema.event_list,'array');
 });
 
-test('brand splash filters explicit ads only and preserves ordinary illustrations and startup configuration',()=>{
+test('brand splash clears unmarked cached-material candidates and schedules while preserving startup configuration',()=>{
  const path='/x/v2/splash/brand/list';
  const illustration={thumb:'https://example.com/illustration.jpg',thumb_name:'普通插画'};
  const data={list:[illustration,{is_ad:1},{is_ad:'1'},{ad_info:{campaign:1}},null],show:[{is_ad:true},illustration],min_interval:100,future:{keep:true}};
- assert.deepEqual(parsed(run(data,{},path)),{...data,list:[illustration,null],show:[illustration]});
+ assert.deepEqual(parsed(run(data,{},path)),{...data,list:[],show:[]});
  assert.deepEqual(run(data,{remove_splash_ads:false},path),run(data,{},path));
- assert.deepEqual(run({list:[illustration],unknown:true},{},path),{});
+ assert.deepEqual(parsed(run({list:[illustration],unknown:true},{},path)),{list:[],unknown:true});
+ assert.deepEqual(parsed(run({list:[illustration],show:[{id:1}],event_list:[{id:1}],pull_interval:1800,forcibly:false,rule:'order',future:42},{},path)),{list:[],show:[],event_list:[],pull_interval:1800,forcibly:false,rule:'order',future:42});
+ assert.deepEqual(run({list:[],show:[],event_list:[]},{},path),{});
  assert.deepEqual(run({list:{unknown:true}},{},path),{});
 });
 

@@ -316,7 +316,7 @@ test('brand splash logging identifies registered path without retaining credenti
   $response:{status:200,body:JSON.stringify({code:0,data:{list:[{thumb:secret,thumb_name:secret},{is_ad:1,ad_info:{token:secret}}]}})}});
  const event=JSON.parse(h.stored()).events[0];
  assert.equal(event.endpoint,'/x/v2/splash/brand/list');assert.equal(event.outcome,'modified');
- assert.equal(event.before,2);assert.equal(event.after,1);assert.equal(event.removed,1);
+ assert.equal(event.before,2);assert.equal(event.after,0);assert.equal(event.removed,2);
  assert.ok(!h.stored().includes(secret));assert.ok(!h.page('/export').response.body.includes(secret));
 });
 
