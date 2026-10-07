@@ -300,7 +300,7 @@ test('host/path/method boundaries protect other APIs and lookalike domains', () 
 test('plugin regex covers implemented endpoints and rejects extra suffixes', () => {
   const line = plugin.split('\n').find(line => line.startsWith('http-response '));
   const regex = new RegExp(line.split(' ')[1]);
-  for (const path of ['/x/v2/splash/list', '/x/v2/splash/show', '/x/v2/feed/index', '/x/v2/feed/index/story', '/x/resource/show/tab', '/x/resource/show/tab/v2', '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {
+  for (const path of ['/x/v2/splash/list', '/x/v2/splash/show', '/x/v2/splash/brand/list', '/x/v2/feed/index', '/x/v2/feed/index/story', '/x/resource/show/tab', '/x/resource/show/tab/v2', '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {
     for (const suffix of ['', '?build=1']) {
       const url = 'https://app.bilibili.com' + path + suffix;
       assert.equal(regex.test(url), true);
@@ -324,4 +324,14 @@ test('splash event list is cleared along with display schedule, while unknown st
  assert.equal(filter.test('https://app.bilibili.com'+path+'/extra'),false);
  const store=new Map();run(data,{log_enabled:true},path,{$persistentStore:{read:k=>store.get(k),write:(v,k)=>{store.set(k,v);return true;}}});
  const event=JSON.parse(store.get('bilibili.enhance.logs.v1')).events[0];assert.equal(event.removed,2);assert.equal(event.data_schema.event_list,'array');
+});
+
+test('brand splash filters explicit ads only and preserves ordinary illustrations and startup configuration',()=>{
+ const path='/x/v2/splash/brand/list';
+ const illustration={thumb:'https://example.com/illustration.jpg',thumb_name:'普通插画'};
+ const data={list:[illustration,{is_ad:1},{is_ad:'1'},{ad_info:{campaign:1}},null],show:[{is_ad:true},illustration],min_interval:100,future:{keep:true}};
+ assert.deepEqual(parsed(run(data,{},path)),{...data,list:[illustration,null],show:[illustration]});
+ assert.deepEqual(run(data,{remove_splash_ads:false},path),{});
+ assert.deepEqual(run({list:[illustration],unknown:true},{},path),{});
+ assert.deepEqual(run({list:{unknown:true}},{},path),{});
 });

@@ -297,7 +297,7 @@ test('logger routes are disjoint and optional metadata hook does not buffer body
   const lines = plugin.split('\n').filter(line => line.startsWith('http-response '));
   assert.equal(lines.length, 4);
   const [filter, metadata] = lines.map(line => new RegExp(line.split(' ')[1]));
-  for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/resource/show/tab/v2',
+  for (const path of ['/x/v2/feed/index', '/x/v2/feed/index/story', '/x/v2/splash/show', '/x/v2/splash/brand/list', '/x/v2/splash/event/list2', '/x/resource/show/tab/v2',
     '/x/v2/search/square', '/x/v2/search/trending/ranking', '/x/v2/account/mine', '/x/v2/account/mine/ipad', '/x/v2/search/default', '/x/v2/search/defaultwords']) {
     for (const suffix of ['', '?token=' + secret]) {
       const url = 'https://app.bilibili.com' + path + suffix;
@@ -308,4 +308,26 @@ test('logger routes are disjoint and optional metadata hook does not buffer body
   assert.match(lines[1], /requires-body=false/); assert.match(lines[1], /enable=\{log_enabled\}/);
   const pageLine = plugin.split('\n').find(line => line.startsWith('http-request ^http://bilibili-logs'));
   assert.doesNotMatch(pageLine, /enable=/);
+});
+
+test('brand splash logging identifies registered path without retaining credentials or image contents',()=>{
+ const h=harness();
+ h.run({$request:{url:'https://app.bilibili.com/x/v2/splash/brand/list?access_key='+secret,method:'GET'},
+  $response:{status:200,body:JSON.stringify({code:0,data:{list:[{thumb:secret,thumb_name:secret},{is_ad:1,ad_info:{token:secret}}]}})}});
+ const event=JSON.parse(h.stored()).events[0];
+ assert.equal(event.endpoint,'/x/v2/splash/brand/list');assert.equal(event.outcome,'modified');
+ assert.equal(event.before,2);assert.equal(event.after,1);assert.equal(event.removed,1);
+ assert.ok(!h.stored().includes(secret));assert.ok(!h.page('/export').response.body.includes(secret));
+});
+
+test('rare splash records survive ordinary requests, with only the latest 20 protected and all limits intact',()=>{
+ const paths=['/x/v2/splash/list','/x/v2/splash/show','/x/v2/splash/event/list2','/x/v2/splash/brand/list'];
+ const events=Array.from({length:300},(_,index)=>({time:new Date(Date.UTC(2026,9,7,0,0,index)).toISOString(),endpoint:index<25?paths[index%4]:'/x/v2/feed/index',outcome:'unchanged',method:'GET',status:200}));
+ const h=harness(JSON.stringify({events,evicted:0}));
+ for(let i=0;i<280;i++)h.run();
+ const state=JSON.parse(h.stored());
+ assert.equal(state.events.length,300);assert.equal(state.evicted,280);assert.ok(h.stored().length<=262144);
+ assert.deepEqual(state.events.filter(event=>paths.includes(event.endpoint)).map(event=>event.time),events.slice(5,25).map(event=>event.time));
+ const exported=h.page('/export').response.body;assert.ok(exported.includes(events[24].time));assert.ok(!exported.includes(events[0].time));
+ h.run({$argument:{log_enabled:false}});assert.deepEqual(JSON.parse(h.stored()),{events:[],evicted:0});
 });
