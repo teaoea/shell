@@ -81,7 +81,7 @@ test('local page pause/start/clear controls require same-origin and token', () =
   const store = memory();
   const get = path => execute('SearchFilterLogger.js', args, { method: 'GET', url: 'http://search-filter-logs.invalid' + path }, store);
   const page = get('/');
-  assert.match(page.response.body, /开发日志 v1\.0\.2/);
+  assert.match(page.response.body, /开发日志 v1\.0\.3/);
   assert.match(page.response.body, /最近记录/);
   assert.doesNotMatch(page.response.body, /<form|Location:|location\.|window\.open|href="\/export"/);
   assert.match(page.response.headers['Content-Security-Policy'], /connect-src 'self'; script-src 'nonce-/);

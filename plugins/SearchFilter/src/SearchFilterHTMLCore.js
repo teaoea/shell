@@ -81,11 +81,11 @@ function sfFilterHTML(html, engine, pageHost, rules) {
     var attributeText = match[0].slice(tag.length + 1, -1);
     while ((attribute = attributePattern.exec(attributeText))) {
       var name = attribute[1].toLowerCase();
-      if (['class', 'id', 'href', 'data-sokoban-container'].indexOf(name) >= 0 && !Object.prototype.hasOwnProperty.call(attributes, name)) attributes[name] = attribute[2] !== undefined ? attribute[2] : attribute[3] !== undefined ? attribute[3] : attribute[4] || '';
+      if (['class', 'id', 'href', 'role', 'aria-level', 'data-sokoban-container'].indexOf(name) >= 0 && !Object.prototype.hasOwnProperty.call(attributes, name)) attributes[name] = attribute[2] !== undefined ? attribute[2] : attribute[3] !== undefined ? attribute[3] : attribute[4] || '';
     }
     var current = { tag: tag, attrs: attributes, start: match.index, open: tokens.lastIndex, end: 0, close: 0, parent: stack.length ? stack[stack.length - 1] : null, titles: 0 };
     nodes.push(current);
-    if (tag === 'h3') {
+    if (tag === 'h3' || (attributes.role === 'heading' && attributes['aria-level'] === '3')) {
       headings.push(current);
       for (var ancestor = current.parent; ancestor; ancestor = ancestor.parent) ancestor.titles++;
     }
@@ -117,19 +117,25 @@ function sfFilterHTML(html, engine, pageHost, rules) {
     var card = null, link = null, root = null;
     for (var ancestor = heading.parent; ancestor; ancestor = ancestor.parent) {
       if (!link && ancestor.tag === 'a') link = ancestor;
-      if (!card && ancestor.tag === 'div' && (/(?:^|\s)(?:g|MjjYud|tF2Cxc)(?:\s|$)/.test(ancestor.attrs['class'] || '') || Object.prototype.hasOwnProperty.call(ancestor.attrs, 'data-sokoban-container'))) card = ancestor;
+      if (!card && ancestor.tag === 'div' && (/(?:^|\s)(?:g|MjjYud|tF2Cxc|vt6azd|Ww4FFb)(?:\s|$)/.test(ancestor.attrs['class'] || '') || Object.prototype.hasOwnProperty.call(ancestor.attrs, 'data-sokoban-container'))) card = ancestor;
       if (!root && (ancestor.attrs.id === 'search' || ancestor.attrs.id === 'rso' || ancestor.attrs.id === 'main')) root = ancestor;
     }
-    if (!root || !root.end || root.invalid || !card || !link || !card.end || card.invalid || !heading.end || card.titles !== 1 || seen.indexOf(card) >= 0) return;
+    if (!root || !root.end || root.invalid || !card || !card.end || card.invalid || !heading.end || card.titles !== 1 || seen.indexOf(card) >= 0) return;
     seen.push(card); result.recognized++;
-    var host = sfHTMLURLHost(link.attrs.href || '', pageHost);
+    var low = 0, high = nodes.length, inside = [];
+    while (low < high) { var middle = Math.floor((low + high) / 2); if (nodes[middle].start < card.open) low = middle + 1; else high = middle; }
+    for (var n = low; n < nodes.length && nodes[n].start < card.close; n++) {
+      if (nodes[n].end && nodes[n].end <= card.close) inside.push(nodes[n]);
+    }
+    if (!link) {
+      var links = inside.filter(function (node) { return node.tag === 'a' && ((node.start >= heading.open && node.end <= heading.close) || /(?:^|\s)UBFage(?:\s|$)/.test(node.attrs['class'] || '') || node.attrs.role === 'presentation'); });
+      if (links.length === 1) link = links[0];
+    }
+    if (!link) { result.unresolved++; return; }
+    var host = link ? sfHTMLURLHost(link.attrs.href || '', pageHost) : '';
     if (!host) {
-      var low = 0, high = nodes.length, cites = [];
-      while (low < high) { var middle = Math.floor((low + high) / 2); if (nodes[middle].start < card.open) low = middle + 1; else high = middle; }
-      for (var n = low; n < nodes.length && nodes[n].start < card.close; n++) {
-        if (nodes[n].tag === 'cite' && nodes[n].end && nodes[n].end <= card.close) cites.push(nodes[n]);
-      }
-      var primary = cites.filter(function (node) { return node.start >= link.open && node.end <= link.close; });
+      var cites = inside.filter(function (node) { return node.tag === 'cite' || /(?:^|\s)ob9lvb(?:\s|$)/.test(node.attrs['class'] || ''); });
+      var primary = link ? cites.filter(function (node) { return node.start >= link.open && node.end <= link.close; }) : [];
       var values = (primary.length ? primary : cites).map(function (node) { return sfHTMLDisplayedHost(html.slice(node.open, node.close), pageHost); }).filter(Boolean);
       // Conflicting destination citations are retained, never guessed.
       if (values.length && values.every(function (value) { return value === values[0]; })) host = values[0];

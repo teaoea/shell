@@ -1,6 +1,6 @@
 # 搜索结果网站屏蔽（Loon）
 
-版本：`1.0.2`。作者：可莉唯一的狗、ChatGPT。
+版本：`1.0.3`。作者：可莉唯一的狗、ChatGPT。
 
 在 Loon 中手动配置黑名单或远程订阅，隐藏搜索页面中目标域名匹配的结果条目，并保留其他普通结果。主要支持 Google，同时适配 Bing、百度的已识别网页结果。不限浏览器，不按浏览器名称或 User-Agent 过滤请求；无需制作或安装浏览器扩展。插件没有网站访问拒绝规则：验收标准是搜索条目消失，而非链接无法访问。
 
@@ -28,6 +28,8 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchF
 
 更新时刷新插件和脚本缓存。网站名单在每台设备的 Loon 中设置，不自动跨设备同步。
 
+`1.0.3` 补齐 Google 手机网页结果结构：兼容 `role="heading" aria-level="3"` 标题、`.ob9lvb` 完整域名、`.vt6azd`／`.Ww4FFb` 容器和 `.UBFage`／`role="presentation"` 标题链接。旧版只扫描 `h3`／`cite`，这些手机结果不会进入过滤逻辑。初始 HTML 和动态过滤共用相同匹配边界，仍不根据浏览器或 User-Agent 分支。浏览器脚本提前到页面头部第一个脚本前，保留已有字符集声明；监听整个 document、DOMContentLoaded 和 pageshow，覆盖延迟加载、结果容器及页面内容替换。
+
 `1.0.2` 新增 Google 初始 HTML 结果移除：能明确识别的黑名单条目在返回浏览器前直接删除，不依赖浏览器执行注入脚本，也不需要开启额外搜索排除。动态结果继续由页面脚本检查。日志页改为手机卡片布局，支持浅色／深色主题，全部功能按钮原页更新，导出直接下载文件。
 
 `1.0.1` 修复 Google 的 `/goto?url=…` 不透明跳转漏过滤：链接不能直接给出目标时，读取结果条目显示的完整域名，例如 `https://blog.csdn.net`，不通过品牌名猜测归属，也不覆盖已识别的正常目标链接。
@@ -47,6 +49,14 @@ http://search-filter-logs.invalid/
 **不会记录搜索词、查询参数或 URL 片段、完整 URL、结果目标域名、标题摘要或页面正文、任何请求／响应头、Cookie、Authorization、账号、设备标识、IP、浏览器标识、黑名单内容、订阅 URL 或网络错误原文。** 时间和使用的搜索引擎属于仍保留的诊断元数据；分享前可自行删去时间。插件正常功能所需的黑名单和订阅来源仍由设置／独立订阅缓存保存，不包含在开发日志导出中。
 
 处理结果可区分没有规则、非完整 HTML、响应超限、CSP 禁止脚本、已移除初始结果和已注入脚本。Google 响应日志增加 `recognized`（识别到的初始单结果容器数）、`removed`（本次实际从 HTML 删除的容器数）、`unresolved`（已识别容器中无法明确目标域名的数量）。数量不包含浏览器后续加载的动态结果；移除为零不证明没有黑名单条目，可能是初始响应没有结果或布局尚未识别。“已注入过滤脚本”仅表示 Loon 修改了页面，**不证明浏览器已隐藏条目**；日志不采集浏览器 DOM、页面标题或被隐藏网站名单。零条日志仅说明未采集到，不能证明没有发出连接。请求日志的“请求发出”指请求进入发送前脚本阶段，不等于收到服务器响应。
+
+开启日志工具时，搜索页面右下角还显示“搜索屏蔽 v1.0.3”状态按钮：
+
+- “脚本尚未执行”：Loon 插入了提示，但未观察到页面脚本执行；不能据此判断是禁用脚本、页面策略还是加载过程造成。
+- “已运行 · 隐藏 N”：浏览器脚本已扫描；点击可查看规则数、标题数、识别数、目标不明数和当前隐藏数。
+- “页面处理异常”：页面过滤发生异常，诊断不导出错误原文。
+
+该状态按钮只在日志开启时显示，不包含搜索词、黑名单、目标域名或页面正文。按钮内可直接下载 `search-filter-browser.log`，内容是固定版本／时间／阶段／引擎／状态和计数；没有 Cookie、URL、令牌、设备信息，不发出 fetch、Beacon 或其他网络请求，不写入 Loon 日志空间。它与 Loon 的 `search-filter-development.log` 是不同采集阶段，排查时可分别提供。浏览器当前隐藏数不含 Loon 已从初始 HTML 删除的条目，两个计数不能直接相加。默认关闭日志时不显示页面提示、不生成诊断文件。若 Google 替换或重载页面，状态随当前页面重新统计。
 
 日志页面由 Loon 本地生成，不连接外部服务器；控制操作要求本地来源与随机令牌。不要把本地控制令牌作为排查材料分享。存储失败不影响搜索过滤；并发脚本更新日志可能丢失部分事件，日志不保证完整流量覆盖。
 
@@ -90,7 +100,7 @@ http://search-filter-logs.invalid/
 
 | 搜索引擎 | 明确覆盖的主机与入口 | 状态 |
 | --- | --- | --- |
-| Google | `google.com`、`google.com.hk`、`google.com.tw`、`google.co.jp`、`google.co.uk`，以及各自的 `www`；`/search?q=…` | 主要适配：`#search`／`#rso`／`#main` 下带 `h3` 的单结果 `.g`／`.MjjYud`／`.tF2Cxc` 等容器；初始 HTML 移除加动态隐藏 |
+| Google | `google.com`、`google.com.hk`、`google.com.tw`、`google.co.jp`、`google.co.uk`，以及各自的 `www`；`/search?q=…` | 主要适配：`#search`／`#rso`／`#main` 下带 `h3` 或 `role="heading" aria-level="3"` 的单结果 `.g`／`.MjjYud`／`.tF2Cxc`／`.vt6azd`／`.Ww4FFb` 等容器；初始 HTML 移除加动态隐藏 |
 | Bing | `bing.com`、`www.bing.com`、`cn.bing.com`；`/search?q=…` | 适配 `li.b_algo` 普通结果和已识别的编码跳转链接 |
 | 百度 | `baidu.com`、`www.baidu.com`、`m.baidu.com`；`/s?wd=…` 或 `/s?word=…` | 适配 `.result`／`.c-container`；依据真实链接、明确的目标 URL 或显示的完整域名 |
 
@@ -124,8 +134,11 @@ iOS、iPadOS、macOS 共用同一插件。不限制 Safari、Chrome、Firefox、
 
 2026-10-08 在真实 Google 页面观察到 `/goto?url=…` 不透明链接，条目引用仍显示 `https://blog.csdn.net` 等完整域名。已将该结构提炼为使用虚构标题和跳转令牌的最小回归样例，并在实际浏览器中渲染过滤后样例：`blog.csdn.net`、`bbs.csdn.net` 隐藏，`developer.mozilla.org`、`notcsdn.net` 保留。其余 DOM 单元测试使用模拟容器。v1.0.2 在实际浏览器验证了手机宽度布局、开始／暂停／清空／刷新原页更新、日志文件下载不跳转；在 CSP 禁止全部页面脚本的样例中，两个 csdn.net 条目已从 HTML 移除，两个正常条目仍可见。以上使用本机临时服务和模拟 Loon API，不是实际 Loon 客户端执行。
 
+v1.0.3 在实际浏览器验证手机标题结构的延迟加载和整段 body 替换：关键词 `csdn` 隐藏两个 `.net`／`.com` 结果并保留正常邻居；`*.csdn.com` 只隐藏 `.com`；CSP 禁止全部脚本时初始手机结果也按相同边界删除。页面执行状态能够显示识别数与当前隐藏数，测试页不使用用户查询。手机结构依据下列上游适配定义构造最小样例，并非抓取用户设备页面。
+
 这些验证不等同于用户设备上的 Loon MitM 与动态 Google 页面端到端测试，三套系统、全部浏览器及 Bing／百度实机效果仍未确认；GitHub 发布与下载检查也不等于设备已加载或过滤效果已确认。
 
+- [uBlacklist 上游 Google 手机结果结构定义](https://github.com/ublacklist/builtin/blob/main/serpinfo/google.yml#L273)（仅参考标题、容器和显示域名的结构；本项目仍是 Loon 插件，未复制扩展实现）
 - [Loon 插件参数和系统声明](https://nsloon.app/docs/Plugin/)
 - [Loon 请求脚本 API](https://nsloon.app/docs/Script/script_api/)
 - [Google 官方网站排除说明](https://support.google.com/websearch/answer/134479?hl=en-GB)
@@ -139,4 +152,4 @@ iOS、iPadOS、macOS 共用同一插件。不限制 Safari、Chrome、Firefox、
 node --test plugins/SearchFilter/tests/*.test.mjs
 ```
 
-维护日志字段白名单时编辑 `src/SearchFilterLogCore.js`，再运行 `node plugins/SearchFilter/scripts/build-log-core.mjs` 同步四份脚本中的内嵌实现，保证隐私规则一致。原始 HTML 过滤和日志 UI 分别维护在 `src/SearchFilterHTMLCore.js`、`src/SearchFilterLogUI.js`，同一构建命令同步到响应脚本和日志脚本。
+维护日志字段白名单时编辑 `src/SearchFilterLogCore.js`，再运行 `node plugins/SearchFilter/scripts/build-log-core.mjs` 同步四份脚本中的内嵌实现，保证隐私规则一致。原始 HTML 过滤、浏览器过滤和日志 UI 分别维护在 `src/SearchFilterHTMLCore.js`、`src/SearchFilterBrowserCore.js`、`src/SearchFilterLogUI.js`，同一构建命令同步到响应脚本和日志脚本。

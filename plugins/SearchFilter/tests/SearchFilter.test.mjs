@@ -53,14 +53,14 @@ function cardsFilter(engine, rules, specs, { nonce = '', headers, cache, subscri
   const body = '<html><body>' + (nonce ? `<script nonce="${nonce}"></script>` : '') + '</body></html>';
   const result = run(responseSource, url, { blocked_domains: rules, subscription_url }, {}, { body, ...(headers ? { headers } : {}) }, cache ? { $persistentStore: { read: () => JSON.stringify(cache) } } : {});
   if (!result.body) return { result, cards: [] };
-  const scripts = [...result.body.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)];
-  const injected = scripts.at(-1)[1];
+  const injected = result.body.match(/<script id="loon-search-filter"[^>]*>([\s\S]*?)<\/script>/)[1];
   let observer, timer;
   const cards = specs.map(spec => {
     const attrs = {}, styles = {};
     const link = {
       getAttribute: key => key === 'href' ? spec.url : key === 'data-landurl' ? spec.landurl || '' : '',
-      querySelector: () => spec.linkCite ? { textContent: spec.linkCite } : null
+      querySelector: () => spec.linkCite ? { textContent: spec.linkCite } : null,
+      querySelectorAll: () => spec.linkCite ? [{ textContent: spec.linkCite }] : []
     };
     const card = {
       attrs, styles,
@@ -73,7 +73,7 @@ function cardsFilter(engine, rules, specs, { nonce = '', headers, cache, subscri
         getPropertyPriority: key => styles[key]?.[1] || '',
         removeProperty: key => { delete styles[key]; }
       },
-      querySelectorAll: () => Array(spec.headings || 1).fill({}),
+      querySelectorAll: selector => selector.includes('cite') ? (spec.cite ? [{ textContent: spec.cite }] : []) : Array(spec.headings || 1).fill({}),
       querySelector: () => spec.cite ? { textContent: spec.cite } : null
     };
     card.heading = { closest: selector => selector === 'a' ? link : card, querySelector: () => link };
@@ -187,6 +187,8 @@ test('response passes JSON, errors, non-web searches, unknown hosts and empty li
   assert.deepEqual(run(responseSource, google, { blocked_domains: 'https://user:pw@example.com/ 中文.com localhost:443' }), {});
 });
 test('plugin registers request/response pairs only for declared MitM hosts', () => {
+  const version = plugin.match(/#!desc = v([0-9.]+)/)[1];
+  for (const match of plugin.matchAll(/script-path=([^,]+)/g)) assert.ok(match[1].endsWith('?v=' + version), 'script cache version must match plugin');
   const hosts = plugin.match(/^hostname = (.*)$/m)[1].split(', ');
   const lines = plugin.split('\n').filter(line => /^http-(?:request|response) \^https:/.test(line));
   assert.equal(lines.length, 6);
@@ -278,4 +280,27 @@ test('plugin hides result cards without blocking access to blacklisted sites', (
   assert.equal(/\bREJECT\b/.test(plugin), false);
   assert.deepEqual(run(requestSource, 'https://csdn.net/article'), {});
   assert.deepEqual(run(responseSource, 'https://csdn.net/article'), {});
+});
+
+test('browser bootstrap is inserted before page scripts and listens across document replacement', () => {
+  const body = '<html><head><meta charset="utf-8"><script nonce="testnonce">/* Google bootstrap */</script></head><body></body></html>';
+  const result = run(responseSource, google, { query_exclusion: false }, {}, { body });
+  assert.ok(result.body.indexOf('id="loon-search-filter"') < result.body.indexOf('/* Google bootstrap */'));
+  assert.ok(result.body.indexOf('<meta charset="utf-8">') < result.body.indexOf('id="loon-search-filter"'));
+  assert.match(result.body, /\.observe\(document,/);
+  assert.match(result.body, /DOMContentLoaded/);
+  assert.match(result.body, /pageshow/);
+  assert.match(result.body, /aria-level/);
+  assert.match(result.body, /ob9lvb/);
+  assert.doesNotMatch(result.body, /id="loon-search-filter-status"/);
+});
+test('page execution diagnostic is visible only with logging enabled and sends no network telemetry', () => {
+  const result = run(responseSource, google, { query_exclusion: false, log_enabled: true });
+  assert.match(result.body, /<aside id="loon-search-filter-status"/);
+  assert.match(result.body, /脚本尚未执行/);
+  assert.match(result.body, /search-filter-browser.log/);
+  const browserCore = fs.readFileSync(new URL('../src/SearchFilterBrowserCore.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(browserCore, /\bfetch\(|XMLHttpRequest|sendBeacon|console\./);
+  const embedded = responseSource.match(/\/\/ BEGIN GENERATED SEARCH BROWSER CORE\n([\s\S]*?)\n\/\/ END GENERATED SEARCH BROWSER CORE/)[1];
+  assert.equal(embedded, browserCore.trim());
 });

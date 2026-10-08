@@ -95,3 +95,31 @@ test('native URL parser does not confuse credentials or invalid authorities with
   }
   assert.equal(filter(page(card('https://csdn.net:443/post'))).removed, 1);
 });
+
+test('native Google mobile role headings and ob9lvb URLs are filtered without h3 or cite', () => {
+  const input = source('tests/fixtures/google-mobile.html');
+  const result = filter(input);
+  assert.equal(result.recognized, 4);
+  assert.equal(result.removed, 2);
+  assert.equal(result.unresolved, 0);
+  assert.equal(result.body.includes('Blocked mobile fixture'), false);
+  assert.equal(result.body.includes('Blocked com mobile fixture'), false);
+  assert.equal(result.body.includes('Keep normal description'), true);
+  assert.equal(result.body.includes('Keep lookalike description'), true);
+  const narrow = filter(input, [{ kind: 'url', value: '*.csdn.com' }]);
+  assert.equal(narrow.removed, 1);
+  assert.equal(narrow.body.includes('blog.csdn.net'), true);
+});
+test('native mobile sibling links resolve only one unambiguous presentation link', () => {
+  const title = '<div role="heading" aria-level="3">Sample</div>';
+  const known = '<div class="vt6azd"><a class="UBFage" href="https://csdn.net/">Link</a>' + title + '</div>';
+  assert.equal(filter(page(known)).removed, 1);
+  const mixed = '<div class="vt6azd"><a class="UBFage" href="https://csdn.net/">One</a><a role="presentation" href="https://normal.example/">Other</a>' + title + '<div class="ob9lvb">https://csdn.net</div></div>';
+  assert.equal(filter(page(mixed)).body, page(mixed));
+  const normal = '<div class="Ww4FFb"><a href="https://normal.example"><div role="heading" aria-level="3">Sample</div></a><div class="ob9lvb">https://csdn.net</div></div>';
+  assert.equal(filter(page(normal)).body, page(normal));
+});
+test('native mobile mixed normal and blacklisted headings in one container are retained', () => {
+  const html = page('<div class="Ww4FFb"><a href="https://csdn.net"><div role="heading" aria-level="3">One</div></a><a href="https://normal.example"><h3>Other</h3></a></div>');
+  assert.equal(filter(html).body, html);
+});

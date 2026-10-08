@@ -8,9 +8,12 @@ for (const name of ['SearchFilter.js', 'SearchFilterResponse.js', 'SearchFilterS
   const cleaned = original.replace(/\/\/ BEGIN GENERATED SEARCH LOG CORE[\s\S]*?\/\/ END GENERATED SEARCH LOG CORE\n\n?/, '');
   let body = cleaned.replace(/\/\/ BEGIN GENERATED SEARCH HTML CORE[\s\S]*?\/\/ END GENERATED SEARCH HTML CORE\n\n?/, '');
   body = body.replace(/\/\/ BEGIN GENERATED SEARCH LOG UI[\s\S]*?\/\/ END GENERATED SEARCH LOG UI\n\n?/, '');
+  body = body.replace(/\/\/ BEGIN GENERATED SEARCH BROWSER CORE[\s\S]*?\/\/ END GENERATED SEARCH BROWSER CORE\n\n?/, '');
   if (name === 'SearchFilterResponse.js') {
     const htmlCore = fs.readFileSync(new URL('../src/SearchFilterHTMLCore.js', import.meta.url), 'utf8').trim();
     body = `// BEGIN GENERATED SEARCH HTML CORE\n${htmlCore}\n// END GENERATED SEARCH HTML CORE\n\n${body}`;
+    const browserCore = fs.readFileSync(new URL('../src/SearchFilterBrowserCore.js', import.meta.url), 'utf8').trim();
+    body = `// BEGIN GENERATED SEARCH BROWSER CORE\n${browserCore}\n// END GENERATED SEARCH BROWSER CORE\n\n${body}`;
   }
   if (name === 'SearchFilterLogger.js') {
     const ui = fs.readFileSync(new URL('../src/SearchFilterLogUI.js', import.meta.url), 'utf8').trim();
