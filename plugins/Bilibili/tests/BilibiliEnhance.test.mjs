@@ -369,3 +369,18 @@ test('one live switch controls both homepage and story recommendations',()=>{
   assert.deepEqual(run(data,{},path),{});
  }
 });
+
+test('mine embedded member banners are removed without changing ordinary service entries or membership',()=>{
+ const keep=[{title:'会员购',uri:'bilibili://mall/home'},{title:'大会员',uri:'bilibili://vip/home'},
+  {title:'我的大会员',uri:'https://account.bilibili.com.evil.test/big'},{title:'我的收藏',uri:'bilibili://user_center/favourite'},null];
+ const banners=[{title:'我的大会员',button:{title:'会员中心'}},{title:'续订会员',button:{text:'会员中心'}},
+  {title:'开通大会员',uri:'bilibili://vip/home'},{title:'续费大会员',url:'https://account.bilibili.com/big'}];
+ const account={status:1,type:2,label:{text:'年度大会员'},vip_section:{keep:'account configuration'}};
+ for(const path of ['/x/v2/account/mine','/x/v2/account/mine/ipad']){
+  const data={vip:account,sections_v2:[{title:'服务',modular_vip_section:{title:'我的大会员'},items:[...banners,...keep]}],
+   future:{vip_section:{keep:true}},modules:[{sections:[{vip_section_v2:{title:'续订会员'},items:keep}]}]};
+  const expected={...data,sections_v2:[{title:'服务',items:keep}],modules:[{sections:[{items:keep}]}]};
+  assert.deepEqual(parsed(run(data,{},path)),expected);
+  assert.deepEqual(run(expected,{},path),{});
+ }
+});

@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.11.11；更新时间：2026-10-08
+ * 版本：1.11.12；更新时间：2026-10-08
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -476,7 +476,7 @@
       }
     };
   }
-  const SCRIPT_VERSION = '1.11.11';
+  const SCRIPT_VERSION = '1.11.12';
   const LOG_KEY = 'bilibili.enhance.logs.v1';
   const NOTICE_KEY = 'bilibili.enhance.notice.v1';
   const LIMIT = 300;
@@ -836,10 +836,26 @@
       if (next.length !== previous.length) { parent[key] = next; changed = true; }
     }
     if (route === 'mine') {
-      // 默认隐藏开通／续订大会员的推广模块，不修改 vip 身份或其他服务入口。
-      for (const key of memberPromoFields) if (Object.prototype.hasOwnProperty.call(data, key)) {
-        delete data[key]; changed = true;
+      // 只遍历已知页面布局容器；账号 vip、徽章、未知配置均不递归处理。
+      const containers = ['sections_v2', 'sections', 'modules', 'items'];
+      function memberBanner(item) {
+        if (!object(item) || !['我的大会员', '续订会员', '开通会员', '续费大会员', '开通大会员'].includes(item.title)) return false;
+        const button = object(item.button) ? item.button : null;
+        const link = button && (button.uri || button.url) || item.uri || item.url;
+        return (button && (button.title === '会员中心' || button.text === '会员中心')) ||
+          (typeof link === 'string' && /^(?:bilibili:\/\/vip(?:[/?#]|$)|https?:\/\/account\.bilibili\.com\/big(?:[/?#]|$))/i.test(link));
       }
+      function cleanMemberLayout(parent, depth) {
+        if (!object(parent) || depth > 6) return;
+        for (const key of memberPromoFields) if (Object.prototype.hasOwnProperty.call(parent, key)) {
+          delete parent[key]; changed = true;
+        }
+        for (const key of containers) if (Array.isArray(parent[key])) {
+          filter(parent, key, item => !memberBanner(item));
+          for (const item of parent[key]) cleanMemberLayout(item, depth + 1);
+        }
+      }
+      cleanMemberLayout(data, 0);
     }
     if (route === 'search_default' || route === 'search_defaultwords') {
       // 仅清空专用默认词响应；不修改用户输入、搜索历史、联想或搜索结果。
