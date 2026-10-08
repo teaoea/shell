@@ -1,13 +1,16 @@
 #!name = 闲鱼推送网络辅助
 #!author = 可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
 # 作者：可莉唯一的狗、ChatGPT + GPT-6.0 / GPT-6.1-sol
-#!desc = 闲鱼及 Apple 推送连接直连辅助；新增图标和本地开发日志，开启后仅采集带闲鱼客户端标识的 HTTP 请求、响应和 URL／字面 IP，统一导出开发样本；不以共享域名判断 App 来源。Header 识别不等于进程归属证明，无法采集所有纯 IP 连接。正文采样需 MitM。不能唤醒闲鱼、防止后台回收或维持卖家在线；效果待实机验证。
+#!desc = 闲鱼及 Apple 推送连接直连辅助；可选定时网络心跳检查官网连通性，不能唤醒闲鱼、防止后台回收或维持卖家在线。开发日志仅采集带闲鱼客户端标识的 HTTP 请求、响应和 URL／字面 IP，不以共享域名判断来源；Header 识别不等于进程归属证明。正文采样需 MitM，效果待实机验证。
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/assets/xianyu.jpg
 #!tag = 闲鱼,推送,网络排查,开发日志
 #!system = iOS,iPadOS
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/Xianyu/README.md
 
 [Argument]
+heartbeat_enabled = switch,false,tag=定时网络心跳,desc=由 Loon 定时请求闲鱼官网，仅检查网络连通；不能给闲鱼 App 保活，不维护登录或在线状态
+heartbeat_cron = select,"*/5 * * * *","*/10 * * * *","*/15 * * * *","0 * * * *",tag=心跳频率,desc=依次为每 5／10／15 分钟及每小时；按整点分钟调度，不保证锁屏准时触发
+heartbeat_timeout = select,"5","10","15",tag=心跳请求超时秒,desc=每次只发一个 HEAD 请求，不重试、不跟随跳转；结果查看 Loon 脚本日志
 log_enabled = switch,false,tag=开发日志,desc=开启后记录请求与响应，暂停或关闭后仍可导出；建议短时间复现广告后立即导出
 capture_budget = select,"32","16","64","128",tag=日志容量 MB,desc=达到容量或 4096 条事件上限停止，保留已有记录；导出后再清空
 body_limit_kb = select,"1024","256","4096",tag=单份正文上限 KB,desc=超限正文不保存并注明原因；读取完整正文会增加内存及等待，短时间采集后关闭
@@ -57,6 +60,9 @@ AND,((PROTOCOL,TCP),(DEST-PORT,5223),(IP-CIDR6,2a01:b740:a42::/48,no-resolve)),D
 AND,((PROTOCOL,TCP),(DEST-PORT,443),(IP-CIDR6,2a01:b740:a42::/48,no-resolve)),DIRECT
 
 [Script]
+# Loon 发起的官网连通性探测；不伪装成闲鱼请求，不混入闲鱼开发日志。
+cron ${heartbeat_cron} then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuHeartbeat.js", {${heartbeat_enabled}, ${heartbeat_timeout}}) with enable=${heartbeat_enabled}, timeout=20, tag="闲鱼定时网络心跳"
+generic then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuHeartbeat.js", {${heartbeat_enabled}, ${heartbeat_timeout}}) with timeout=20, img_url="waveform.path.ecg", tag="闲鱼网络心跳检测"
 # 本地工具始终可访问，关闭日志后仍可导出；此入口不连接互联网。
 request if ${url} ~= /^http:\/\/xianyu-logs\.invalid(?::80)?(?:\/|$)/ then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Xianyu/XianyuLogger.js", {${log_enabled}, ${capture_budget}, ${body_limit_kb}, ${raw_binary}, ${media_body}}) with requires_body=true, timeout=30, tag="闲鱼日志页面与导出"
 # 先匹配媒体头部模式，避免默认缓冲图片／音视频；其 URL 仍完整进入日志。

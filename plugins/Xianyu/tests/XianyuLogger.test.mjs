@@ -218,7 +218,7 @@ test('browser exports surviving events and a footer listing damaged events',asyn
 });
 
 test('plugin filters by client marker before buffering, and keeps portal available when disabled',()=>{
-  const rules=plugin.split('[Script]')[1].split('[Mitm]')[0].split('\n').filter(s=>/^(request|response|generic) /.test(s));
+  const rules=plugin.split('[Script]')[1].split('[Mitm]')[0].split('\n').filter(s=>/^(request|response|generic) /.test(s) && s.includes('/XianyuLogger.js'));
   assert.equal(rules.length,6);
   assert.ok(!rules[0].includes('enable=${log_enabled}'));assert.ok(rules[0].includes('xianyu-logs'));
   for(const rule of rules.slice(1,5)) {
