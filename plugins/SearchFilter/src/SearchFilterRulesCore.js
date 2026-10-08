@@ -52,18 +52,20 @@ function sfSubscriptionURL(value) {
   return typeof value === 'string' && (!value || /^https:\/\/[a-z0-9.-]+(?::443)?(?:\/[^\s#]*)?$/i.test(value));
 }
 function sfSettingsValid(settings) {
-  return settings && settings.engines && ['google', 'bing', 'baidu'].every(function (engine) { return typeof settings.engines[engine] === 'boolean'; }) && typeof settings.query_exclusion === 'boolean' && sfSubscriptionURL(settings.subscription_url);
+  return settings && settings.engines && ['google', 'bing', 'baidu'].every(function (engine) { return typeof settings.engines[engine] === 'boolean'; }) && sfEngines.every(function (entry) { return settings.engines[entry.id] === undefined || typeof settings.engines[entry.id] === 'boolean'; }) && typeof settings.query_exclusion === 'boolean' && sfSubscriptionURL(settings.subscription_url);
 }
 function sfRuleSettings(args) {
   args = args || {};
   var on = function (value) { return value === true || value === 'true'; };
-  var result = { engines: { google: args.google_enabled === undefined ? true : on(args.google_enabled), bing: args.bing_enabled === undefined ? true : on(args.bing_enabled), baidu: args.baidu_enabled === undefined ? true : on(args.baidu_enabled) }, query_exclusion: on(args.query_exclusion), subscription_url: String(args.subscription_url || '').trim() };
+  var selected = {};
+  sfEngines.forEach(function (entry) { selected[entry.id] = args[entry.id + '_enabled'] === undefined ? ['google', 'bing', 'baidu'].indexOf(entry.id) >= 0 : on(args[entry.id + '_enabled']); });
+  var result = { engines: selected, query_exclusion: on(args.query_exclusion), subscription_url: String(args.subscription_url || '').trim() };
   if (typeof $persistentStore !== 'undefined') {
     try {
       var raw = $persistentStore.read('search-filter.blacklist.v1');
       if (raw && raw.length <= 65536) {
         var state = JSON.parse(raw), settings = state && state.settings;
-        if (state && state.schema === 1 && sfSettingsValid(settings)) result = { engines: { google: settings.engines.google, bing: settings.engines.bing, baidu: settings.engines.baidu }, query_exclusion: settings.query_exclusion, subscription_url: settings.subscription_url };
+        if (state && state.schema === 1 && sfSettingsValid(settings)) result = sfEngineSelection(settings);
       }
     } catch (_) { /* Keep fixed defaults if settings cannot be read. */ }
   }

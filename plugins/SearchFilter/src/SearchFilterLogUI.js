@@ -30,7 +30,7 @@ function sfLogPageClient(initial) {
       var top = element('div', 'event-top');
       var phase = event.phase === 'request' ? '请求发出' : event.phase === 'response' ? '响应返回' : '订阅更新';
       top.appendChild(element('span', 'phase ' + event.phase, phase));
-      top.appendChild(element('span', 'engine', event.engine ? { google: 'Google', bing: 'Bing', baidu: '百度' }[event.engine] : '名单订阅'));
+      top.appendChild(element('span', 'engine', event.engine ? { google: "Google", bing: "Bing", baidu: "百度", duckduckgo: "DuckDuckGo", yahoo: "Yahoo", brave: "Brave", yandex: "Yandex", sogou: "搜狗", so: "360 搜索", shenma: "神马", ecosia: "Ecosia", startpage: "Startpage" }[event.engine] : '名单订阅'));
       card.appendChild(top);
       card.appendChild(element('p', 'outcome', reasons[event.reason] || '处理结果未知'));
       var details = element('div', 'details');

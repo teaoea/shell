@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 const source = name => fs.readFileSync(new URL('../' + name, import.meta.url), 'utf8');
 const core = source('src/SearchFilterHTMLCore.js');
 const context = vm.createContext({});
-vm.runInContext(core, context);
+vm.runInContext(source('src/SearchFilterEnginesCore.js') + '\n' + core, context);
 const rules = [{ kind: 'key', value: 'csdn' }];
 const filter = (html, list = rules) => JSON.parse(JSON.stringify(context.sfFilterHTML(html, 'google', 'www.google.com', list)));
 const card = (href, cite = '', title = 'Sample result') => `<div class="MjjYud"><div class="tF2Cxc"><a href="${href}">${cite ? `<cite>${cite}</cite>` : ''}<h3>${title}</h3></a><p>Preserve other content</p></div></div>`;

@@ -2,6 +2,7 @@
 function sfBrowserFilter(config) {
     'use strict';
     var saved = new WeakMap();
+    var hiddenCards = new Set();
     var snapshot = { phase: "browser", reason: "scanned", engine: config.engine, rules: config.rules.length, headings: 0, recognized: 0, unresolved: 0, hidden: 0 };
     function restore(card) {
       var original = saved.get(card);
@@ -12,6 +13,7 @@ function sfBrowserFilter(config) {
       else card.setAttribute('aria-hidden', original.aria);
       card.removeAttribute('data-loon-search-filter');
       saved.delete(card);
+      hiddenCards.delete(card);
     }
     function domainOf(value, depth) {
       try {
@@ -25,8 +27,14 @@ function sfBrowserFilter(config) {
           if (target.slice(0, 2) === 'a1') target = atob(target.slice(2).replace(/-/g, '+').replace(/_/g, '/'));
           return /^https?:\/\//i.test(target) ? domainOf(target, (depth || 0) + 1) : '';
         }
-        // Baidu redirect targets cannot be inferred from its opaque token.
-        if (/^(?:www\.|m\.)?baidu\.com$/.test(host) || host === location.hostname.toLowerCase()) return '';
+        if (/^(?:www\.|safe\.|start\.|noai\.|html\.)?duckduckgo\.com$/.test(host) && url.pathname === '/l/') return domainOf(url.searchParams.get('uddg') || '', (depth || 0) + 1);
+        if (host === 'r.search.yahoo.com') {
+          var ru = /\/RU=([^/]+)(?:\/RK=|\/RS=|$)/.exec(url.pathname);
+          return ru ? domainOf(decodeURIComponent(ru[1]), (depth || 0) + 1) : '';
+        }
+        if (/^(?:www\.|m\.)?sogou\.com$/.test(host) && /(?:^|\/)tc$/.test(url.pathname)) return domainOf(url.searchParams.get('url') || url.searchParams.get('pcurl') || '', (depth || 0) + 1);
+        if (/^(?:www\.|m\.)?so\.com$/.test(host) && url.pathname === '/jump') return domainOf(url.searchParams.get('u') || '', (depth || 0) + 1);
+        if (config.adapter.hosts.indexOf(host) >= 0 || host === location.hostname.toLowerCase()) return '';
         return host;
       } catch (_) { return ''; }
     }
@@ -64,8 +72,8 @@ function sfBrowserFilter(config) {
         toggle.addEventListener('click', function () { detail.hidden = !detail.hidden; download.hidden = detail.hidden; });
         download.addEventListener('click', function () {
           // These fields are constructed here; no DOM text, URLs or rules exported.
-          var event = Object.assign({ time: new Date().toISOString(), version: '1.0.5' }, snapshot);
-          var text = JSON.stringify({ format: 'search-filter-browser-diagnostic', version: '1.0.5', count: 1 }) + '\n' + JSON.stringify(event) + '\n';
+          var event = Object.assign({ time: new Date().toISOString(), version: '1.1.0' }, snapshot);
+          var text = JSON.stringify({ format: 'search-filter-browser-diagnostic', version: '1.1.0', count: 1 }) + '\n' + JSON.stringify(event) + '\n';
           var url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
           var anchor = document.createElement('a'); anchor.href = url; anchor.download = 'search-filter-browser.log'; anchor.hidden = true;
           panel.appendChild(anchor); anchor.click(); anchor.remove();
@@ -73,21 +81,24 @@ function sfBrowserFilter(config) {
         });
         panel.appendChild(toggle); panel.appendChild(detail); panel.appendChild(download);
       }
-      var label = '搜索屏蔽 v1.0.5 · ' + (snapshot.reason === 'error' ? '页面处理异常' : '已运行 · 隐藏 ' + snapshot.hidden);
+      var label = '搜索屏蔽 v1.1.0 · ' + (snapshot.reason === 'error' ? '页面处理异常' : '已运行 · 隐藏 ' + snapshot.hidden);
       var info = '规则 ' + snapshot.rules + ' · 标题 ' + snapshot.headings + '\n识别 ' + snapshot.recognized + ' · 目标不明 ' + snapshot.unresolved + ' · 隐藏 ' + snapshot.hidden + '\n仅当前页面统计，不含 Loon 初始移除数。';
       var button = panel.querySelector('button'), pre = panel.querySelector('pre');
       if (button.textContent !== label) button.textContent = label;
       if (pre.textContent !== info) pre.textContent = info;
     }
     function scan() {
+      var visited = new Set();
       var counters = { headings: 0, recognized: 0, unresolved: 0, hidden: 0 };
-      var titleSelector = config.engine === 'google' ? 'h3, [role="heading"][aria-level="3"]' : config.engine === 'bing' ? 'h2' : 'h3';
-      var headingSelector = config.engine === 'bing' ? 'li.b_algo h2' : config.engine === 'baidu' ? '.result h3, .c-container h3' : '#search h3, #rso h3, #main h3, #search [role="heading"][aria-level="3"], #rso [role="heading"][aria-level="3"], #main [role="heading"][aria-level="3"]';
+      var adapter = config.adapter;
+      var titleSelector = adapter.title;
+      var headingSelector = adapter.root ? adapter.root.split(',').map(function (root) { return titleSelector.split(',').map(function (title) { return root.trim() + ' ' + title.trim(); }).join(','); }).join(',') : adapter.card.split(',').map(function (card) { return titleSelector.split(',').map(function (title) { return card.trim() + ' ' + title.trim(); }).join(','); }).join(',');
       document.querySelectorAll(headingSelector).forEach(function (heading) {
         counters.headings++;
         var link = heading.closest('a') || heading.querySelector('a');
-        var card = heading.closest(config.engine === 'bing' ? 'li.b_algo' : config.engine === 'baidu' ? '.result, .c-container' : '.g, .MjjYud, .tF2Cxc, .vt6azd, .Ww4FFb, [data-sokoban-container]');
+        var card = heading.closest(adapter.card);
         if (!card) return;
+        visited.add(card);
         if (card.querySelectorAll(titleSelector).length !== 1) { restore(card); return; }
         counters.recognized++;
         if (!link && config.engine === 'google') {
@@ -96,25 +107,26 @@ function sfBrowserFilter(config) {
         }
         if (!link) { counters.unresolved++; restore(card); return; }
         var host = domainOf(link.getAttribute('href') || '');
-        if (!host && config.engine === 'baidu') {
-          var target = card.getAttribute('data-landurl') || link.getAttribute('data-landurl') || '';
-          if (/^https?:\/\//i.test(target)) host = domainOf(target);
+        if (!host) {
+          adapter.targetAttrs.some(function (name) {
+            var target = link.getAttribute(name) || card.getAttribute(name) || '';
+            if (/^https?:\/\//i.test(target)) host = domainOf(target);
+            return !!host;
+          });
         }
-        if (!host && (config.engine === 'google' || config.engine === 'baidu')) {
-          // Google /goto?url=<opaque token> and Baidu redirects conceal targets.
-          // Prefer the citation inside the title link, then the result citation;
-          // never infer ownership from a brand name or snippet mentioning CSDN.
-          host = citationHost(link, card, config.engine === 'google' ? 'cite, .ob9lvb' : 'cite, .c-showurl, .c-showurl-color');
-        }
+        if (!host) host = citationHost(link, card, adapter.citation);
         if (!host) counters.unresolved++;
         if (blocked(host)) {
           counters.hidden++;
           if (!saved.has(card)) saved.set(card, { display: card.style.getPropertyValue('display'), priority: card.style.getPropertyPriority('display'), aria: card.getAttribute('aria-hidden') });
+          hiddenCards.add(card);
           card.style.setProperty('display', 'none', 'important');
           card.setAttribute('aria-hidden', 'true');
           card.setAttribute('data-loon-search-filter', 'hidden');
         } else restore(card);
       });
+      // Recycled cards may lose their title, result class or web type entirely.
+      hiddenCards.forEach(function (card) { if (!visited.has(card)) restore(card); });
       Object.assign(snapshot, counters, { reason: 'scanned' });
       showDiagnostic();
     }
@@ -126,7 +138,7 @@ function sfBrowserFilter(config) {
       pending = true;
       setTimeout(function () { pending = false; safelyScan(); }, 80);
     }
-    new MutationObserver(schedule).observe(document, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['href', 'data-landurl', 'role', 'aria-level', 'class'] });
+    new MutationObserver(schedule).observe(document, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['href', 'data-landurl', 'data-mdurl', 'data-type', 'data-testid', 'data-tpl', 'role', 'aria-level', 'class'] });
     if (typeof document.addEventListener === 'function') document.addEventListener('DOMContentLoaded', schedule);
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('pageshow', schedule);
   }

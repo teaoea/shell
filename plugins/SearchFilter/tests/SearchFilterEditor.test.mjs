@@ -26,7 +26,7 @@ test('native input and filter master switch are removed and local entry has a ma
   const plugin = source('SearchFilter.plugin');
   assert.equal(/^blocked_domains =|^enabled =/m.test(plugin), false);
   assert.equal(/^(?:google|bing|baidu)_enabled =|^subscription_url =|^query_exclusion =/m.test(plugin), false);
-  assert.match(plugin, /^generic .*SearchFilterEditor\.js\?v=1\.0\.5.*tag=添加黑名单/m);
+  assert.match(plugin, /^generic .*SearchFilterEditor\.js\?v=1\.1\.0.*tag=添加黑名单/m);
   assert.match(plugin, /^http-request .*search-filter-list.*requires-body=true/m);
   const store = memory(), manual = execute('SearchFilterEditor.js', store);
   assert.equal(store.data.size, 0);

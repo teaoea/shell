@@ -81,7 +81,7 @@ function cardsFilter(engine, rules, specs, { nonce = '', headers, cache, subscri
   });
   const context = {
     URL, location: new URL(url), atob: value => Buffer.from(value, 'base64').toString('binary'),
-    document: { querySelectorAll: () => cards.map(card => card.heading), documentElement: {} },
+    document: { querySelectorAll: () => cards.filter((_, index) => !specs[index].noHeading).map(card => card.heading), documentElement: {} },
     MutationObserver: class { constructor(callback) { observer = callback; } observe() {} },
     setTimeout: callback => { timer = callback; }
   };
@@ -224,24 +224,32 @@ test('response passes JSON, errors, non-web searches, unknown hosts and empty li
   assert.deepEqual(run(responseSource, google, { enabled: false }), run(responseSource, google));
   assert.deepEqual(run(responseSource, google, { blocked_domains: 'https://user:pw@example.com/ 中文.com localhost:443' }), {});
 });
-test('plugin registers request/response pairs only for declared MitM hosts', () => {
+test('plugin registers request/response pairs only for declared exact MitM hosts', () => {
   const version = plugin.match(/#!desc = v([0-9.]+)/)[1];
   for (const match of plugin.matchAll(/script-path=([^,]+)/g)) assert.ok(match[1].endsWith('?v=' + version), 'script cache version must match plugin');
+  const context = {}; vm.runInNewContext(fs.readFileSync(new URL('../src/SearchFilterEnginesCore.js', import.meta.url), 'utf8'), context);
   const hosts = plugin.match(/^hostname = (.*)$/m)[1].split(', ');
+  assert.equal(hosts.some(host => host.includes('*')), false);
   const lines = plugin.split('\n').filter(line => /^http-(?:request|response) \^https:/.test(line));
-  assert.equal(lines.length, 6);
+  assert.equal(lines.length, context.sfEngines.length * 2);
   assert.match(plugin, /^#!system = iOS,iPadOS,macOS$/m);
-  assert.equal(/^query_exclusion =|^subscription_url =|^(?:google|bing|baidu)_enabled =/m.test(plugin), false);
-  for (const line of lines) {
-    const pattern = new RegExp(line.split(' ')[1]);
-    for (const host of hosts) {
-      const engine = host.includes('google.') ? 'google' : host.includes('bing.') ? 'bing' : 'baidu';
-      const url = `https://${host}/${engine === 'baidu' ? 's?wd' : 'search?q'}=x`;
-      if (line.includes(`${engine === 'google' ? 'Google' : engine === 'bing' ? 'Bing' : '百度'} 搜索`)) assert.ok(pattern.test(url), url);
+  assert.equal(/^query_exclusion =|^subscription_url =|^(?:google|bing|baidu|duckduckgo|yahoo|brave|yandex|sogou|so|shenma|ecosia|startpage)_enabled =/m.test(plugin), false);
+  for (const engine of context.sfEngines) {
+    const pair = lines.filter(line => line.includes('tag=' + engine.label.replace(/ 搜索$/, '') + ' 搜索'));
+    assert.equal(pair.length, 2);
+    for (const host of engine.hosts) {
+      assert.ok(hosts.includes(host));
+      for (const path of engine.paths) {
+        const url = `https://${host}${path}?${engine.query[0]}=x`;
+        for (const line of pair) {
+          const pattern = new RegExp(line.split(' ')[1]);
+          assert.ok(pattern.test(url), url);
+          for (const unknown of [`https://${host}.evil.net${path}?q=x`, `https://evil.${host}${path}?q=x`, `https://${host}/login?q=x`, `https://${host}${path}extra?q=x`, `http://${host}${path}?q=x`]) assert.equal(pattern.test(unknown), false, unknown);
+        }
+      }
     }
-    assert.equal(pattern.test('https://www.google.com.evil/search?q=x'), false);
-    assert.equal(pattern.test('https://www.baidu.com/link?url=x'), false);
   }
+  assert.match(plugin, /^#!icon = https:\/\/raw.githubusercontent.com\/teaoea\/shell\/main\/plugins\/SearchFilter\/assets\/search-filter.jpg$/m);
 });
 
 function updateSubscription(body, { status = 200, error = null, source = 'https://example.org/list.txt' } = {}) {
@@ -340,4 +348,15 @@ test('page execution diagnostic is visible only with logging enabled and sends n
   assert.doesNotMatch(browserCore, /\bfetch\(|XMLHttpRequest|sendBeacon|console\./);
   const embedded = responseSource.match(/\/\/ BEGIN GENERATED SEARCH BROWSER CORE\n([\s\S]*?)\n\/\/ END GENERATED SEARCH BROWSER CORE/)[1];
   assert.equal(embedded, browserCore.trim());
+});
+
+test('a recycled card is restored when it no longer has a recognized result heading', () => {
+  const spec = { url: 'https://csdn.net/' };
+  const fixture = cardsFilter('google', 'domain-keyword: csdn', [spec]);
+  assert.equal(hidden(fixture.cards[0]), true);
+  spec.noHeading = true;
+  fixture.rescan();
+  assert.equal(hidden(fixture.cards[0]), false);
+  assert.deepEqual(fixture.cards[0].styles, {});
+  assert.deepEqual(fixture.cards[0].attrs, {});
 });

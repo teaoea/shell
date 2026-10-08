@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 
 const root = new URL('../', import.meta.url);
 const source = name => fs.readFileSync(new URL(name, root), 'utf8');
-const core = source('src/SearchFilterLogCore.js');
+const logCore = source('src/SearchFilterLogCore.js');
+const core = source('src/SearchFilterEnginesCore.js') + '\n' + logCore;
 function memory() {
   const values = new Map();
   return { values, read: key => values.get(key) || '', write: (value, key) => { values.set(key, value); return true; } };
@@ -81,7 +82,7 @@ test('local page pause/start/clear controls require same-origin and token', () =
   const store = memory();
   const get = path => execute('SearchFilterLogger.js', args, { method: 'GET', url: 'http://search-filter-logs.invalid' + path }, store);
   const page = get('/');
-  assert.match(page.response.body, /开发日志 v1\.0\.5/);
+  assert.match(page.response.body, /开发日志 v1\.1\.0/);
   assert.match(page.response.body, /最近记录/);
   assert.doesNotMatch(page.response.body, /<form|Location:|location\.|window\.open|href="\/export"/);
   assert.match(page.response.headers['Content-Security-Policy'], /connect-src 'self'; script-src 'nonce-/);
@@ -113,7 +114,7 @@ test('metadata ring caps storage at 300 entries and drops excess events', () => 
 test('generated scripts contain the identical privacy allowlist core', () => {
   for (const name of ['SearchFilter.js', 'SearchFilterResponse.js', 'SearchFilterSubscription.js', 'SearchFilterLogger.js', 'SearchFilterLogWatch.js', 'SearchFilterEditor.js']) {
     const embedded = source(name).match(/\/\/ BEGIN GENERATED SEARCH LOG CORE\n([\s\S]*?)\n\/\/ END GENERATED SEARCH LOG CORE/)[1];
-    assert.equal(embedded, core.trim(), name);
+    assert.equal(embedded, logCore.trim(), name);
   }
 });
 

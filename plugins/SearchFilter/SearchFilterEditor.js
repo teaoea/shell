@@ -1,3 +1,308 @@
+// BEGIN GENERATED SEARCH ENGINES CORE
+/* Explicit search entry and result adapters. No wildcard MitM hosts. */
+var sfEngines = [
+  {
+    "id": "google",
+    "label": "Google",
+    "hosts": [
+      "google.com",
+      "www.google.com",
+      "google.com.hk",
+      "www.google.com.hk",
+      "google.com.tw",
+      "www.google.com.tw",
+      "google.co.jp",
+      "www.google.co.jp",
+      "google.co.uk",
+      "www.google.co.uk"
+    ],
+    "paths": [
+      "/search"
+    ],
+    "query": [
+      "q"
+    ],
+    "title": "h3, [role=\"heading\"][aria-level=\"3\"]",
+    "card": ".g, .MjjYud, .tF2Cxc, .vt6azd, .Ww4FFb, [data-sokoban-container]",
+    "root": "#search, #rso, #main",
+    "citation": "cite, .ob9lvb",
+    "targetAttrs": [],
+    "queryExclusion": true
+  },
+  {
+    "id": "bing",
+    "label": "Bing",
+    "hosts": [
+      "bing.com",
+      "www.bing.com",
+      "cn.bing.com"
+    ],
+    "paths": [
+      "/search"
+    ],
+    "query": [
+      "q"
+    ],
+    "title": "h2",
+    "card": "li.b_algo",
+    "root": "#b_results",
+    "citation": "cite",
+    "targetAttrs": [],
+    "queryExclusion": true
+  },
+  {
+    "id": "baidu",
+    "label": "百度",
+    "hosts": [
+      "baidu.com",
+      "www.baidu.com",
+      "m.baidu.com"
+    ],
+    "paths": [
+      "/s"
+    ],
+    "query": [
+      "wd",
+      "word"
+    ],
+    "title": "h3",
+    "card": ".result, .c-container",
+    "root": "",
+    "citation": "cite, .c-showurl, .c-showurl-color",
+    "targetAttrs": [
+      "data-landurl"
+    ],
+    "queryExclusion": true
+  },
+  {
+    "id": "duckduckgo",
+    "label": "DuckDuckGo",
+    "hosts": [
+      "duckduckgo.com",
+      "www.duckduckgo.com",
+      "safe.duckduckgo.com",
+      "start.duckduckgo.com",
+      "noai.duckduckgo.com",
+      "html.duckduckgo.com"
+    ],
+    "paths": [
+      "/",
+      "/html",
+      "/html/"
+    ],
+    "query": [
+      "q"
+    ],
+    "title": "h2",
+    "card": ".result.web-result, article[data-testid=\"result\"], article[data-testid=\"result-row\"], article",
+    "root": "#links, [data-testid=\"web-vertical\"]",
+    "citation": ".result__url",
+    "targetAttrs": [],
+    "queryExclusion": true
+  },
+  {
+    "id": "yahoo",
+    "label": "Yahoo",
+    "hosts": [
+      "search.yahoo.com",
+      "uk.search.yahoo.com",
+      "tw.search.yahoo.com",
+      "hk.search.yahoo.com",
+      "sg.search.yahoo.com",
+      "search.yahoo.co.jp"
+    ],
+    "paths": [
+      "/search"
+    ],
+    "query": [
+      "p"
+    ],
+    "title": "h3",
+    "card": ".algo-sr, .sw-Card.Algo",
+    "root": "",
+    "citation": "cite",
+    "targetAttrs": [],
+    "queryExclusion": true
+  },
+  {
+    "id": "brave",
+    "label": "Brave",
+    "hosts": [
+      "search.brave.com",
+      "safe.search.brave.com"
+    ],
+    "paths": [
+      "/search"
+    ],
+    "query": [
+      "q"
+    ],
+    "title": ".search-snippet-title, a.title",
+    "card": ".snippet[data-type=\"web\"]",
+    "root": "#mixed-main",
+    "citation": "cite",
+    "targetAttrs": [],
+    "queryExclusion": true
+  },
+  {
+    "id": "yandex",
+    "label": "Yandex",
+    "hosts": [
+      "yandex.com",
+      "www.yandex.com",
+      "yandex.ru",
+      "www.yandex.ru",
+      "ya.ru",
+      "www.ya.ru"
+    ],
+    "paths": [
+      "/search",
+      "/search/",
+      "/search/touch",
+      "/search/touch/"
+    ],
+    "query": [
+      "text"
+    ],
+    "title": "h2, h3.b-serp-item__title",
+    "card": ".Organic, li.serp-item",
+    "root": "",
+    "citation": ".Organic-Path, .Path-Item, cite",
+    "targetAttrs": [],
+    "queryExclusion": false
+  },
+  {
+    "id": "sogou",
+    "label": "搜狗",
+    "hosts": [
+      "sogou.com",
+      "www.sogou.com",
+      "m.sogou.com"
+    ],
+    "paths": [
+      "/web",
+      "/web/searchList.jsp"
+    ],
+    "query": [
+      "query",
+      "keyword"
+    ],
+    "title": "h3.vr-title, h3.vr-tit",
+    "card": ".vrwrap, .rb, .vrResult",
+    "root": "#main, #mainBody",
+    "citation": "cite, .citeurl, .fb, .cite, .citeLinkClass",
+    "targetAttrs": [],
+    "queryExclusion": false
+  },
+  {
+    "id": "so",
+    "label": "360 搜索",
+    "hosts": [
+      "so.com",
+      "www.so.com",
+      "m.so.com"
+    ],
+    "paths": [
+      "/s"
+    ],
+    "query": [
+      "q"
+    ],
+    "title": "h3.res-title",
+    "card": "li.res-list, div.res-list",
+    "root": "#main",
+    "citation": "cite, .res-linkinfo, .res-site, .res-url",
+    "targetAttrs": [
+      "data-mdurl"
+    ],
+    "queryExclusion": false
+  },
+  {
+    "id": "shenma",
+    "label": "神马",
+    "hosts": [
+      "m.sm.cn",
+      "sm.cn",
+      "www.sm.cn"
+    ],
+    "paths": [
+      "/s"
+    ],
+    "query": [
+      "q"
+    ],
+    "title": ".qk-title-text",
+    "card": ".sc[data-tpl=\"structure_template_normal\"]",
+    "root": "#content",
+    "citation": "cite",
+    "targetAttrs": [],
+    "queryExclusion": false
+  },
+  {
+    "id": "ecosia",
+    "label": "Ecosia",
+    "hosts": [
+      "www.ecosia.org",
+      "ecosia.org"
+    ],
+    "paths": [
+      "/search"
+    ],
+    "query": [
+      "q"
+    ],
+    "title": "h2",
+    "card": ".result",
+    "root": "",
+    "citation": ".result__url, cite",
+    "targetAttrs": [],
+    "queryExclusion": true
+  },
+  {
+    "id": "startpage",
+    "label": "Startpage",
+    "hosts": [
+      "www.startpage.com",
+      "startpage.com"
+    ],
+    "paths": [
+      "/sp/search",
+      "/do/dsearch"
+    ],
+    "query": [
+      "query"
+    ],
+    "title": "h2",
+    "card": ".result",
+    "root": ".w-gl, .w-bg",
+    "citation": ".result-url, cite",
+    "targetAttrs": [],
+    "queryExclusion": true
+  }
+];
+function sfEngine(id) { return sfEngines.filter(function (entry) { return entry.id === id; })[0] || null; }
+function sfEngineEntry(host, path) {
+  return sfEngines.filter(function (entry) { return entry.hosts.indexOf(host) >= 0 && entry.paths.indexOf(path) >= 0; })[0] || null;
+}
+function sfEngineQuery(entry, parameters) {
+  var keys = entry.query.filter(function (key) { return Object.prototype.hasOwnProperty.call(parameters, key); });
+  return keys.length === 1 && parameters[keys[0]].trim() ? keys[0] : '';
+}
+function sfEngineWeb(entry, parameters) {
+  if (entry.id === 'google' && (parameters.tbm || (parameters.udm && parameters.udm !== '14'))) return false;
+  if (entry.id === 'baidu' && parameters.tn && parameters.tn !== 'baidu' && parameters.tn !== 'baidulocal') return false;
+  if (entry.id === 'duckduckgo' && ((parameters.ia && parameters.ia !== 'web') || (parameters.iar && parameters.iar !== 'web') || (parameters.iax && parameters.iax !== 'web'))) return false;
+  if (entry.id === 'startpage' && parameters.cat && parameters.cat !== 'web') return false;
+  if (entry.id === 'shenma' && parameters.uc_param_str && parameters.from === 'video') return false;
+  return true;
+}
+function sfEngineSelection(settings) {
+  var selected = {};
+  sfEngines.forEach(function (entry) { selected[entry.id] = settings.engines[entry.id] === true; });
+  return { engines: selected, query_exclusion: settings.query_exclusion, subscription_url: settings.subscription_url };
+}
+// END GENERATED SEARCH ENGINES CORE
+
 // BEGIN GENERATED SEARCH LOG CORE
 /* Privacy allowlist shared by the generated Loon scripts. */
 function sfLogFresh() {
@@ -8,11 +313,11 @@ function sfLogClean(input) {
   var phases = ['request', 'response', 'subscription'];
   var reasons = ['captured', 'disabled', 'query-disabled', 'rewritten', 'unchanged', 'error', 'non-get', 'non-web', 'non-html', 'http-status', 'body-limit', 'body-fragment', 'already-injected', 'no-rules', 'rules-limit', 'invalid-input', 'csp-blocked', 'injected', 'static-removed', 'static-and-injected', 'subscription-invalid', 'download-failed', 'format-invalid', 'storage-failed', 'updated'];
   if (phases.indexOf(input.phase) < 0 || reasons.indexOf(input.reason) < 0) return null;
-  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2', '1.0.3', '1.0.4'].indexOf(input.version) >= 0 ? input.version : '1.0.5', phase: input.phase, reason: input.reason };
-  if (['google', 'bing', 'baidu'].indexOf(input.engine) >= 0) event.engine = input.engine;
-  var hosts = ['google.com', 'www.google.com', 'google.com.hk', 'www.google.com.hk', 'google.com.tw', 'www.google.com.tw', 'google.co.jp', 'www.google.co.jp', 'google.co.uk', 'www.google.co.uk', 'bing.com', 'www.bing.com', 'cn.bing.com', 'baidu.com', 'www.baidu.com', 'm.baidu.com'];
+  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2', '1.0.3', '1.0.4', '1.0.5'].indexOf(input.version) >= 0 ? input.version : '1.1.0', phase: input.phase, reason: input.reason };
+  if (sfEngines.some(function (entry) { return entry.id === input.engine; })) event.engine = input.engine;
+  var hosts = sfEngines.reduce(function (list, entry) { return list.concat(entry.hosts); }, []);
   if (hosts.indexOf(input.host) >= 0) event.host = input.host;
-  if (['/search', '/s'].indexOf(input.path) >= 0) event.path = input.path;
+  if (sfEngines.some(function (entry) { return entry.paths.indexOf(input.path) >= 0; })) event.path = input.path;
   if (Number.isInteger(input.status) && input.status >= 100 && input.status <= 599) event.status = input.status;
   if (Number.isInteger(input.rules) && input.rules >= 0 && input.rules <= 200) event.rules = input.rules;
   ['recognized', 'removed', 'unresolved'].forEach(function (key) { if (Number.isInteger(input[key]) && input[key] >= 0 && input[key] <= 10000) event[key] = input[key]; });
@@ -51,7 +356,7 @@ function sfLogAnnounce(state) {
   // Concurrent storage writes, like the event ring, are not an atomic lock.
   state.announced = true; sfLogSave(state);
   try {
-    $notification.post('搜索屏蔽开发日志 v1.0.5', '已自动开始记录', '点击打开本地日志页。重新搜索后可刷新、导出脱敏记录。', { openUrl: 'http://search-filter-logs.invalid/' });
+    $notification.post('搜索屏蔽开发日志 v1.1.0', '已自动开始记录', '点击打开本地日志页。重新搜索后可刷新、导出脱敏记录。', { openUrl: 'http://search-filter-logs.invalid/' });
   } catch (_) { /* Notification permissions/errors never change filtering. */ }
 }
 function sfLogRecord(args, input) {
@@ -76,6 +381,7 @@ function sfEditorClient(initial) {
   var state = initial, busy = false, editing = -1;
   var get = function (id) { return document.getElementById(id); };
   var field = get('entry');
+  var engineIDs = initial.engines.map(function (entry) { return entry.id; });
   function line(rule) { return (rule.kind === 'key' ? 'domain-keyword' : 'domain-suffix') + ': ' + rule.value; }
   function tell(text, error) { get('notice').textContent = text; get('notice').className = error ? 'notice error' : 'notice'; }
   function render() {
@@ -85,7 +391,7 @@ function sfEditorClient(initial) {
     get('cancel').hidden = editing < 0;
     get('refresh').disabled = busy; get('add').disabled = busy; field.disabled = busy;
     get('keyword').disabled = busy; get('suffix').disabled = busy;
-    ['google', 'bing', 'baidu'].forEach(function (engine) { get(engine).checked = state.settings.engines[engine]; get(engine).disabled = busy; });
+    engineIDs.forEach(function (engine) { get(engine).checked = state.settings.engines[engine]; get(engine).disabled = busy; });
     get('query').checked = state.settings.query_exclusion; get('query').disabled = busy;
     get('save-settings').disabled = busy; get('subscription-update').disabled = busy || !state.settings.subscription_url;
     get('subscription-url').disabled = busy;
@@ -106,7 +412,7 @@ function sfEditorClient(initial) {
     if (busy) return;
     busy = true;
     // Preserve current form values until the request finishes.
-    ['google', 'bing', 'baidu', 'query', 'subscription-url', 'save-settings', 'subscription-update', 'refresh', 'add', 'keyword', 'suffix'].forEach(function (id) { get(id).disabled = true; });
+    engineIDs.concat(['query', 'subscription-url', 'save-settings', 'subscription-update', 'refresh', 'add', 'keyword', 'suffix']).forEach(function (id) { get(id).disabled = true; });
     try {
       payload.token = state.token;
       var response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), credentials: 'same-origin', cache: 'no-store' });
@@ -116,7 +422,8 @@ function sfEditorClient(initial) {
     finally { busy = false; render(); }
   }
   get('save-settings').addEventListener('click', function () {
-    var settings = { engines: { google: get('google').checked, bing: get('bing').checked, baidu: get('baidu').checked }, query_exclusion: get('query').checked, subscription_url: get('subscription-url').value.trim() };
+    var selected = {}; engineIDs.forEach(function (id) { selected[id] = get(id).checked; });
+    var settings = { engines: selected, query_exclusion: get('query').checked, subscription_url: get('subscription-url').value.trim() };
     configure('/settings', { settings: settings }, '设置已保存，重新搜索后生效；更改订阅地址后请更新订阅。');
   });
   get('subscription-update').addEventListener('click', function () { configure('/subscription', {}, '订阅已更新，重新搜索后生效。'); });
@@ -170,11 +477,12 @@ function sfEditorClient(initial) {
   keyboard();
 }
 function sfEditorMarkup(view) {
+  var engineMarkup = view.engines.map(function (entry) { return '<label><input id="' + entry.id + '" type="checkbox">' + entry.label + '</label>'; }).join('');
   var data = JSON.stringify(view).replace(/</g, '\\u003c');
   var scripts = sfRuleValid.toString() + '\n' + sfRuleParseLine.toString() + '\n' + sfRuleParseList.toString();
   return '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>搜索屏蔽名单 v' + view.version + '</title><style>' +
     ':root{--bg:#f4f6fa;--surface:#fff;--text:#182238;--muted:#617087;--line:#e2e7ef;--accent:#315ee7;--soft:#eef3ff;--danger:#b84248;--composer-space:180px}*{box-sizing:border-box}html{width:100%;-webkit-text-size-adjust:100%;text-size-adjust:100%}body{width:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:100%;max-width:850px;margin:auto;padding:20px 16px var(--composer-space)}.eyebrow{font-size:11px;color:var(--muted);margin:0}h1{font-size:22px;line-height:1.25;margin:5px 0}.hint{font-size:12px;color:var(--muted);margin:8px 0;overflow-wrap:anywhere}.top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.top h1{min-width:0}.top button{flex-shrink:0}.settings{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;margin:12px 0}.more summary{cursor:pointer;color:var(--muted);font-size:12px;margin:8px 0}.more .option{margin-top:10px}.settings h2{font-size:14px;margin:0 0 8px}.engines{display:flex;flex-wrap:wrap;gap:8px 14px;margin:6px 0 8px}.engines label,.option{display:flex;align-items:center;gap:6px;min-height:36px;min-width:0}.settings input[type=checkbox]{width:18px;height:18px;flex-shrink:0;accent-color:var(--accent);margin:0}.settings input[type=url]{display:block;width:100%;max-width:100%;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);padding:9px;font:16px ui-monospace,monospace;margin:6px 0}.setting-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.count{font-size:12px;color:var(--muted);margin:0 0 10px}.rules{list-style:none;padding:0;margin:0;display:grid;min-width:0;gap:8px}.rules li{display:flex;align-items:center;justify-content:space-between;min-width:0;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px}.rules code{flex:1;min-width:0;font-size:12px;overflow-wrap:anywhere;word-break:break-word}.rules li div{display:flex;flex-shrink:0;gap:4px}button{font:inherit;font-size:12px;min-height:40px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;color:var(--text);background:var(--surface);cursor:pointer;touch-action:manipulation}button:disabled{opacity:.5}button:focus-visible,textarea:focus-visible,input[type=url]:focus-visible{outline:3px solid #91aaff;outline-offset:2px}.primary{color:#fff;background:var(--accent);border-color:var(--accent)}.remove{color:var(--danger)}.empty{padding:24px 12px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px}.composer{position:fixed;bottom:var(--keyboard,0px);left:0;right:0;width:100%;min-width:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);padding:8px max(10px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));box-shadow:0 -4px 16px #00000008}.composer-inner{max-width:810px;min-width:0;margin:auto}.types{display:flex;min-width:0;gap:6px;margin-bottom:6px}.types button{font:12px ui-monospace,monospace;min-width:0;padding:8px 4px;background:var(--soft);color:var(--accent);flex:1}.input{display:flex;align-items:stretch;min-width:0;gap:6px}textarea{display:block;flex:1;width:0;max-width:100%;min-width:0;min-height:54px;max-height:110px;resize:none;border:1px solid var(--line);border-radius:8px;padding:8px;color:var(--text);background:var(--bg);font:16px/1.35 ui-monospace,monospace}.input button{flex-shrink:0;max-width:84px;padding:8px}.notice{font-size:11px;color:#187c55;margin:6px 0 0;overflow-wrap:anywhere}.notice:empty{display:none}.error{color:var(--danger)}.privacy{font-size:12px;color:var(--muted);margin-top:14px;overflow-wrap:anywhere}.privacy summary{cursor:pointer;color:var(--text)}[hidden]{display:none!important}@media(max-width:450px){main{padding:14px 10px var(--composer-space)}h1{font-size:20px}.rules li{align-items:flex-start}.rules li div button{padding:7px;min-height:36px}.engines{gap:8px 12px}.input .primary{width:84px}}@media(max-width:340px){.rules li{flex-wrap:wrap}.rules li code{flex-basis:100%}.rules li div{margin-left:auto}.input #cancel{max-width:48px;padding:6px}.types button{font-size:11px}}@media(max-height:500px){.composer{padding-top:5px}.types{margin-bottom:4px}.types button{min-height:34px;padding:6px 4px}textarea{min-height:46px;max-height:70px}.notice{margin-top:4px}}@media(prefers-color-scheme:dark){:root{--bg:#101622;--surface:#1a2232;--text:#e6ecf6;--muted:#9cabc0;--line:#303b4d;--accent:#5e86ff;--soft:#26334f;--danger:#ff979c}.notice{color:#8bd8b2}.error{color:var(--danger)}}' +
-    '</style></head><body><main><p class="eyebrow">本地管理 · v' + view.version + '</p><div class="top"><h1>搜索屏蔽名单</h1><button id="refresh" type="button">刷新名单</button></div><p class="hint">选择类型后填写内容，每行一条。保存后重新搜索。</p><section class="settings" aria-label="过滤设置"><h2>生效搜索引擎</h2><div class="engines"><label><input id="google" type="checkbox">Google</label><label><input id="bing" type="checkbox">Bing</label><label><input id="baidu" type="checkbox">百度</label></div><p class="hint">整份本地名单与订阅共用；只过滤已勾选的引擎，修改后保存。</p><details class="more"><summary>搜索排除与远程订阅</summary><label class="option"><input id="query" type="checkbox">额外追加搜索排除条件</label><p class="hint">默认关闭。开启后仅域名后缀规则追加 -site 条件；域名关键词由页面过滤。关闭后旧查询条件需手动删除。</p><label for="subscription-url">远程名单订阅 URL</label><input id="subscription-url" type="url" maxlength="2048" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="公开 HTTPS 文本直链，留空停用"><p class="hint">使用相同的每行规则格式。保存后更新订阅；更新失败保留上次有效缓存。</p><p id="subscription-status" class="hint"></p><div class="setting-actions"><button id="subscription-update" type="button">更新订阅</button></div></details><div class="setting-actions"><button id="save-settings" type="button" class="primary">保存设置</button></div></section><p class="count">本地规则 <strong id="count">0</strong> / 100</p><div id="empty" class="empty">暂无本地规则，使用下方快捷按钮添加。</div><ul id="rules" class="rules" aria-label="屏蔽名单"></ul><details class="privacy"><summary>规则说明与隐私</summary><p>domain-keyword：匹配倒数第二个域名标签，覆盖不同后缀及子域名，不按标题或正文匹配。domain-suffix：匹配指定域名本身及所有子域名，不影响其他域名后缀。不支持通配符。中文域名请填写 Punycode。</p><p>名单只保存在本机 Loon，不上传，不写入开发日志，不跨设备同步。远程订阅与本地名单按任一命中即隐藏合并；删除本地条目不会删除订阅规则。旧版插件输入框不再用于名单，旧条目需在此重新添加。</p></details><noscript>请允许本地页面运行 JavaScript 以管理名单。</noscript></main><section id="composer" class="composer" aria-label="添加规则"><div class="composer-inner"><div class="types"><button id="keyword" type="button">domain-keyword</button><button id="suffix" type="button">domain-suffix</button></div><div class="input"><textarea id="entry" rows="2" maxlength="8192" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="规则内容" placeholder="点击上方按钮插入类型，或粘贴多行规则"></textarea><button id="add" type="button" class="primary">添加并保存</button><button id="cancel" type="button" hidden>取消编辑</button></div><p id="notice" class="notice" role="status" aria-live="polite"></p></div></section><script nonce="' + view.token + '">' + scripts + '\n(' + sfEditorClient.toString() + ')(' + data + ');</script></body></html>';
+    '</style></head><body><main><p class="eyebrow">本地管理 · v' + view.version + '</p><div class="top"><h1>搜索屏蔽名单</h1><button id="refresh" type="button">刷新名单</button></div><p class="hint">选择类型后填写内容，每行一条。保存后重新搜索。</p><section class="settings" aria-label="过滤设置"><h2>生效搜索引擎</h2><div class="engines">' + engineMarkup + '</div><p class="hint">整份本地名单与订阅共用；新增引擎请手动勾选，修改后保存。</p><details class="more"><summary>搜索排除与远程订阅</summary><label class="option"><input id="query" type="checkbox">额外追加搜索排除条件</label><p class="hint">默认关闭。开启后在支持的引擎为域名后缀规则追加 -site 条件；其他引擎和域名关键词仍由页面过滤。关闭后旧查询条件需手动删除。</p><label for="subscription-url">远程名单订阅 URL</label><input id="subscription-url" type="url" maxlength="2048" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="公开 HTTPS 文本直链，留空停用"><p class="hint">使用相同的每行规则格式。保存后更新订阅；更新失败保留上次有效缓存。</p><p id="subscription-status" class="hint"></p><div class="setting-actions"><button id="subscription-update" type="button">更新订阅</button></div></details><div class="setting-actions"><button id="save-settings" type="button" class="primary">保存设置</button></div></section><p class="count">本地规则 <strong id="count">0</strong> / 100</p><div id="empty" class="empty">暂无本地规则，使用下方快捷按钮添加。</div><ul id="rules" class="rules" aria-label="屏蔽名单"></ul><details class="privacy"><summary>规则说明与隐私</summary><p>domain-keyword：匹配倒数第二个域名标签，覆盖不同后缀及子域名，不按标题或正文匹配。domain-suffix：匹配指定域名本身及所有子域名，不影响其他域名后缀。不支持通配符。中文域名请填写 Punycode。</p><p>名单只保存在本机 Loon，不上传，不写入开发日志，不跨设备同步。远程订阅与本地名单按任一命中即隐藏合并；删除本地条目不会删除订阅规则。旧版插件输入框不再用于名单，旧条目需在此重新添加。</p></details><noscript>请允许本地页面运行 JavaScript 以管理名单。</noscript></main><section id="composer" class="composer" aria-label="添加规则"><div class="composer-inner"><div class="types"><button id="keyword" type="button">domain-keyword</button><button id="suffix" type="button">domain-suffix</button></div><div class="input"><textarea id="entry" rows="2" maxlength="8192" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="规则内容" placeholder="点击上方按钮插入类型，或粘贴多行规则"></textarea><button id="add" type="button" class="primary">添加并保存</button><button id="cancel" type="button" hidden>取消编辑</button></div><p id="notice" class="notice" role="status" aria-live="polite"></p></div></section><script nonce="' + view.token + '">' + scripts + '\n(' + sfEditorClient.toString() + ')(' + data + ');</script></body></html>';
 }
 // END GENERATED SEARCH EDITOR UI
 
@@ -233,18 +541,20 @@ function sfSubscriptionURL(value) {
   return typeof value === 'string' && (!value || /^https:\/\/[a-z0-9.-]+(?::443)?(?:\/[^\s#]*)?$/i.test(value));
 }
 function sfSettingsValid(settings) {
-  return settings && settings.engines && ['google', 'bing', 'baidu'].every(function (engine) { return typeof settings.engines[engine] === 'boolean'; }) && typeof settings.query_exclusion === 'boolean' && sfSubscriptionURL(settings.subscription_url);
+  return settings && settings.engines && ['google', 'bing', 'baidu'].every(function (engine) { return typeof settings.engines[engine] === 'boolean'; }) && sfEngines.every(function (entry) { return settings.engines[entry.id] === undefined || typeof settings.engines[entry.id] === 'boolean'; }) && typeof settings.query_exclusion === 'boolean' && sfSubscriptionURL(settings.subscription_url);
 }
 function sfRuleSettings(args) {
   args = args || {};
   var on = function (value) { return value === true || value === 'true'; };
-  var result = { engines: { google: args.google_enabled === undefined ? true : on(args.google_enabled), bing: args.bing_enabled === undefined ? true : on(args.bing_enabled), baidu: args.baidu_enabled === undefined ? true : on(args.baidu_enabled) }, query_exclusion: on(args.query_exclusion), subscription_url: String(args.subscription_url || '').trim() };
+  var selected = {};
+  sfEngines.forEach(function (entry) { selected[entry.id] = args[entry.id + '_enabled'] === undefined ? ['google', 'bing', 'baidu'].indexOf(entry.id) >= 0 : on(args[entry.id + '_enabled']); });
+  var result = { engines: selected, query_exclusion: on(args.query_exclusion), subscription_url: String(args.subscription_url || '').trim() };
   if (typeof $persistentStore !== 'undefined') {
     try {
       var raw = $persistentStore.read('search-filter.blacklist.v1');
       if (raw && raw.length <= 65536) {
         var state = JSON.parse(raw), settings = state && state.settings;
-        if (state && state.schema === 1 && sfSettingsValid(settings)) result = { engines: { google: settings.engines.google, bing: settings.engines.bing, baidu: settings.engines.baidu }, query_exclusion: settings.query_exclusion, subscription_url: settings.subscription_url };
+        if (state && state.schema === 1 && sfSettingsValid(settings)) result = sfEngineSelection(settings);
       }
     } catch (_) { /* Keep fixed defaults if settings cannot be read. */ }
   }
@@ -271,7 +581,7 @@ function sfSubscriptionRefresh(source, complete) {
 }
 // END GENERATED SEARCH SUBSCRIPTION CORE
 
-/* 搜索屏蔽名单 v1.0.5 — local page; network only for configured subscription. */
+/* 搜索屏蔽名单 v1.1.0 — local page; network only for configured subscription. */
 (function () {
   'use strict';
   var BASE = 'http://search-filter-list.invalid', KEY = 'search-filter.blacklist.v1';
@@ -302,7 +612,7 @@ function sfSubscriptionRefresh(source, complete) {
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(cached.updated_at || '')) subscription.updated_at = cached.updated_at;
       }
     } catch (_) {}
-    return { version: '1.0.5', rules: state.rules, token: state.token, settings: state.settings, subscription: subscription };
+    return { engines: sfEngines.map(function (entry) { return { id: entry.id, label: entry.label }; }), version: '1.1.0', rules: state.rules, token: state.token, settings: state.settings, subscription: subscription };
   }
   try {
     var path = match[1] || '/', method = req.method || 'GET';
@@ -332,7 +642,7 @@ function sfSubscriptionRefresh(source, complete) {
     if (path === '/settings') {
       if (!sfSettingsValid(data.settings) || data.settings.subscription_url.length > 2048) return json(400, { error: 'invalid-settings' });
       var selected = data.settings;
-      state.settings = { engines: { google: selected.engines.google, bing: selected.engines.bing, baidu: selected.engines.baidu }, query_exclusion: selected.query_exclusion, subscription_url: selected.subscription_url };
+      state.settings = sfEngineSelection(selected);
       state.token = token(); save(state); return json(200, view(state));
     }
     if (path === '/subscription') {

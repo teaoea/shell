@@ -1,0 +1,82 @@
+[
+  {
+    "engine": "google",
+    "url": "https://www.google.com/search?q=sample",
+    "body": "<html><body><div id=\"rso\"><div class=\"g\"><a href=\"https://blog.example.com/article\"><h3>Sample</h3></a></div></div></body></html>"
+  },
+  {
+    "engine": "bing",
+    "url": "https://www.bing.com/search?q=sample",
+    "body": "<html><body><ul id=\"b_results\"><li class=\"b_algo\"><h2><a href=\"https://blog.example.com/article\">Sample</a></h2></li></ul></body></html>"
+  },
+  {
+    "engine": "baidu",
+    "url": "https://m.baidu.com/s?word=sample",
+    "body": "<html><body><div class=\"result\"><h3><a href=\"https://www.baidu.com/link?url=SAMPLE\">Sample</a></h3><cite>blog.example.com</cite></div></body></html>"
+  },
+  {
+    "engine": "duckduckgo",
+    "url": "https://html.duckduckgo.com/html/?q=sample",
+    "body": "<html><body><div id=\"links\"><div class=\"result web-result\"><h2 class=\"result__title\"><a class=\"result__a\" href=\"//duckduckgo.com/l/?uddg=https%3A%2F%2Fblog.example.com%2Farticle\">Sample</a></h2></div></div></body></html>"
+  },
+  {
+    "engine": "duckduckgo",
+    "url": "https://duckduckgo.com/?q=sample",
+    "body": "<html><body><div data-testid=\"web-vertical\"><article data-testid=\"result\"><h2><a data-testid=\"result-title-a\" href=\"https://blog.example.com/article\">Sample</a></h2></article></div></body></html>"
+  },
+  {
+    "engine": "yahoo",
+    "url": "https://search.yahoo.com/search?p=sample",
+    "body": "<html><body><div class=\"algo-sr\"><div class=\"compTitle\"><h3><a href=\"https://r.search.yahoo.com/_ylt=SAMPLE/RU=https%3A%2F%2Fblog.example.com%2Farticle/RK=2/RS=SAMPLE\">Sample</a></h3></div></div></body></html>"
+  },
+  {
+    "engine": "yahoo",
+    "url": "https://search.yahoo.co.jp/search?p=sample",
+    "body": "<html><body><div class=\"sw-Card Algo\"><h3><a href=\"https://blog.example.com/article\">Sample</a></h3></div></body></html>"
+  },
+  {
+    "engine": "brave",
+    "url": "https://search.brave.com/search?q=sample",
+    "body": "<html><body><section id=\"mixed-main\"><div class=\"snippet\" data-type=\"web\"><div class=\"result-content\"><a href=\"https://blog.example.com/article\"><cite>blog.example.com</cite><div class=\"title search-snippet-title\">Sample</div></a></div></div></section></body></html>"
+  },
+  {
+    "engine": "yandex",
+    "url": "https://yandex.com/search/?text=sample",
+    "body": "<html><body><li class=\"serp-item\"><div class=\"Organic\"><h2><a href=\"https://blog.example.com/article\">Sample</a></h2></div></li></body></html>"
+  },
+  {
+    "engine": "sogou",
+    "url": "https://www.sogou.com/web?query=sample",
+    "body": "<html><body><div id=\"main\"><div class=\"vrwrap\"><h3 class=\"vr-title\"><a href=\"/link?url=SAMPLE\">Sample</a></h3><div class=\"fb\">blog.example.com</div></div></div></body></html>"
+  },
+  {
+    "engine": "sogou",
+    "url": "https://m.sogou.com/web/searchList.jsp?keyword=sample",
+    "body": "<html><body><div id=\"mainBody\"><div class=\"vrResult\"><h3 class=\"vr-tit\"><a class=\"resultLink\" href=\"./id=SAMPLE/keyword=sample/tc?url=https%3A%2F%2Fblog.example.com%2Farticle\">Sample</a></h3></div></div></body></html>"
+  },
+  {
+    "engine": "so",
+    "url": "https://www.so.com/s?q=sample",
+    "body": "<html><body><ul id=\"main\"><li class=\"res-list\"><h3 class=\"res-title\"><a href=\"https://www.so.com/link?m=SAMPLE\" data-mdurl=\"https://blog.example.com/article\">Sample</a></h3></li></ul></body></html>"
+  },
+  {
+    "engine": "so",
+    "url": "https://m.so.com/s?q=sample",
+    "body": "<html><body><div id=\"main\"><div class=\"res-list g-card\"><a class=\"alink\" href=\"https://m.so.com/jump?u=https%3A%2F%2Fblog.example.com%2Farticle\"><h3 class=\"res-title\">Sample</h3></a></div></div></body></html>"
+  },
+  {
+    "engine": "shenma",
+    "url": "https://m.sm.cn/s?q=sample",
+    "body": "<html><body><div id=\"content\"><div class=\"sc\" data-tpl=\"structure_template_normal\"><div class=\"qk-title\"><a class=\"qk-link-wrapper\" href=\"https://blog.example.com/article\"><div class=\"qk-title-text\">Sample</div></a></div></div></div></body></html>"
+  },
+  {
+    "engine": "ecosia",
+    "url": "https://www.ecosia.org/search?q=sample",
+    "body": "<html><body><div class=\"result\"><h2><a class=\"result__link\" href=\"https://blog.example.com/article\">Sample</a></h2></div></body></html>"
+  },
+  {
+    "engine": "startpage",
+    "url": "https://www.startpage.com/sp/search?query=sample",
+    "body": "<html><body><div class=\"w-gl\"><div class=\"result\"><h2><a class=\"result-link\" href=\"https://blog.example.com/article\">Sample</a></h2></div></div></body></html>"
+  }
+]

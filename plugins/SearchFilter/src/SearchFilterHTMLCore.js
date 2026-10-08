@@ -42,7 +42,37 @@ function sfHTMLURLHost(value, pageHost, depth) {
     });
     return /^https?:\/\//i.test(target) ? sfHTMLURLHost(target, pageHost, (depth || 0) + 1) : '';
   }
-  if (!parsed || host === pageHost || /^(?:www\.|m\.)?baidu\.com$/.test(host)) return '';
+  var wrapped = (/^(?:www\.|cn\.)?bing\.com$/.test(host) && path === '/ck/a') || (/^(?:www\.|safe\.|start\.|noai\.|html\.)?duckduckgo\.com$/.test(host) && path === '/l/') || host === 'r.search.yahoo.com' || (/^(?:www\.|m\.)?sogou\.com$/.test(host) && /(?:^|\/)tc$/.test(path)) || (/^(?:www\.|m\.)?so\.com$/.test(host) && path === '/jump');
+  var pageEngine = sfEngines.filter(function (entry) { return entry.hosts.indexOf(pageHost) >= 0; })[0];
+  if (!wrapped) return !parsed || host === pageHost || (pageEngine && pageEngine.hosts.indexOf(host) >= 0) ? '' : host;
+  var parameters = Object.create(null), malformed = false;
+  query.split('&').forEach(function (part) {
+    if (!part) return;
+    try {
+      var equal = part.indexOf('='), key = decodeURIComponent(equal < 0 ? part : part.slice(0, equal));
+      if (Object.prototype.hasOwnProperty.call(parameters, key)) { malformed = true; return; }
+      parameters[key] = decodeURIComponent((equal < 0 ? '' : part.slice(equal + 1)).replace(/\+/g, ' '));
+    } catch (_) { malformed = true; }
+  });
+  if (malformed) return '';
+  var target = '';
+  if (/^(?:www\.|cn\.)?bing\.com$/.test(host) && path === '/ck/a') {
+    target = parameters.u || '';
+    if (target.slice(0, 2) === 'a1') {
+      var text = target.slice(2).replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+      if (!/^[A-Za-z0-9+/]+$/.test(text) || text.length % 4 === 1) return '';
+      var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', bytes = '', bits = 0, value = 0;
+      for (var i = 0; i < text.length; i++) { value = (value << 6) | alphabet.indexOf(text[i]); bits += 6; if (bits >= 8) { bits -= 8; bytes += String.fromCharCode((value >> bits) & 255); } }
+      target = bytes;
+    }
+  } else if (/^(?:www\.|safe\.|start\.|noai\.|html\.)?duckduckgo\.com$/.test(host) && path === '/l/') target = parameters.uddg || '';
+  else if (host === 'r.search.yahoo.com') {
+    var ru = /\/RU=([^/]+)(?:\/RK=|\/RS=|$)/.exec(path);
+    try { target = ru ? decodeURIComponent(ru[1]) : ''; } catch (_) { return ''; }
+  } else if (/^(?:www\.|m\.)?sogou\.com$/.test(host) && /(?:^|\/)tc$/.test(path)) target = parameters.url || parameters.pcurl || '';
+  else if (/^(?:www\.|m\.)?so\.com$/.test(host) && path === '/jump') target = parameters.u || '';
+  if (target) return /^https?:\/\//i.test(target) ? sfHTMLURLHost(target, pageHost, (depth || 0) + 1) : '';
+  if (!parsed || host === pageHost || host === 'r.search.yahoo.com' || (pageEngine && pageEngine.hosts.indexOf(host) >= 0)) return '';
   return host;
 }
 function sfHTMLDisplayedHost(markup, pageHost) {
@@ -50,10 +80,25 @@ function sfHTMLDisplayedHost(markup, pageHost) {
   var match = /^(?:https?:\/\/)?((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z]{2,}|xn--[a-z0-9-]+))(?=$|[\/\s›>])/i.exec(text);
   return match ? sfHTMLURLHost('https://' + match[1], pageHost) : '';
 }
+function sfHTMLMatches(node, selectors) {
+  return selectors.split(',').some(function (selector) {
+    selector = selector.trim();
+    if (!selector) return false;
+    var tag = /^[a-z][a-z0-9-]*/i.exec(selector);
+    if (tag && node.tag !== tag[0].toLowerCase()) return false;
+    var checks = /([.#])([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]/g, match;
+    while ((match = checks.exec(selector))) {
+      if (match[1] === '#' && node.attrs.id !== match[2]) return false;
+      if (match[1] === '.' && (' ' + (node.attrs['class'] || '') + ' ').replace(/\s+/g, ' ').indexOf(' ' + match[2] + ' ') < 0) return false;
+      if (match[3] && (!Object.prototype.hasOwnProperty.call(node.attrs, match[3]) || (match[4] !== undefined && node.attrs[match[3]] !== match[4]))) return false;
+    }
+    return true;
+  });
+}
 function sfFilterHTML(html, engine, pageHost, rules) {
-  // Start with Google; Bing/Baidu retain the existing browser filter.
   var result = { body: html, recognized: 0, removed: 0, unresolved: 0 };
-  if (engine !== 'google') return result;
+  var adapter = sfEngine(engine);
+  if (!adapter) return result;
   var tokens = /<!--[\s\S]*?-->|<![^>]*>|<\/?([a-z][\w:-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
   var stack = [], nodes = [], headings = [], match, count = 0;
   var voidTags = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/;
@@ -78,11 +123,12 @@ function sfFilterHTML(html, engine, pageHost, rules) {
     var attributeText = match[0].slice(tag.length + 1, -1);
     while ((attribute = attributePattern.exec(attributeText))) {
       var name = attribute[1].toLowerCase();
-      if (['class', 'id', 'href', 'role', 'aria-level', 'data-sokoban-container'].indexOf(name) >= 0 && !Object.prototype.hasOwnProperty.call(attributes, name)) attributes[name] = attribute[2] !== undefined ? attribute[2] : attribute[3] !== undefined ? attribute[3] : attribute[4] || '';
+      if (['class', 'id', 'href', 'role', 'aria-level', 'data-sokoban-container', 'data-testid', 'data-type', 'data-tpl', 'data-landurl', 'data-mdurl'].indexOf(name) >= 0 && !Object.prototype.hasOwnProperty.call(attributes, name)) attributes[name] = attribute[2] !== undefined ? attribute[2] : attribute[3] !== undefined ? attribute[3] : attribute[4] || '';
     }
     var current = { tag: tag, attrs: attributes, start: match.index, open: tokens.lastIndex, end: 0, close: 0, parent: stack.length ? stack[stack.length - 1] : null, titles: 0 };
+    current.foreign = tag === 'svg' || tag === 'math' || (current.parent && current.parent.foreign);
     nodes.push(current);
-    if (tag === 'h3' || (attributes.role === 'heading' && attributes['aria-level'] === '3')) {
+    if (sfHTMLMatches(current, adapter.title)) {
       headings.push(current);
       for (var ancestor = current.parent; ancestor; ancestor = ancestor.parent) ancestor.titles++;
     }
@@ -107,17 +153,18 @@ function sfFilterHTML(html, engine, pageHost, rules) {
       var rawEnd = endPattern.exec(html);
       if (!rawEnd) return result;
       tokens.lastIndex = endPattern.lastIndex; current.end = tokens.lastIndex; current.close = rawEnd.index;
-    } else if (!voidTags.test(tag)) stack.push(current);
+    } else if (current.foreign && /\/\s*>$/.test(match[0])) { current.end = tokens.lastIndex; current.close = tokens.lastIndex; }
+    else if (!voidTags.test(tag)) stack.push(current);
   }
   var ranges = [], seen = [];
   headings.forEach(function (heading) {
-    var card = null, link = null, root = null;
+    var card = null, link = heading.tag === 'a' ? heading : null, root = null;
     for (var ancestor = heading.parent; ancestor; ancestor = ancestor.parent) {
       if (!link && ancestor.tag === 'a') link = ancestor;
-      if (!card && ancestor.tag === 'div' && (/(?:^|\s)(?:g|MjjYud|tF2Cxc|vt6azd|Ww4FFb)(?:\s|$)/.test(ancestor.attrs['class'] || '') || Object.prototype.hasOwnProperty.call(ancestor.attrs, 'data-sokoban-container'))) card = ancestor;
-      if (!root && (ancestor.attrs.id === 'search' || ancestor.attrs.id === 'rso' || ancestor.attrs.id === 'main')) root = ancestor;
+      if (!card && sfHTMLMatches(ancestor, adapter.card)) card = ancestor;
+      if (!root && adapter.root && sfHTMLMatches(ancestor, adapter.root)) root = ancestor;
     }
-    if (!root || !root.end || root.invalid || !card || !card.end || card.invalid || !heading.end || card.titles !== 1 || seen.indexOf(card) >= 0) return;
+    if ((adapter.root && (!root || !root.end)) || !card || !card.end || card.invalid || !heading.end || card.titles !== 1 || seen.indexOf(card) >= 0) return;
     seen.push(card); result.recognized++;
     var low = 0, high = nodes.length, inside = [];
     while (low < high) { var middle = Math.floor((low + high) / 2); if (nodes[middle].start < card.open) low = middle + 1; else high = middle; }
@@ -125,16 +172,16 @@ function sfFilterHTML(html, engine, pageHost, rules) {
       if (nodes[n].end && nodes[n].end <= card.close) inside.push(nodes[n]);
     }
     if (!link) {
-      var links = inside.filter(function (node) { return node.tag === 'a' && ((node.start >= heading.open && node.end <= heading.close) || /(?:^|\s)UBFage(?:\s|$)/.test(node.attrs['class'] || '') || node.attrs.role === 'presentation'); });
+      var links = inside.filter(function (node) { return node.tag === 'a' && ((node.start >= heading.open && node.end <= heading.close) || (engine === 'google' && (/(?:^|\s)UBFage(?:\s|$)/.test(node.attrs['class'] || '') || node.attrs.role === 'presentation'))); });
       if (links.length === 1) link = links[0];
     }
     if (!link) { result.unresolved++; return; }
     var host = link ? sfHTMLURLHost(link.attrs.href || '', pageHost) : '';
+    if (!host) adapter.targetAttrs.some(function (name) { var target = link.attrs[name] || card.attrs[name] || ''; if (/^https?:\/\//i.test(target)) host = sfHTMLURLHost(target, pageHost); return !!host; });
     if (!host) {
-      var cites = inside.filter(function (node) { return node.tag === 'cite' || /(?:^|\s)ob9lvb(?:\s|$)/.test(node.attrs['class'] || ''); });
+      var cites = inside.filter(function (node) { return sfHTMLMatches(node, adapter.citation); });
       var primary = link ? cites.filter(function (node) { return node.start >= link.open && node.end <= link.close; }) : [];
       var values = (primary.length ? primary : cites).map(function (node) { return sfHTMLDisplayedHost(html.slice(node.open, node.close), pageHost); }).filter(Boolean);
-      // Conflicting destination citations are retained, never guessed.
       if (values.length && values.every(function (value) { return value === values[0]; })) host = values[0];
     }
     if (!host) { result.unresolved++; return; }
