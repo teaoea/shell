@@ -5,15 +5,16 @@ function sfLogFresh() {
 function sfLogClean(input) {
   if (!input || typeof input !== 'object') return null;
   var phases = ['request', 'response', 'subscription'];
-  var reasons = ['captured', 'disabled', 'query-disabled', 'rewritten', 'unchanged', 'error', 'non-get', 'non-web', 'non-html', 'http-status', 'body-limit', 'body-fragment', 'already-injected', 'no-rules', 'rules-limit', 'invalid-input', 'csp-blocked', 'injected', 'subscription-invalid', 'download-failed', 'format-invalid', 'storage-failed', 'updated'];
+  var reasons = ['captured', 'disabled', 'query-disabled', 'rewritten', 'unchanged', 'error', 'non-get', 'non-web', 'non-html', 'http-status', 'body-limit', 'body-fragment', 'already-injected', 'no-rules', 'rules-limit', 'invalid-input', 'csp-blocked', 'injected', 'static-removed', 'static-and-injected', 'subscription-invalid', 'download-failed', 'format-invalid', 'storage-failed', 'updated'];
   if (phases.indexOf(input.phase) < 0 || reasons.indexOf(input.reason) < 0) return null;
-  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: '1.0.1', phase: input.phase, reason: input.reason };
+  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: input.version === '1.0.1' ? '1.0.1' : '1.0.2', phase: input.phase, reason: input.reason };
   if (['google', 'bing', 'baidu'].indexOf(input.engine) >= 0) event.engine = input.engine;
   var hosts = ['google.com', 'www.google.com', 'google.com.hk', 'www.google.com.hk', 'google.com.tw', 'www.google.com.tw', 'google.co.jp', 'www.google.co.jp', 'google.co.uk', 'www.google.co.uk', 'bing.com', 'www.bing.com', 'cn.bing.com', 'baidu.com', 'www.baidu.com', 'm.baidu.com'];
   if (hosts.indexOf(input.host) >= 0) event.host = input.host;
   if (['/search', '/s'].indexOf(input.path) >= 0) event.path = input.path;
   if (Number.isInteger(input.status) && input.status >= 100 && input.status <= 599) event.status = input.status;
   if (Number.isInteger(input.rules) && input.rules >= 0 && input.rules <= 200) event.rules = input.rules;
+  ['recognized', 'removed', 'unresolved'].forEach(function (key) { if (Number.isInteger(input[key]) && input[key] >= 0 && input[key] <= 10000) event[key] = input[key]; });
   return event;
 }
 function sfLogLoad() {

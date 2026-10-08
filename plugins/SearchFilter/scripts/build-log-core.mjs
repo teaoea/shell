@@ -6,5 +6,15 @@ for (const name of ['SearchFilter.js', 'SearchFilterResponse.js', 'SearchFilterS
   const path = new URL('../' + name, import.meta.url);
   const original = fs.readFileSync(path, 'utf8');
   const cleaned = original.replace(/\/\/ BEGIN GENERATED SEARCH LOG CORE[\s\S]*?\/\/ END GENERATED SEARCH LOG CORE\n\n?/, '');
-  fs.writeFileSync(path, `${start}\n${core}\n${end}\n\n${cleaned}`);
+  let body = cleaned.replace(/\/\/ BEGIN GENERATED SEARCH HTML CORE[\s\S]*?\/\/ END GENERATED SEARCH HTML CORE\n\n?/, '');
+  body = body.replace(/\/\/ BEGIN GENERATED SEARCH LOG UI[\s\S]*?\/\/ END GENERATED SEARCH LOG UI\n\n?/, '');
+  if (name === 'SearchFilterResponse.js') {
+    const htmlCore = fs.readFileSync(new URL('../src/SearchFilterHTMLCore.js', import.meta.url), 'utf8').trim();
+    body = `// BEGIN GENERATED SEARCH HTML CORE\n${htmlCore}\n// END GENERATED SEARCH HTML CORE\n\n${body}`;
+  }
+  if (name === 'SearchFilterLogger.js') {
+    const ui = fs.readFileSync(new URL('../src/SearchFilterLogUI.js', import.meta.url), 'utf8').trim();
+    body = `// BEGIN GENERATED SEARCH LOG UI\n${ui}\n// END GENERATED SEARCH LOG UI\n\n${body}`;
+  }
+  fs.writeFileSync(path, `${start}\n${core}\n${end}\n\n${body}`);
 }
