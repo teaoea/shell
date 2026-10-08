@@ -58,7 +58,10 @@ function cardsFilter(engine, rules, specs, { nonce = '', headers, cache, subscri
   let observer, timer;
   const cards = specs.map(spec => {
     const attrs = {}, styles = {};
-    const link = { getAttribute: key => key === 'href' ? spec.url : key === 'data-landurl' ? spec.landurl || '' : '' };
+    const link = {
+      getAttribute: key => key === 'href' ? spec.url : key === 'data-landurl' ? spec.landurl || '' : '',
+      querySelector: () => spec.linkCite ? { textContent: spec.linkCite } : null
+    };
     const card = {
       attrs, styles,
       getAttribute: key => key === 'data-landurl' ? spec.landurl || '' : attrs[key] ?? null,
@@ -103,6 +106,32 @@ test('Google redirects and Bing encoded redirects reveal destination host', () =
   assert.equal(hidden(cardsFilter('google', 'csdn', [{ url: '/url?q=https%3A%2F%2Fblog.csdn.net%2Fa' }]).cards[0]), true);
   const u = 'a1' + Buffer.from('https://csdn.com/article').toString('base64url');
   assert.equal(hidden(cardsFilter('bing', 'csdn', [{ url: `/ck/a?u=${u}` }]).cards[0]), true);
+});
+test('Google opaque goto links use explicit displayed target domains', () => {
+  const { cards } = cardsFilter('google', 'csdn', [
+    { url: '/goto?url=CAESeQHrOzAVopaque', linkCite: 'https://blog.csdn.net › user › article › details' },
+    { url: '/goto?url=CAESYQHrOzAVopaque', linkCite: 'https://bbs.csdn.net › forums › JavaScript' },
+    { url: '/goto?url=CAESTgHrOzAVopaque', cite: 'https://i.csdn.net' },
+    { url: '/goto?url=CAEScgHrOzAVopaque', linkCite: 'https://developer.mozilla.org › en-US › JavaScript' },
+    { url: '/goto?url=opaque', cite: 'CSDN博客' },
+    { url: 'https://normal.org/article', linkCite: 'https://blog.csdn.net › mentioned site' }
+  ]);
+  assert.deepEqual(cards.map(hidden), [true, true, true, false, false, false]);
+});
+test('Google url redirect with opaque target falls back to its citation', () => {
+  const { cards } = cardsFilter('google', 'csdn', [
+    { url: '/url?url=opaque-token&sa=t', cite: 'blog.csdn.net › article' },
+    { url: '/goto?url=opaque', cite: 'https://csdn.net.evil.com › article' },
+    { url: '/goto?url=opaque', cite: 'https://notcsdn.net › article' }
+  ]);
+  assert.deepEqual(cards.map(hidden), [true, false, false]);
+});
+test('opaque Google links retain csdn.net for a csdn.com-only wildcard', () => {
+  const { cards } = cardsFilter('google', '*.csdn.com', [
+    { url: '/goto?url=opaque', cite: 'https://blog.csdn.com › article' },
+    { url: '/goto?url=opaque', cite: 'https://blog.csdn.net › article' }
+  ]);
+  assert.deepEqual(cards.map(hidden), [true, false]);
 });
 test('Baidu opaque redirects need explicit target or displayed domain', () => {
   const { cards } = cardsFilter('baidu', 'csdn', [
@@ -159,7 +188,7 @@ test('response passes JSON, errors, non-web searches, unknown hosts and empty li
 });
 test('plugin registers request/response pairs only for declared MitM hosts', () => {
   const hosts = plugin.match(/^hostname = (.*)$/m)[1].split(', ');
-  const lines = plugin.split('\n').filter(line => /^http-(?:request|response) /.test(line));
+  const lines = plugin.split('\n').filter(line => /^http-(?:request|response) \^https:/.test(line));
   assert.equal(lines.length, 6);
   assert.match(plugin, /^#!system = iOS,iPadOS,macOS$/m);
   assert.match(plugin, /^query_exclusion = switch,false/m);
@@ -245,7 +274,7 @@ test('filter behavior has no browser or User-Agent restriction', () => {
   assert.equal(/User-Agent|user-agent/.test(plugin), false);
 });
 test('plugin hides result cards without blocking access to blacklisted sites', () => {
-  assert.equal(/^\[Rule\]/m.test(plugin), false);
+  assert.equal(plugin.match(/^DOMAIN,.*$/gm).join('\n'), 'DOMAIN,search-filter-logs.invalid,DIRECT');
   assert.equal(/\bREJECT\b/.test(plugin), false);
   assert.deepEqual(run(requestSource, 'https://csdn.net/article'), {});
   assert.deepEqual(run(responseSource, 'https://csdn.net/article'), {});
