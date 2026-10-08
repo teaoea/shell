@@ -1,3 +1,4 @@
+// BEGIN GENERATED SEARCH LOG CORE
 /* Privacy allowlist shared by the generated Loon scripts. */
 function sfLogFresh() {
   return { schema: 1, active: true, switchOn: false, announced: false, token: Date.now().toString(36) + Math.random().toString(36).slice(2), evicted: 0, events: [] };
@@ -66,3 +67,15 @@ function sfLogRecord(args, input) {
     sfLogAnnounce(state);
   } catch (_) { /* Log/storage errors never change the search response. */ }
 }
+// END GENERATED SEARCH LOG CORE
+
+/* 搜索屏蔽日志状态检查 v1.0.4 — local storage only, no network request. */
+(function () {
+  'use strict';
+  try {
+    var args = typeof $argument === 'object' && $argument ? $argument : {};
+    var state = sfLogSync(args);
+    sfLogAnnounce(state);
+  } catch (_) { /* Background diagnostics never affect search filtering. */ }
+  $done({});
+}());

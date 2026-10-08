@@ -1,14 +1,14 @@
 // BEGIN GENERATED SEARCH LOG CORE
 /* Privacy allowlist shared by the generated Loon scripts. */
 function sfLogFresh() {
-  return { schema: 1, active: true, token: Date.now().toString(36) + Math.random().toString(36).slice(2), evicted: 0, events: [] };
+  return { schema: 1, active: true, switchOn: false, announced: false, token: Date.now().toString(36) + Math.random().toString(36).slice(2), evicted: 0, events: [] };
 }
 function sfLogClean(input) {
   if (!input || typeof input !== 'object') return null;
   var phases = ['request', 'response', 'subscription'];
   var reasons = ['captured', 'disabled', 'query-disabled', 'rewritten', 'unchanged', 'error', 'non-get', 'non-web', 'non-html', 'http-status', 'body-limit', 'body-fragment', 'already-injected', 'no-rules', 'rules-limit', 'invalid-input', 'csp-blocked', 'injected', 'static-removed', 'static-and-injected', 'subscription-invalid', 'download-failed', 'format-invalid', 'storage-failed', 'updated'];
   if (phases.indexOf(input.phase) < 0 || reasons.indexOf(input.reason) < 0) return null;
-  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2'].indexOf(input.version) >= 0 ? input.version : '1.0.3', phase: input.phase, reason: input.reason };
+  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2', '1.0.3'].indexOf(input.version) >= 0 ? input.version : '1.0.4', phase: input.phase, reason: input.reason };
   if (['google', 'bing', 'baidu'].indexOf(input.engine) >= 0) event.engine = input.engine;
   var hosts = ['google.com', 'www.google.com', 'google.com.hk', 'www.google.com.hk', 'google.com.tw', 'www.google.com.tw', 'google.co.jp', 'www.google.co.jp', 'google.co.uk', 'www.google.co.uk', 'bing.com', 'www.bing.com', 'cn.bing.com', 'baidu.com', 'www.baidu.com', 'm.baidu.com'];
   if (hosts.indexOf(input.host) >= 0) event.host = input.host;
@@ -24,20 +24,47 @@ function sfLogLoad() {
   if (raw.length > 262144) throw new Error('invalid-log-store');
   var state = JSON.parse(raw);
   if (!state || state.schema !== 1 || typeof state.active !== 'boolean' || !/^[a-z0-9]{10,80}$/.test(state.token || '') || !Array.isArray(state.events) || state.events.length > 300 || !Number.isInteger(state.evicted) || state.evicted < 0) throw new Error('invalid-log-store');
+  if ((state.switchOn !== undefined && typeof state.switchOn !== 'boolean') || (state.announced !== undefined && typeof state.announced !== 'boolean')) throw new Error('invalid-log-store');
   // Rebuild all entries through the allowlist when reading, not just writing.
-  return { schema: 1, active: state.active, token: state.token, evicted: state.evicted, events: state.events.map(sfLogClean).filter(Boolean) };
+  return { schema: 1, active: state.active, switchOn: state.switchOn === true, announced: state.announced === true, token: state.token, evicted: state.evicted, events: state.events.map(sfLogClean).filter(Boolean) };
 }
 function sfLogSave(state) {
   if ($persistentStore.write(JSON.stringify(state), 'search-filter.logs.v1') !== true) throw new Error('log-save-failed');
 }
-function sfLogRecord(args, input) {
-  if (!args || !(args.log_enabled === true || args.log_enabled === 'true') || typeof $persistentStore === 'undefined') return;
+function sfLogSync(args) {
+  var enabled = args && (args.log_enabled === true || args.log_enabled === 'true');
+  var state = sfLogLoad();
+  if (!enabled) {
+    if (state.switchOn || state.announced) {
+      state.switchOn = false; state.announced = false; sfLogSave(state);
+    }
+  } else if (!state.switchOn) {
+    // Initial enable or an observed off -> on transition starts recording,
+    // including migration of a paused log created by older plugin versions.
+    state.switchOn = true; state.active = true; state.announced = false; sfLogSave(state);
+  }
+  return state;
+}
+function sfLogAnnounce(state) {
+  if (!state.switchOn || !state.active || state.announced || typeof $notification === 'undefined') return;
+  // Persist before posting to suppress repeat prompts in subsequent scripts.
+  // Concurrent storage writes, like the event ring, are not an atomic lock.
+  state.announced = true; sfLogSave(state);
   try {
-    var state = sfLogLoad(), event = sfLogClean(input);
+    $notification.post('搜索屏蔽开发日志 v1.0.4', '已自动开始记录', '点击打开本地日志页。重新搜索后可刷新、导出脱敏记录。', { openUrl: 'http://search-filter-logs.invalid/' });
+  } catch (_) { /* Notification permissions/errors never change filtering. */ }
+}
+function sfLogRecord(args, input) {
+  if (typeof $persistentStore === 'undefined') return;
+  try {
+    var state = sfLogSync(args);
+    if (!args || !(args.log_enabled === true || args.log_enabled === 'true')) return;
+    var event = sfLogClean(input);
     if (!state.active || !event) return;
     state.events.push(event);
     if (state.events.length > 300) { state.events.shift(); state.evicted++; }
     sfLogSave(state);
+    sfLogAnnounce(state);
   } catch (_) { /* Log/storage errors never change the search response. */ }
 }
 // END GENERATED SEARCH LOG CORE
@@ -136,18 +163,22 @@ function sfLogPageMarkup(view) {
     '</style></head><body><main><div class="heading"><div><p class="eyebrow">本地诊断 · 隐私日志</p><h1>搜索屏蔽开发日志</h1><p class="version">v' + view.version + ' · 时间按当前设备时区显示</p></div><span id="status" class="status paused">读取中</span></div>' +
     '<section class="panel" aria-label="日志操作"><div class="stats"><div class="stat"><strong id="count">0</strong><span>当前记录</span></div><div class="stat"><strong id="evicted">0</strong><span>已淘汰</span></div><div class="local">只保存在本机<br>最多 300 条</div></div><div class="actions"><button id="toggle" class="primary" type="button">开始记录</button><button id="refresh" type="button">刷新日志</button><button id="export" type="button">导出日志</button><button id="clear" class="danger" type="button">清空并暂停</button></div><p id="hint" class="hint"></p></section><p id="notice" class="notice" role="status" aria-live="polite"></p>' +
     '<details class="privacy"><summary>隐私与诊断范围</summary><p>只记录时间、版本、阶段、搜索引擎、固定搜索主机与入口、状态码、规则数量、初始结果识别／移除数量和固定处理结果。不会记录搜索词、完整 URL、结果域名与正文、黑名单、订阅地址、Cookie 或设备标识。日志不自动上传。</p><p>初始移除数是 Loon 从本次 HTML 中删除的条目数。脚本已注入不代表浏览器已隐藏动态结果；初始移除为 0 也不能证明没有黑名单结果。开启日志时，可在搜索页右下角查看页面执行与当前隐藏数，并下载单独的脱敏页面诊断。零条日志仅说明未采集到。并发存储可能丢失部分事件。</p><p>页面按设备时区显示时间，导出文件保留 UTC 时间。清空后会暂停记录，需手动开始。</p></details>' +
-    '<div class="list-heading"><h2>最近记录</h2><span>最新在前</span></div><div id="empty" class="empty"><strong>暂无日志</strong><p>开启日志工具并开始记录，重新搜索后刷新。</p></div><section id="events" class="events" aria-label="日志列表"></section><noscript>请允许本地页面运行 JavaScript，以使用日志按钮。</noscript></main><script nonce="' + view.token + '">(' + sfLogPageClient.toString() + ')(' + data + ');</script></body></html>';
+    '<div class="list-heading"><h2>最近记录</h2><span>最新在前</span></div><div id="empty" class="empty"><strong>暂无日志</strong><p>开启日志工具后自动记录；重新搜索后刷新查看。</p></div><section id="events" class="events" aria-label="日志列表"></section><noscript>请允许本地页面运行 JavaScript，以使用日志按钮。</noscript></main><script nonce="' + view.token + '">(' + sfLogPageClient.toString() + ')(' + data + ');</script></body></html>';
 }
 // END GENERATED SEARCH LOG UI
 
-/* 搜索屏蔽开发日志 v1.0.3 — local, allowlisted metadata only. */
+/* 搜索屏蔽开发日志 v1.0.4 — local, allowlisted metadata only. */
 (function () {
   'use strict';
-  var BASE = 'http://search-filter-logs.invalid', VERSION = '1.0.3';
+  var BASE = 'http://search-filter-logs.invalid', VERSION = '1.0.4';
   var args = typeof $argument === 'object' && $argument ? $argument : {};
   var allowed = args.log_enabled === true || args.log_enabled === 'true';
   var req = typeof $request === 'undefined' ? null : $request;
   if (!req) {
+    try {
+      var current = sfLogSync(args);
+      if (allowed) { current.announced = true; sfLogSave(current); }
+    } catch (_) {}
     if (typeof $notification !== 'undefined') $notification.post('搜索屏蔽开发日志 v' + VERSION, '本地查看与导出', '点击打开日志页面。先开启插件日志工具，再复现搜索结果。', { openUrl: BASE + '/' });
     return $done({ title: '搜索屏蔽开发日志 v' + VERSION, content: '在浏览器打开 ' + BASE + '/' });
   }
@@ -163,13 +194,14 @@ function sfLogPageMarkup(view) {
   function view(state) { return { version: VERSION, allowed: allowed, active: state.active, token: state.token, evicted: state.evicted, events: state.events }; }
   var nonce = '';
   try {
-    var state = sfLogLoad(), path = match[1] || '/', method = req.method || 'GET';
+    var state = sfLogSync(args), path = match[1] || '/', method = req.method || 'GET';
     nonce = state.token;
     if (method === 'GET' && path === '/export') {
       var meta = { format: 'search-filter-development-log', version: VERSION, count: state.events.length, evicted: state.evicted, coverage: 'Loon metadata and initial HTML removal counts only; injection does not prove browser filtering; concurrent storage writes may lose events' };
       return respond(200, 'text/plain', [meta].concat(state.events).map(function (event) { return JSON.stringify(event); }).join('\n') + '\n', { 'Content-Disposition': 'attachment; filename="search-filter-development.log"' });
     }
     if (method === 'GET' && (path === '/' || path === '/state')) {
+      if (allowed) state.announced = true; // The log page is already open.
       sfLogSave(state);
       return path === '/state' ? json(200, view(state)) : respond(200, 'text/html', sfLogPageMarkup(view(state)));
     }
@@ -178,8 +210,9 @@ function sfLogPageMarkup(view) {
     var origin = header('origin'), referer = header('referer'), body = typeof req.body === 'string' ? req.body : '';
     if ((origin && origin !== BASE && origin !== BASE + ':80') || (referer && !/^http:\/\/search-filter-logs\.invalid(?::80)?\//i.test(referer)) || body !== 'token=' + state.token) return json(403, { error: 'refresh-required' });
     if (path === '/start' && !allowed) return json(409, { error: 'log-switch-off' });
-    if (path === '/clear') { state = sfLogFresh(); state.active = false; }
+    if (path === '/clear') { state = sfLogFresh(); state.active = false; state.switchOn = allowed; state.announced = allowed; }
     else state.active = path === '/start';
+    if (allowed) state.announced = true;
     sfLogSave(state);
     return json(200, view(state));
   } catch (_) { json(500, { error: 'log-store-unavailable' }); }

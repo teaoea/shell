@@ -7,7 +7,7 @@ const requestSource = fs.readFileSync(new URL('../SearchFilter.js', import.meta.
 const responseSource = fs.readFileSync(new URL('../SearchFilterResponse.js', import.meta.url), 'utf8');
 const subscriptionSource = fs.readFileSync(new URL('../SearchFilterSubscription.js', import.meta.url), 'utf8');
 const plugin = fs.readFileSync(new URL('../SearchFilter.plugin', import.meta.url), 'utf8');
-const defaults = { enabled: true, query_exclusion: true, google_enabled: true, bing_enabled: true, baidu_enabled: true, blocked_domains: 'csdn.net' };
+const defaults = { enabled: true, query_exclusion: true, google_enabled: true, bing_enabled: true, baidu_enabled: true, blocked_domains: 'domain-suffix: csdn.net' };
 function run(source, url, args = {}, request = {}, response = {}, globals = {}) {
   const completions = [];
   vm.runInNewContext(source, {
@@ -22,11 +22,11 @@ const google = 'https://www.google.com/search?q=%E6%97%85%E8%A1%8C+guide&start=1
 
 test('three engines append exclusion and preserve other URL bytes', () => {
   for (const [url, key] of [[google, 'q'], ['https://cn.bing.com/search?q=travel&first=11', 'q'], ['https://www.baidu.com/s?wd=travel&pn=10', 'wd'], ['https://m.baidu.com/s?word=travel&pn=10', 'word']]) {
-    const result = run(requestSource, url, { blocked_domains: 'CSDN.NET,csdn.net https://blog.example.com/path' });
+    const result = run(requestSource, url, { blocked_domains: 'DOMAIN-SUFFIX: CSDN.NET\ndomain-suffix: csdn.net\ndomain-suffix: blog.example.com' });
     const next = new URL(result.url);
     assert.match(next.searchParams.get(key), / -site:csdn.net -site:blog.example.com$/);
     assert.ok(result.url.includes(url.slice(url.indexOf('&'))));
-    assert.deepEqual(run(requestSource, result.url, { blocked_domains: 'csdn.net blog.example.com' }), {});
+    assert.deepEqual(run(requestSource, result.url, { blocked_domains: 'domain-suffix: csdn.net\ndomain-suffix: blog.example.com' }), {});
   }
 });
 test('quoted exclusions do not suppress an actual exclusion', () => {
@@ -37,7 +37,7 @@ test('unknown, disabled, non-web, ambiguous and malformed requests pass through'
   for (const url of ['https://evil.google.com/search?q=x', 'https://www.google.com.evil/search?q=x', 'https://www.google.com/searching?q=x', 'https://www.google.com/search?q=x&tbm=isch', 'https://www.google.com/search?q=x&udm=2', 'https://www.google.com/search?q=a&q=b', 'https://www.google.com/search?q=%ZZ', 'https://www.google.com/search?q=%22oops', 'https://www.baidu.com/s?wd=a&word=b', 'https://www.baidu.com/s?wd=a&tn=news', 'https://m.baidu.com/from=abc/s?word=x', 'https://www.google.com/search?q=', 'http://www.google.com/search?q=x']) {
     assert.deepEqual(run(requestSource, url), {}, url);
   }
-  assert.deepEqual(run(requestSource, google, { enabled: false }), {});
+  assert.deepEqual(run(requestSource, google, { enabled: false }), run(requestSource, google));
   assert.deepEqual(run(requestSource, google, { query_exclusion: false }), {});
   assert.deepEqual(run(requestSource, google, { google_enabled: false }), {});
   assert.deepEqual(run(requestSource, google, {}, { method: 'POST' }), {});
@@ -90,25 +90,63 @@ function cardsFilter(engine, rules, specs, { nonce = '', headers, cache, subscri
 }
 function hidden(card) { return card.attrs['data-loon-search-filter'] === 'hidden'; }
 
+test('explicit newline blacklist lists match consistently on all engines', () => {
+  const hosts = ['blog.csdn.net', 'example.net', 'sub.example.net', 'blog.example.org', 'example.org', 'normal.org'];
+  const lists = ['\ndomain-keyword: csdn\n\ndomain-suffix: example.net\ndomain-suffix: blog.example.org\n', '\r\ndomain-keyword: csdn\r\ndomain-suffix: example.net\r\ndomain-suffix: blog.example.org\r\n'];
+  for (const engine of ['google', 'bing', 'baidu']) {
+    for (const rules of lists) {
+      const { cards } = cardsFilter(engine, rules, hosts.map(host => ({ url: `https://${host}/` })));
+      assert.deepEqual(cards.map(hidden), [true, true, true, true, false, false]);
+    }
+  }
+  for (const rules of ['\ndomain-suffix: example.net\n\ndomain-suffix: blog.example.org\n', 'domain-suffix: example.net\r\ndomain-suffix: blog.example.org']) {
+    for (const [url, key] of [[google, 'q'], ['https://cn.bing.com/search?q=travel', 'q'], ['https://m.baidu.com/s?word=travel', 'word']]) {
+      const result = run(requestSource, url, { blocked_domains: rules });
+      assert.match(new URL(result.url).searchParams.get(key), / -site:example.net -site:blog.example.org$/);
+    }
+  }
+});
+
 test('keyword csdn matches the second-level label across TLDs and subdomains', () => {
-  const { cards } = cardsFilter('google', 'csdn', ['csdn.com', 'csdn.net', 'blog.csdn.net', 'notcsdn.com', 'csdn.example.org', 'example.org'].map(host => ({ url: `https://${host}/` })));
+  const { cards } = cardsFilter('google', 'domain-keyword: csdn', ['csdn.com', 'csdn.net', 'blog.csdn.net', 'notcsdn.com', 'csdn.example.org', 'example.org'].map(host => ({ url: `https://${host}/` })));
   assert.deepEqual(cards.map(hidden), [true, true, true, false, false, false]);
 });
-test('wildcard *.csdn.* covers root and subdomains but excludes lookalikes', () => {
-  const { cards } = cardsFilter('google', '*.csdn.*', ['csdn.com', 'csdn.net', 'blog.csdn.net', 'x.blog.csdn.net', 'notcsdn.net', 'csdn.net.evil.com'].map(host => ({ url: `https://${host}/` })));
-  assert.deepEqual(cards.map(hidden), [true, true, true, true, false, false]);
+test('untyped entries, wildcard rules and missing colon spaces do not match', () => {
+  for (const rules of ['csdn', 'csdn.net', '*.csdn.*', 'domain-keyword:csdn', 'domain-keyword:\tcsdn', 'domain-suffix:csdn.net', 'domain-suffix: *.csdn.net', 'domain-suffix: https://csdn.net/', 'domain-keyword: csdn domain-suffix: csdn.net']) {
+    for (const engine of ['google', 'bing', 'baidu']) assert.deepEqual(cardsFilter(engine, rules, [{ url: 'https://csdn.net/' }]).result, {}, rules);
+    assert.deepEqual(run(requestSource, google, { blocked_domains: rules }), {}, rules);
+  }
+  const { cards } = cardsFilter('google', 'csdn\ndomain-suffix: normal.org', [{ url: 'https://csdn.net/' }, { url: 'https://normal.org/' }]);
+  assert.deepEqual(cards.map(hidden), [false, true]);
 });
-test('literal subdomain stays narrow and paths are ignored', () => {
-  const { cards } = cardsFilter('google', 'https://blog.csdn.net/path', ['csdn.net', 'blog.csdn.net', 'x.blog.csdn.net', 'notblog.csdn.net'].map(host => ({ url: `https://${host}/` })));
+test('keyword aliases and suffix rules retain strict domain boundaries', () => {
+  for (const prefix of ['domain-keyword', 'domian-keyword', 'domain-keywrod', 'domian-keywrod']) {
+    const { cards } = cardsFilter('google', prefix + ': csdn', ['csdn.com', 'blog.csdn.net', 'notcsdn.net', 'csdn.example.com'].map(host => ({ url: `https://${host}/` })));
+    assert.deepEqual(cards.map(hidden), [true, true, false, false]);
+  }
+  const { cards } = cardsFilter('google', 'domain-suffix: csdn.com', ['csdn.com', 'blog.csdn.com', 'a.blog.csdn.com', 'csdn.net', 'notcsdn.com', 'csdn.com.evil.net'].map(host => ({ url: `https://${host}/` })));
+  assert.deepEqual(cards.map(hidden), [true, true, true, false, false, false]);
+});
+test('typed local rules share one generated parser and legacy wildcard cache cannot filter', () => {
+  const core = fs.readFileSync(new URL('../src/SearchFilterRulesCore.js', import.meta.url), 'utf8').trim();
+  const editorSource = fs.readFileSync(new URL('../SearchFilterEditor.js', import.meta.url), 'utf8');
+  for (const source of [requestSource, responseSource, subscriptionSource, editorSource]) assert.equal(source.match(/\/\/ BEGIN GENERATED SEARCH RULES CORE\n([\s\S]*?)\n\/\/ END GENERATED SEARCH RULES CORE/)[1], core);
+  const downloadCore = fs.readFileSync(new URL('../src/SearchFilterSubscriptionCore.js', import.meta.url), 'utf8').trim();
+  for (const source of [subscriptionSource, editorSource]) assert.equal(source.match(/\/\/ BEGIN GENERATED SEARCH SUBSCRIPTION CORE\n([\s\S]*?)\n\/\/ END GENERATED SEARCH SUBSCRIPTION CORE/)[1], downloadCore);
+  const cache = { source: 'https://example.org/list.txt', rules: [{ kind: 'url', value: '*.csdn.com' }, { kind: 'url', value: 'bad..com' }] };
+  assert.deepEqual(cardsFilter('google', '', [{ url: 'https://csdn.com/' }], { cache, subscription_url: cache.source }).result, {});
+});
+test('explicit suffix subdomain stays narrow', () => {
+  const { cards } = cardsFilter('google', 'domain-suffix: blog.csdn.net', ['csdn.net', 'blog.csdn.net', 'x.blog.csdn.net', 'notblog.csdn.net'].map(host => ({ url: `https://${host}/` })));
   assert.deepEqual(cards.map(hidden), [false, true, true, false]);
 });
 test('Google redirects and Bing encoded redirects reveal destination host', () => {
-  assert.equal(hidden(cardsFilter('google', 'csdn', [{ url: '/url?q=https%3A%2F%2Fblog.csdn.net%2Fa' }]).cards[0]), true);
+  assert.equal(hidden(cardsFilter('google', 'domain-keyword: csdn', [{ url: '/url?q=https%3A%2F%2Fblog.csdn.net%2Fa' }]).cards[0]), true);
   const u = 'a1' + Buffer.from('https://csdn.com/article').toString('base64url');
-  assert.equal(hidden(cardsFilter('bing', 'csdn', [{ url: `/ck/a?u=${u}` }]).cards[0]), true);
+  assert.equal(hidden(cardsFilter('bing', 'domain-keyword: csdn', [{ url: `/ck/a?u=${u}` }]).cards[0]), true);
 });
 test('Google opaque goto links use explicit displayed target domains', () => {
-  const { cards } = cardsFilter('google', 'csdn', [
+  const { cards } = cardsFilter('google', 'domain-keyword: csdn', [
     { url: '/goto?url=CAESeQHrOzAVopaque', linkCite: 'https://blog.csdn.net › user › article › details' },
     { url: '/goto?url=CAESYQHrOzAVopaque', linkCite: 'https://bbs.csdn.net › forums › JavaScript' },
     { url: '/goto?url=CAESTgHrOzAVopaque', cite: 'https://i.csdn.net' },
@@ -119,22 +157,22 @@ test('Google opaque goto links use explicit displayed target domains', () => {
   assert.deepEqual(cards.map(hidden), [true, true, true, false, false, false]);
 });
 test('Google url redirect with opaque target falls back to its citation', () => {
-  const { cards } = cardsFilter('google', 'csdn', [
+  const { cards } = cardsFilter('google', 'domain-keyword: csdn', [
     { url: '/url?url=opaque-token&sa=t', cite: 'blog.csdn.net › article' },
     { url: '/goto?url=opaque', cite: 'https://csdn.net.evil.com › article' },
     { url: '/goto?url=opaque', cite: 'https://notcsdn.net › article' }
   ]);
   assert.deepEqual(cards.map(hidden), [true, false, false]);
 });
-test('opaque Google links retain csdn.net for a csdn.com-only wildcard', () => {
-  const { cards } = cardsFilter('google', '*.csdn.com', [
+test('opaque Google links retain csdn.net for a csdn.com-only suffix', () => {
+  const { cards } = cardsFilter('google', 'domain-suffix: csdn.com', [
     { url: '/goto?url=opaque', cite: 'https://blog.csdn.com › article' },
     { url: '/goto?url=opaque', cite: 'https://blog.csdn.net › article' }
   ]);
   assert.deepEqual(cards.map(hidden), [true, false]);
 });
 test('Baidu opaque redirects need explicit target or displayed domain', () => {
-  const { cards } = cardsFilter('baidu', 'csdn', [
+  const { cards } = cardsFilter('baidu', 'domain-keyword: csdn', [
     { url: 'https://www.baidu.com/link?url=opaque', cite: 'blog.csdn.net › article' },
     { url: 'https://www.baidu.com/link?url=opaque', landurl: 'https://csdn.com/a' },
     { url: 'https://www.baidu.com/link?url=opaque', cite: 'CSDN 官方网站' },
@@ -144,7 +182,7 @@ test('Baidu opaque redirects need explicit target or displayed domain', () => {
 });
 test('unknown multi-result containers retained and dynamic cards rescanned', () => {
   const dynamic = { url: 'https://example.org/' };
-  const fixture = cardsFilter('google', 'csdn', [{ url: 'https://csdn.net', headings: 2 }, dynamic]);
+  const fixture = cardsFilter('google', 'domain-keyword: csdn', [{ url: 'https://csdn.net', headings: 2 }, dynamic]);
   assert.deepEqual(fixture.cards.map(hidden), [false, false]);
   dynamic.url = 'https://blog.csdn.com/new-result';
   fixture.rescan();
@@ -156,7 +194,7 @@ test('unknown multi-result containers retained and dynamic cards rescanned', () 
 });
 test('blocking a result retains adjacent normal cards and their content', () => {
   for (const engine of ['google', 'bing', 'baidu']) {
-    const { cards } = cardsFilter(engine, 'csdn *.example.net', [
+    const { cards } = cardsFilter(engine, 'domain-keyword: csdn\ndomain-suffix: example.net', [
       { url: 'https://blog.csdn.net/article' }, { url: 'https://normal.org/article' },
       { url: 'https://example.net/article' }, { url: 'https://notcsdn.com/article' }
     ]);
@@ -168,12 +206,12 @@ test('blocking a result retains adjacent normal cards and their content', () => 
 });
 test('response injection preserves CSP and reuses permitted nonce only', () => {
   const headers = { 'Content-Type': 'text/html', 'Content-Security-Policy': "default-src 'self'; script-src 'nonce-abc123'" };
-  assert.deepEqual(run(responseSource, google, { blocked_domains: 'csdn' }, {}, { headers }), {});
-  const { result } = cardsFilter('google', 'csdn', [], { nonce: 'abc123', headers });
+  assert.deepEqual(run(responseSource, google, { blocked_domains: 'domain-keyword: csdn' }, {}, { headers }), {});
+  const { result } = cardsFilter('google', 'domain-keyword: csdn', [], { nonce: 'abc123', headers });
   assert.match(result.body, /id="loon-search-filter" nonce="abc123"/);
   assert.equal(result.headers, undefined, 'CSP headers are unchanged');
   const metaBody = '<html><body><meta http-equiv="Content-Security-Policy" content="script-src &#39;none&#39;"></body></html>';
-  assert.deepEqual(run(responseSource, google, { blocked_domains: 'csdn' }, {}, { body: metaBody }), {});
+  assert.deepEqual(run(responseSource, google, { blocked_domains: 'domain-keyword: csdn' }, {}, { body: metaBody }), {});
 });
 test('response passes JSON, errors, non-web searches, unknown hosts and empty lists', () => {
   for (const response of [{ headers: { 'Content-Type': 'application/json' } }, { status: 302 }, { body: '<html>fragment' }, { body: '<body><script id="loon-search-filter"></script></body>' }]) {
@@ -183,7 +221,7 @@ test('response passes JSON, errors, non-web searches, unknown hosts and empty li
     assert.deepEqual(run(responseSource, url), {});
   }
   assert.deepEqual(run(responseSource, google, { blocked_domains: '' }), {});
-  assert.deepEqual(run(responseSource, google, { enabled: false }), {});
+  assert.deepEqual(run(responseSource, google, { enabled: false }), run(responseSource, google));
   assert.deepEqual(run(responseSource, google, { blocked_domains: 'https://user:pw@example.com/ 中文.com localhost:443' }), {});
 });
 test('plugin registers request/response pairs only for declared MitM hosts', () => {
@@ -193,8 +231,7 @@ test('plugin registers request/response pairs only for declared MitM hosts', () 
   const lines = plugin.split('\n').filter(line => /^http-(?:request|response) \^https:/.test(line));
   assert.equal(lines.length, 6);
   assert.match(plugin, /^#!system = iOS,iPadOS,macOS$/m);
-  assert.match(plugin, /^query_exclusion = switch,false/m);
-  assert.match(plugin, /^subscription_url = input,""/m);
+  assert.equal(/^query_exclusion =|^subscription_url =|^(?:google|bing|baidu)_enabled =/m.test(plugin), false);
   for (const line of lines) {
     const pattern = new RegExp(line.split(' ')[1]);
     for (const host of hosts) {
@@ -219,13 +256,13 @@ function updateSubscription(body, { status = 200, error = null, source = 'https:
   return { writes, completions, calls };
 }
 test('subscription parses typed rules, comments, case and duplicates', () => {
-  const result = updateSubscription('\uFEFF# list\n[key: csdn]\n[url: *.csdn.com]\n[KEY: CSDN]\n// end');
-  assert.deepEqual(result.writes[0].value.rules, [{ kind: 'key', value: 'csdn' }, { kind: 'url', value: '*.csdn.com' }]);
+  const result = updateSubscription('\uFEFF# list\ndomain-keyword: csdn\ndomain-suffix: csdn.com\n[KEY: CSDN]\n// end');
+  assert.deepEqual(result.writes[0].value.rules, [{ kind: 'key', value: 'csdn' }, { kind: 'url', value: 'csdn.com' }]);
   assert.equal(result.writes[0].key, 'search-filter.subscription.v1');
   assert.deepEqual(JSON.parse(JSON.stringify(result.calls[0].headers)), { Accept: 'text/plain' });
 });
 test('invalid subscription and failed downloads keep last cache untouched', () => {
-  for (const body of ['<html>error</html>', '[key: csdn]\n[url: bad..com]', '[url: *]', '[key: csdn.net]', '[url: https://csdn.com]', 'x'.repeat(256 * 1024 + 1)]) {
+  for (const body of ['<html>error</html>', '[key: csdn]\n[url: bad..com]', '[url: *]', '[url: *.csdn.com]', 'domain-keyword:csdn', 'domain-suffix: *.csdn.com', 'csdn', '[key: csdn.net]', '[url: https://csdn.com]', 'x'.repeat(256 * 1024 + 1)]) {
     assert.equal(updateSubscription(body).writes.length, 0, body.slice(0, 80));
   }
   assert.equal(updateSubscription('[key: csdn]', { status: 404 }).writes.length, 0);
@@ -238,9 +275,9 @@ test('invalid subscription and failed downloads keep last cache untouched', () =
   }
   assert.deepEqual(updateSubscription('# intentional empty list').writes[0].value.rules, []);
 });
-test('remote url wildcard excludes csdn.com while retaining csdn.net', () => {
+test('remote suffix excludes csdn.com while retaining csdn.net', () => {
   const source = 'https://example.org/list.txt';
-  const cache = updateSubscription('[url: *.csdn.com]').writes[0].value;
+  const cache = updateSubscription('domain-suffix: csdn.com').writes[0].value;
   const specs = ['csdn.com', 'blog.csdn.com', 'csdn.net', 'blog.csdn.net', 'notcsdn.com'].map(host => ({ url: `https://${host}/` }));
   for (const engine of ['google', 'bing', 'baidu']) {
     const { cards } = cardsFilter(engine, '', specs, { cache, subscription_url: source });
@@ -249,7 +286,7 @@ test('remote url wildcard excludes csdn.com while retaining csdn.net', () => {
 });
 test('remote key excludes csdn second-level domains without touching other labels', () => {
   const cache = updateSubscription('[key: csdn]').writes[0].value;
-  const { cards } = cardsFilter('google', 'normal.org', ['csdn.com', 'csdn.net', 'blog.csdn.net', 'csdn.example.com', 'normal.org'].map(host => ({ url: `https://${host}/` })), { cache, subscription_url: cache.source });
+  const { cards } = cardsFilter('google', 'domain-suffix: normal.org', ['csdn.com', 'csdn.net', 'blog.csdn.net', 'csdn.example.com', 'normal.org'].map(host => ({ url: `https://${host}/` })), { cache, subscription_url: cache.source });
   assert.deepEqual(cards.map(hidden), [true, true, true, false, true]);
 });
 test('changing or clearing subscription URL stops using the old cache', () => {
@@ -260,9 +297,9 @@ test('changing or clearing subscription URL stops using the old cache', () => {
   }
 });
 test('optional query exclusion uses only exact remote url rules', () => {
-  const cache = updateSubscription('[key: csdn]\n[url: *.csdn.com]\n[url: example.net]').writes[0].value;
+  const cache = updateSubscription('[key: csdn]\ndomain-suffix: csdn.com\n[url: example.net]').writes[0].value;
   const result = run(requestSource, google, { blocked_domains: '', subscription_url: cache.source }, {}, {}, { $persistentStore: { read: () => JSON.stringify(cache) } });
-  assert.equal(new URL(result.url).searchParams.get('q'), '旅行 guide -site:example.net');
+  assert.equal(new URL(result.url).searchParams.get('q'), '旅行 guide -site:csdn.com -site:example.net');
 });
 test('filter behavior has no browser or User-Agent restriction', () => {
   const agents = ['Safari/605.1.15', 'Chrome/140.0', 'Firefox/143.0', 'Edg/140.0', 'UnknownBrowser/1.0', ''];
@@ -270,13 +307,13 @@ test('filter behavior has no browser or User-Agent restriction', () => {
     const request = { headers: { 'User-Agent': agent } };
     const rewritten = run(requestSource, google, {}, request);
     assert.match(rewritten.url, /site%3Acsdn.net/);
-    const filtered = run(responseSource, google, { blocked_domains: 'csdn' }, request);
+    const filtered = run(responseSource, google, { blocked_domains: 'domain-keyword: csdn' }, request);
     assert.match(filtered.body, /id="loon-search-filter"/);
   }
   assert.equal(/User-Agent|user-agent/.test(plugin), false);
 });
 test('plugin hides result cards without blocking access to blacklisted sites', () => {
-  assert.equal(plugin.match(/^DOMAIN,.*$/gm).join('\n'), 'DOMAIN,search-filter-logs.invalid,DIRECT');
+  assert.equal(plugin.match(/^DOMAIN,.*$/gm).join('\n'), 'DOMAIN,search-filter-logs.invalid,DIRECT\nDOMAIN,search-filter-list.invalid,DIRECT');
   assert.equal(/\bREJECT\b/.test(plugin), false);
   assert.deepEqual(run(requestSource, 'https://csdn.net/article'), {});
   assert.deepEqual(run(responseSource, 'https://csdn.net/article'), {});

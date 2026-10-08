@@ -7,10 +7,7 @@ function sfDomainMatches(host, rules) {
   return rules.some(function (entry) {
     var rule = entry.value;
     if (entry.kind === 'key') { var labels = host.split('.'); return labels.length >= 2 && labels[labels.length - 2] === rule; }
-    if (rule.indexOf('*') < 0) return host === rule || host.slice(-(rule.length + 1)) === '.' + rule;
-    var suffix = rule.slice(0, 2) === '*.' ? rule.slice(2) : rule;
-    var pattern = suffix.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^.]*');
-    return new RegExp('^' + (rule.slice(0, 2) === '*.' ? '(?:[^.]+\\.)*' : '') + pattern + '$', 'i').test(host);
+    return entry.kind === 'url' && rule.indexOf('*') < 0 && (host === rule || host.slice(-(rule.length + 1)) === '.' + rule);
   });
 }
 function sfHTMLEntities(text) {

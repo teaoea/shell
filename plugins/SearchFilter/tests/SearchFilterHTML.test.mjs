@@ -23,11 +23,11 @@ test('native Google filter removes opaque csdn.net results and preserves adjacen
   assert.equal(result.body.includes(normal), true);
   assert.equal(result.body.includes(lookalike), true);
 });
-test('native wildcard csdn.com retains csdn.net and unknown branded destinations', () => {
+test('native suffix csdn.com retains csdn.net and unknown branded destinations', () => {
   const com = card('/goto?url=FAKE', 'https://a.blog.csdn.com');
   const net = card('/goto?url=FAKE', 'https://csdn.net');
   const brand = card('/goto?url=FAKE', 'CSDN');
-  const result = filter(page(com + net + brand), [{ kind: 'url', value: '*.csdn.com' }]);
+  const result = filter(page(com + net + brand), [{ kind: 'url', value: 'csdn.com' }]);
   assert.equal(result.removed, 1);
   assert.equal(result.unresolved, 1);
   assert.equal(result.body.includes(net + brand), true);
@@ -61,7 +61,7 @@ test('response removes initial Google results with query exclusion off even when
   let result;
   const input = page(card('/goto?url=fake', 'https://csdn.net') + card('https://normal.example'));
   vm.runInNewContext(source('SearchFilterResponse.js'), {
-    $argument: { enabled: true, google_enabled: true, query_exclusion: false, blocked_domains: 'csdn' },
+    $argument: { enabled: true, google_enabled: true, query_exclusion: false, blocked_domains: 'domain-keyword: csdn' },
     $request: { method: 'GET', url: 'https://www.google.com/search?q=sample' },
     $response: { status: 200, headers: { 'Content-Type': 'text/html', 'Content-Security-Policy': "script-src 'none'" }, body: input },
     $done: value => { result = value; }
@@ -106,7 +106,7 @@ test('native Google mobile role headings and ob9lvb URLs are filtered without h3
   assert.equal(result.body.includes('Blocked com mobile fixture'), false);
   assert.equal(result.body.includes('Keep normal description'), true);
   assert.equal(result.body.includes('Keep lookalike description'), true);
-  const narrow = filter(input, [{ kind: 'url', value: '*.csdn.com' }]);
+  const narrow = filter(input, [{ kind: 'url', value: 'csdn.com' }]);
   assert.equal(narrow.removed, 1);
   assert.equal(narrow.body.includes('blog.csdn.net'), true);
 });

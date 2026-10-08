@@ -10,18 +10,18 @@ function memory() {
   const values = new Map();
   return { values, read: key => values.get(key) || '', write: (value, key) => { values.set(key, value); return true; } };
 }
-function execute(name, args, request, store, response) {
+function execute(name, args, request, store, response, notification) {
   let result, calls = 0;
   vm.runInNewContext(source(name), {
     $argument: args, ...(request ? { $request: request } : {}), ...(response ? { $response: response } : {}), $persistentStore: store,
     $done: value => { result = JSON.parse(JSON.stringify(value)); calls++; },
     $httpClient: { get: (_req, callback) => callback('secret-server-error-with-user-token', null, null) },
-    $notification: { post() {} }
+    $notification: notification || { post() {} }
   }, { timeout: 1500 });
   assert.equal(calls, 1);
   return result;
 }
-const args = { log_enabled: true, enabled: true, query_exclusion: false, google_enabled: true, blocked_domains: 'privateblacklist.net' };
+const args = { log_enabled: true, enabled: true, query_exclusion: false, google_enabled: true, blocked_domains: 'domain-suffix: privateblacklist.net' };
 const sensitive = 'PRIVATE-SEARCH-TOKEN-USER-IDENTIFIER';
 const request = { method: 'GET', url: `https://www.google.com/search?q=${sensitive}&email=user%40private.com#${sensitive}`, headers: { Cookie: sensitive, Authorization: sensitive, Referer: sensitive, 'User-Agent': sensitive }, body: sensitive };
 const response = { status: 200, headers: { 'Content-Type': 'text/html', 'Set-Cookie': sensitive }, body: `<html><body><div>${sensitive}</div></body></html>` };
@@ -81,7 +81,7 @@ test('local page pause/start/clear controls require same-origin and token', () =
   const store = memory();
   const get = path => execute('SearchFilterLogger.js', args, { method: 'GET', url: 'http://search-filter-logs.invalid' + path }, store);
   const page = get('/');
-  assert.match(page.response.body, /开发日志 v1\.0\.3/);
+  assert.match(page.response.body, /开发日志 v1\.0\.4/);
   assert.match(page.response.body, /最近记录/);
   assert.doesNotMatch(page.response.body, /<form|Location:|location\.|window\.open|href="\/export"/);
   assert.match(page.response.headers['Content-Security-Policy'], /connect-src 'self'; script-src 'nonce-/);
@@ -111,7 +111,7 @@ test('metadata ring caps storage at 300 entries and drops excess events', () => 
   assert.equal(state.evicted, 5);
 });
 test('generated scripts contain the identical privacy allowlist core', () => {
-  for (const name of ['SearchFilter.js', 'SearchFilterResponse.js', 'SearchFilterSubscription.js', 'SearchFilterLogger.js']) {
+  for (const name of ['SearchFilter.js', 'SearchFilterResponse.js', 'SearchFilterSubscription.js', 'SearchFilterLogger.js', 'SearchFilterLogWatch.js', 'SearchFilterEditor.js']) {
     const embedded = source(name).match(/\/\/ BEGIN GENERATED SEARCH LOG CORE\n([\s\S]*?)\n\/\/ END GENERATED SEARCH LOG CORE/)[1];
     assert.equal(embedded, core.trim(), name);
   }
@@ -155,7 +155,7 @@ test('clearing rotates controls without a redirect and rejects stale token and f
 test('native removal logs counts only, without target names or HTML', () => {
   const store = memory();
   const body = source('tests/fixtures/google-goto.html');
-  execute('SearchFilterResponse.js', { ...args, blocked_domains: 'csdn' }, request, store, { ...response, body });
+  execute('SearchFilterResponse.js', { ...args, blocked_domains: 'domain-keyword: csdn' }, request, store, { ...response, body });
   const raw = store.read('search-filter.logs.v1');
   assert.equal(raw.includes('csdn'), false);
   assert.equal(raw.includes('developer.mozilla'), false);
@@ -173,4 +173,92 @@ test('logger embeds the exact UI source and export uses a download instead of na
   assert.match(ui, /URL\.createObjectURL/);
   assert.match(ui, /anchor\.download = 'search-filter-development\.log'/);
   assert.doesNotMatch(ui, /location\.|window\.open|innerHTML|\.reload\(/);
+});
+
+test('watcher automatically starts a legacy paused log and posts one fixed local entry notification', () => {
+  const store = memory(), notices = [];
+  store.write(JSON.stringify({ schema: 1, active: false, token: 'legacytoken123', evicted: 0, events: [{ time: '2026-10-08T10:00:00Z', version: '1.0.3', phase: 'response', reason: 'injected', rules: 2 }] }), 'search-filter.logs.v1');
+  const notification = { post: (...values) => notices.push(values) };
+  const watch = enabled => execute('SearchFilterLogWatch.js', { log_enabled: enabled }, null, store, null, notification);
+  watch(true);
+  let state = JSON.parse(store.read('search-filter.logs.v1'));
+  assert.equal(state.active, true);
+  assert.equal(state.switchOn, true);
+  assert.equal(state.announced, true);
+  assert.equal(state.events.length, 1);
+  assert.equal(state.events[0].version, '1.0.3');
+  assert.equal(notices.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(notices[0][3])), { openUrl: 'http://search-filter-logs.invalid/' });
+  assert.match(notices[0][1], /自动开始记录/);
+  watch(true);
+  watch(true);
+  assert.equal(notices.length, 1);
+  watch(false);
+  state = JSON.parse(store.read('search-filter.logs.v1'));
+  assert.equal(state.switchOn, false);
+  assert.equal(state.announced, false);
+  watch('true');
+  assert.equal(notices.length, 2);
+});
+test('first captured search starts recording and notifies once without query or header data', () => {
+  const store = memory(), notices = [];
+  const notification = { post: (...values) => notices.push(values) };
+  execute('SearchFilter.js', args, request, store, null, notification);
+  execute('SearchFilterResponse.js', args, request, store, response, notification);
+  execute('SearchFilterLogWatch.js', args, null, store, null, notification);
+  assert.equal(notices.length, 1);
+  assert.equal(JSON.parse(store.read('search-filter.logs.v1')).events.length, 2);
+  const raw = JSON.stringify(notices);
+  for (const forbidden of [sensitive, 'privateblacklist.net', 'Cookie', '?q=', 'www.google.com']) assert.equal(raw.includes(forbidden), false, forbidden);
+  execute('SearchFilter.js', { ...args, log_enabled: false }, request, store, null, notification);
+  assert.equal(JSON.parse(store.read('search-filter.logs.v1')).events.length, 2);
+  execute('SearchFilter.js', args, request, store, null, notification);
+  assert.equal(notices.length, 2);
+  assert.equal(JSON.parse(store.read('search-filter.logs.v1')).events.length, 3);
+});
+test('watcher respects manual pause and clear until an observed switch off/on transition', () => {
+  const store = memory(), notices = [];
+  const notification = { post: (...values) => notices.push(values) };
+  const watch = enabled => execute('SearchFilterLogWatch.js', { log_enabled: enabled }, null, store, null, notification);
+  watch(true);
+  const token = JSON.parse(store.read('search-filter.logs.v1')).token;
+  const post = path => execute('SearchFilterLogger.js', args, { method: 'POST', url: 'http://search-filter-logs.invalid' + path, body: 'token=' + token }, store, null, notification);
+  assert.equal(post('/pause').response.status, 200);
+  watch(true);
+  execute('SearchFilter.js', args, request, store, null, notification);
+  assert.equal(JSON.parse(store.read('search-filter.logs.v1')).active, false);
+  assert.equal(JSON.parse(store.read('search-filter.logs.v1')).events.length, 0);
+  assert.equal(notices.length, 1);
+  assert.equal(post('/clear').response.status, 200);
+  watch(true);
+  assert.equal(JSON.parse(store.read('search-filter.logs.v1')).active, false);
+  assert.equal(notices.length, 1);
+  watch(false);
+  watch(true);
+  assert.equal(JSON.parse(store.read('search-filter.logs.v1')).active, true);
+  assert.equal(notices.length, 2);
+});
+test('default-off watcher does not collect events, write storage, or notify', () => {
+  const store = memory();
+  let count = 0;
+  execute('SearchFilterLogWatch.js', { log_enabled: false }, null, store, null, { post() { count++; } });
+  assert.equal(store.values.size, 0);
+  assert.equal(count, 0);
+  assert.doesNotMatch(source('SearchFilterLogWatch.js'), /\$httpClient|fetch\(|XMLHttpRequest/);
+});
+test('notification failures leave the search result modification and sanitized recording intact', () => {
+  const store = memory();
+  const result = execute('SearchFilterResponse.js', args, request, store, response, { post() { throw new Error(sensitive); } });
+  assert.match(result.body, /loon-search-filter/);
+  const raw = store.read('search-filter.logs.v1');
+  assert.equal(raw.includes(sensitive), false);
+  assert.equal(JSON.parse(raw).events[0].reason, 'injected');
+});
+test('auto-start control state is excluded from exported logs', () => {
+  const store = memory();
+  execute('SearchFilterLogWatch.js', args, null, store);
+  execute('SearchFilter.js', args, request, store);
+  const result = execute('SearchFilterLogger.js', args, { method: 'GET', url: 'http://search-filter-logs.invalid/export' }, store).response;
+  assert.equal(result.status, 200);
+  assert.doesNotMatch(result.body, /switchOn|announced|legacytoken|PRIVATE/);
 });
