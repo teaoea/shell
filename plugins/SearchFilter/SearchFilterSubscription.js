@@ -8,7 +8,7 @@ function sfLogClean(input) {
   var phases = ['request', 'response', 'subscription'];
   var reasons = ['captured', 'disabled', 'query-disabled', 'rewritten', 'unchanged', 'error', 'non-get', 'non-web', 'non-html', 'http-status', 'body-limit', 'body-fragment', 'already-injected', 'no-rules', 'rules-limit', 'invalid-input', 'csp-blocked', 'injected', 'static-removed', 'static-and-injected', 'subscription-invalid', 'download-failed', 'format-invalid', 'storage-failed', 'updated'];
   if (phases.indexOf(input.phase) < 0 || reasons.indexOf(input.reason) < 0) return null;
-  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2', '1.0.3'].indexOf(input.version) >= 0 ? input.version : '1.0.4', phase: input.phase, reason: input.reason };
+  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2', '1.0.3', '1.0.4'].indexOf(input.version) >= 0 ? input.version : '1.0.5', phase: input.phase, reason: input.reason };
   if (['google', 'bing', 'baidu'].indexOf(input.engine) >= 0) event.engine = input.engine;
   var hosts = ['google.com', 'www.google.com', 'google.com.hk', 'www.google.com.hk', 'google.com.tw', 'www.google.com.tw', 'google.co.jp', 'www.google.co.jp', 'google.co.uk', 'www.google.co.uk', 'bing.com', 'www.bing.com', 'cn.bing.com', 'baidu.com', 'www.baidu.com', 'm.baidu.com'];
   if (hosts.indexOf(input.host) >= 0) event.host = input.host;
@@ -51,7 +51,7 @@ function sfLogAnnounce(state) {
   // Concurrent storage writes, like the event ring, are not an atomic lock.
   state.announced = true; sfLogSave(state);
   try {
-    $notification.post('搜索屏蔽开发日志 v1.0.4', '已自动开始记录', '点击打开本地日志页。重新搜索后可刷新、导出脱敏记录。', { openUrl: 'http://search-filter-logs.invalid/' });
+    $notification.post('搜索屏蔽开发日志 v1.0.5', '已自动开始记录', '点击打开本地日志页。重新搜索后可刷新、导出脱敏记录。', { openUrl: 'http://search-filter-logs.invalid/' });
   } catch (_) { /* Notification permissions/errors never change filtering. */ }
 }
 function sfLogRecord(args, input) {
@@ -162,7 +162,7 @@ function sfSubscriptionRefresh(source, complete) {
 }
 // END GENERATED SEARCH SUBSCRIPTION CORE
 
-/* 搜索结果屏蔽订阅 v1.0.4. Downloads only when explicitly configured. */
+/* 搜索结果屏蔽订阅 v1.0.5. Downloads only when explicitly configured. */
 (function () {
   'use strict';
   var args = typeof $argument === 'object' && $argument ? $argument : {};

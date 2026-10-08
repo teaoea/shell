@@ -8,7 +8,7 @@ function sfLogClean(input) {
   var phases = ['request', 'response', 'subscription'];
   var reasons = ['captured', 'disabled', 'query-disabled', 'rewritten', 'unchanged', 'error', 'non-get', 'non-web', 'non-html', 'http-status', 'body-limit', 'body-fragment', 'already-injected', 'no-rules', 'rules-limit', 'invalid-input', 'csp-blocked', 'injected', 'static-removed', 'static-and-injected', 'subscription-invalid', 'download-failed', 'format-invalid', 'storage-failed', 'updated'];
   if (phases.indexOf(input.phase) < 0 || reasons.indexOf(input.reason) < 0) return null;
-  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2', '1.0.3'].indexOf(input.version) >= 0 ? input.version : '1.0.4', phase: input.phase, reason: input.reason };
+  var event = { time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(input.time || '') ? input.time : new Date().toISOString(), version: ['1.0.1', '1.0.2', '1.0.3', '1.0.4'].indexOf(input.version) >= 0 ? input.version : '1.0.5', phase: input.phase, reason: input.reason };
   if (['google', 'bing', 'baidu'].indexOf(input.engine) >= 0) event.engine = input.engine;
   var hosts = ['google.com', 'www.google.com', 'google.com.hk', 'www.google.com.hk', 'google.com.tw', 'www.google.com.tw', 'google.co.jp', 'www.google.co.jp', 'google.co.uk', 'www.google.co.uk', 'bing.com', 'www.bing.com', 'cn.bing.com', 'baidu.com', 'www.baidu.com', 'm.baidu.com'];
   if (hosts.indexOf(input.host) >= 0) event.host = input.host;
@@ -51,7 +51,7 @@ function sfLogAnnounce(state) {
   // Concurrent storage writes, like the event ring, are not an atomic lock.
   state.announced = true; sfLogSave(state);
   try {
-    $notification.post('搜索屏蔽开发日志 v1.0.4', '已自动开始记录', '点击打开本地日志页。重新搜索后可刷新、导出脱敏记录。', { openUrl: 'http://search-filter-logs.invalid/' });
+    $notification.post('搜索屏蔽开发日志 v1.0.5', '已自动开始记录', '点击打开本地日志页。重新搜索后可刷新、导出脱敏记录。', { openUrl: 'http://search-filter-logs.invalid/' });
   } catch (_) { /* Notification permissions/errors never change filtering. */ }
 }
 function sfLogRecord(args, input) {
@@ -136,8 +136,8 @@ function sfBrowserFilter(config) {
         toggle.addEventListener('click', function () { detail.hidden = !detail.hidden; download.hidden = detail.hidden; });
         download.addEventListener('click', function () {
           // These fields are constructed here; no DOM text, URLs or rules exported.
-          var event = Object.assign({ time: new Date().toISOString(), version: '1.0.4' }, snapshot);
-          var text = JSON.stringify({ format: 'search-filter-browser-diagnostic', version: '1.0.4', count: 1 }) + '\n' + JSON.stringify(event) + '\n';
+          var event = Object.assign({ time: new Date().toISOString(), version: '1.0.5' }, snapshot);
+          var text = JSON.stringify({ format: 'search-filter-browser-diagnostic', version: '1.0.5', count: 1 }) + '\n' + JSON.stringify(event) + '\n';
           var url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
           var anchor = document.createElement('a'); anchor.href = url; anchor.download = 'search-filter-browser.log'; anchor.hidden = true;
           panel.appendChild(anchor); anchor.click(); anchor.remove();
@@ -145,7 +145,7 @@ function sfBrowserFilter(config) {
         });
         panel.appendChild(toggle); panel.appendChild(detail); panel.appendChild(download);
       }
-      var label = '搜索屏蔽 v1.0.4 · ' + (snapshot.reason === 'error' ? '页面处理异常' : '已运行 · 隐藏 ' + snapshot.hidden);
+      var label = '搜索屏蔽 v1.0.5 · ' + (snapshot.reason === 'error' ? '页面处理异常' : '已运行 · 隐藏 ' + snapshot.hidden);
       var info = '规则 ' + snapshot.rules + ' · 标题 ' + snapshot.headings + '\n识别 ' + snapshot.recognized + ' · 目标不明 ' + snapshot.unresolved + ' · 隐藏 ' + snapshot.hidden + '\n仅当前页面统计，不含 Loon 初始移除数。';
       var button = panel.querySelector('button'), pre = panel.querySelector('pre');
       if (button.textContent !== label) button.textContent = label;
@@ -429,7 +429,7 @@ function sfRuleSettings(args) {
 }
 // END GENERATED SEARCH RULES CORE
 
-/* 搜索结果网站屏蔽 v1.0.4 — Loon HTML response script.
+/* 搜索结果网站屏蔽 v1.0.5 — Loon HTML response script.
  * Domain matching happens locally in the browser. No remote requests or logs.
  */
 (function () {
@@ -527,7 +527,7 @@ function sfRuleSettings(args) {
       var first = part.search(/<script\b/i);
       return first >= 0 ? part.slice(0, first) + script + part.slice(first) : part.replace(/<\/head\s*>/i, function (end) { return script + end; });
     }) : body.replace(/<\/body\s*>/i, function (end) { return script + end; });
-    if (on(args.log_enabled)) body = body.replace(/<\/body\s*>/i, '<aside id="loon-search-filter-status" style="position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#162238;color:white;padding:10px;border-radius:12px;font:12px system-ui">搜索屏蔽 v1.0.4 · 脚本尚未执行</aside>$&');
+    if (on(args.log_enabled)) body = body.replace(/<\/body\s*>/i, '<aside id="loon-search-filter-status" style="position:fixed;bottom:12px;right:12px;z-index:2147483647;background:#162238;color:white;padding:10px;border-radius:12px;font:12px system-ui">搜索屏蔽 v1.0.5 · 脚本尚未执行</aside>$&');
     output = { body: body };
   } catch (_) { return finish(output, 'error'); }
   finish(output, filtered.removed ? 'static-and-injected' : 'injected');

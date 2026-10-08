@@ -64,8 +64,8 @@ function sfBrowserFilter(config) {
         toggle.addEventListener('click', function () { detail.hidden = !detail.hidden; download.hidden = detail.hidden; });
         download.addEventListener('click', function () {
           // These fields are constructed here; no DOM text, URLs or rules exported.
-          var event = Object.assign({ time: new Date().toISOString(), version: '1.0.4' }, snapshot);
-          var text = JSON.stringify({ format: 'search-filter-browser-diagnostic', version: '1.0.4', count: 1 }) + '\n' + JSON.stringify(event) + '\n';
+          var event = Object.assign({ time: new Date().toISOString(), version: '1.0.5' }, snapshot);
+          var text = JSON.stringify({ format: 'search-filter-browser-diagnostic', version: '1.0.5', count: 1 }) + '\n' + JSON.stringify(event) + '\n';
           var url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
           var anchor = document.createElement('a'); anchor.href = url; anchor.download = 'search-filter-browser.log'; anchor.hidden = true;
           panel.appendChild(anchor); anchor.click(); anchor.remove();
@@ -73,7 +73,7 @@ function sfBrowserFilter(config) {
         });
         panel.appendChild(toggle); panel.appendChild(detail); panel.appendChild(download);
       }
-      var label = '搜索屏蔽 v1.0.4 · ' + (snapshot.reason === 'error' ? '页面处理异常' : '已运行 · 隐藏 ' + snapshot.hidden);
+      var label = '搜索屏蔽 v1.0.5 · ' + (snapshot.reason === 'error' ? '页面处理异常' : '已运行 · 隐藏 ' + snapshot.hidden);
       var info = '规则 ' + snapshot.rules + ' · 标题 ' + snapshot.headings + '\n识别 ' + snapshot.recognized + ' · 目标不明 ' + snapshot.unresolved + ' · 隐藏 ' + snapshot.hidden + '\n仅当前页面统计，不含 Loon 初始移除数。';
       var button = panel.querySelector('button'), pre = panel.querySelector('pre');
       if (button.textContent !== label) button.textContent = label;

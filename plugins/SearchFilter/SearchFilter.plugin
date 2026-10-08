@@ -1,6 +1,6 @@
 #!name = 搜索结果网站屏蔽
 #!author = 可莉唯一的狗、ChatGPT
-#!desc = v1.0.4；不限浏览器，Google 优先，适配 Bing、百度已识别网页结果。本地网页列表管理黑名单，使用 domain-keyword 和 domain-suffix 显式规则，不支持通配符；修复 Google 手机标题与显示域名结构漏过滤，初始 HTML 移除加动态过滤，支持页面执行诊断；开启日志后自动记录并弹出日志页入口通知。默认仅过滤匹配结果，可选 -site 和默认关闭的隐私开发日志。需 Loon 与 MitM，动态隐藏需页面脚本；未知布局或目标域名不明时保留结果。
+#!desc = v1.0.5；不限浏览器，Google 优先，适配 Bing、百度已识别网页结果。本地网页列表管理黑名单，使用 domain-keyword 和 domain-suffix 显式规则，不支持通配符；手机紧凑布局，初始 HTML 移除加动态过滤，支持页面执行诊断；开启日志后自动记录并弹出日志页入口通知。默认仅过滤匹配结果，可选 -site 和默认关闭的隐私开发日志。需 Loon 与 MitM，动态隐藏需页面脚本；未知布局或目标域名不明时保留结果。
 #!system = iOS,iPadOS,macOS
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/SearchFilter/README.md
 #!tag = 搜索,网站屏蔽
@@ -13,18 +13,18 @@ DOMAIN,search-filter-logs.invalid,DIRECT
 DOMAIN,search-filter-list.invalid,DIRECT
 
 [Script]
-http-request ^http://search-filter-list\.invalid(?::80)?(?:/|$) script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterEditor.js?v=1.0.4,requires-body=true,timeout=15,argument=[{log_enabled}],tag=搜索屏蔽名单页面
-generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterEditor.js?v=1.0.4,timeout=10,tag=添加黑名单,img-url=plus.circle.system
-cron "* * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterLogWatch.js?v=1.0.4,timeout=5,argument=[{log_enabled}],tag=搜索屏蔽日志开关状态检查
-http-request ^http://search-filter-logs\.invalid(?::80)?(?:/|$) script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterLogger.js?v=1.0.4,requires-body=true,timeout=10,argument=[{log_enabled}],tag=搜索屏蔽日志页面与导出
-generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterLogger.js?v=1.0.4,timeout=10,argument=[{log_enabled}],tag=搜索屏蔽开发日志,img-url=doc.text.magnifyingglass.system
-cron "0 * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterSubscription.js?v=1.0.4,timeout=15,argument=[{log_enabled}],tag=搜索屏蔽订阅定时更新
-http-request ^https://(?:www\.)?google\.(?:com|com\.hk|com\.tw|co\.jp|co\.uk)(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilter.js?v=1.0.4,requires-body=false,timeout=5,argument=[{log_enabled}],tag=Google 搜索网站排除
-http-request ^https://(?:www\.|cn\.)?bing\.com(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilter.js?v=1.0.4,requires-body=false,timeout=5,argument=[{log_enabled}],tag=Bing 搜索网站排除
-http-request ^https://(?:www\.|m\.)?baidu\.com(?::443)?/s\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilter.js?v=1.0.4,requires-body=false,timeout=5,argument=[{log_enabled}],tag=百度搜索网站排除（实验性）
-http-response ^https://(?:www\.)?google\.(?:com|com\.hk|com\.tw|co\.jp|co\.uk)(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterResponse.js?v=1.0.4,requires-body=true,timeout=10,argument=[{log_enabled}],tag=Google 搜索页面过滤
-http-response ^https://(?:www\.|cn\.)?bing\.com(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterResponse.js?v=1.0.4,requires-body=true,timeout=10,argument=[{log_enabled}],tag=Bing 搜索页面过滤
-http-response ^https://(?:www\.|m\.)?baidu\.com(?::443)?/s\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterResponse.js?v=1.0.4,requires-body=true,timeout=10,argument=[{log_enabled}],tag=百度搜索页面过滤
+http-request ^http://search-filter-list\.invalid(?::80)?(?:/|$) script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterEditor.js?v=1.0.5,requires-body=true,timeout=15,argument=[{log_enabled}],tag=搜索屏蔽名单页面
+generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterEditor.js?v=1.0.5,timeout=10,tag=添加黑名单,img-url=plus.circle.system
+cron "* * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterLogWatch.js?v=1.0.5,timeout=5,argument=[{log_enabled}],tag=搜索屏蔽日志开关状态检查
+http-request ^http://search-filter-logs\.invalid(?::80)?(?:/|$) script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterLogger.js?v=1.0.5,requires-body=true,timeout=10,argument=[{log_enabled}],tag=搜索屏蔽日志页面与导出
+generic script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterLogger.js?v=1.0.5,timeout=10,argument=[{log_enabled}],tag=搜索屏蔽开发日志,img-url=doc.text.magnifyingglass.system
+cron "0 * * * *" script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterSubscription.js?v=1.0.5,timeout=15,argument=[{log_enabled}],tag=搜索屏蔽订阅定时更新
+http-request ^https://(?:www\.)?google\.(?:com|com\.hk|com\.tw|co\.jp|co\.uk)(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilter.js?v=1.0.5,requires-body=false,timeout=5,argument=[{log_enabled}],tag=Google 搜索网站排除
+http-request ^https://(?:www\.|cn\.)?bing\.com(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilter.js?v=1.0.5,requires-body=false,timeout=5,argument=[{log_enabled}],tag=Bing 搜索网站排除
+http-request ^https://(?:www\.|m\.)?baidu\.com(?::443)?/s\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilter.js?v=1.0.5,requires-body=false,timeout=5,argument=[{log_enabled}],tag=百度搜索网站排除（实验性）
+http-response ^https://(?:www\.)?google\.(?:com|com\.hk|com\.tw|co\.jp|co\.uk)(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterResponse.js?v=1.0.5,requires-body=true,timeout=10,argument=[{log_enabled}],tag=Google 搜索页面过滤
+http-response ^https://(?:www\.|cn\.)?bing\.com(?::443)?/search\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterResponse.js?v=1.0.5,requires-body=true,timeout=10,argument=[{log_enabled}],tag=Bing 搜索页面过滤
+http-response ^https://(?:www\.|m\.)?baidu\.com(?::443)?/s\? script-path=https://raw.githubusercontent.com/teaoea/shell/main/plugins/SearchFilter/SearchFilterResponse.js?v=1.0.5,requires-body=true,timeout=10,argument=[{log_enabled}],tag=百度搜索页面过滤
 
 [Mitm]
 hostname = google.com, www.google.com, google.com.hk, www.google.com.hk, google.com.tw, www.google.com.tw, google.co.jp, www.google.co.jp, google.co.uk, www.google.co.uk, bing.com, www.bing.com, cn.bing.com, baidu.com, www.baidu.com, m.baidu.com
