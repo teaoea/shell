@@ -222,3 +222,5 @@ UID／标题黑名单：JSON 首页与 `/x/v2/feed/index/story` 推荐读取 `ar
 “我的”页会员横幅：除顶层会员模块外，也清理已知布局容器内同名会员模块及具有明确会员中心按钮或会员跳转的推广卡片。不会按所有包含“会员”的文字过滤服务入口。截图不能确定实际响应结构，需更新后重新进入“我的”页验证；缓存或其他接口仍可能显示。
 
 请求列表解密范围：`app.bilibili.com` 已覆盖截图中的 `/x/v2/param`、`/x/v2/account/myinfo`、`/x/v2/account/mine`、推荐及开屏等 HTTPS URL 的主机；补充 `httpdns.bilivideo.com` 至 MitM 主机列表。截图里的 `http://httpdns.bilivideo.com/resolve` 是明文 HTTP，无需 MitM。登记主机不会自动新增接口过滤或日志，也不代表相关请求属于广告。
+
+已确认的 `/x/v2/param` 与 `/x/v2/account/myinfo` 在开发日志中按完整固定接口路径显示，不再归类为 `other_api`。仅精确匹配路径，只记元数据；不读取响应正文，不保存查询参数或账户资料。旧记录已脱敏的路径无法还原，更新后新请求生效。

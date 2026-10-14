@@ -352,14 +352,14 @@ test('export identifies exporter and actual producer versions without relabeling
  const h=harness(JSON.stringify({events:[old],evicted:0}));
  h.run({$request:{url:'https://app.bilibili.com/x/v3/splash/config?token='+secret,method:'POST'},$response:{status:200}});
  const exported=h.page('/export').response.body.trim().split('\n').map(JSON.parse);
- assert.equal(exported[0].script_version,'1.11.12');
+ assert.equal(exported[0].script_version,'1.11.13');
  assert.equal(exported[1].script_version,undefined);
- assert.equal(exported[2].script_version,'1.11.12');
+ assert.equal(exported[2].script_version,'1.11.13');
  assert.equal(exported[2].route_hint,'/x/v3/splash/config');
  assert.equal(exported[2].host,'app.bilibili.com');
  assert.ok(!JSON.stringify(exported).includes(secret));
  const scripts=plugin.split('\n').filter(line=>line.includes('script-path='));
- assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.12,/);
+ assert.ok(scripts.length>0);for(const line of scripts)assert.match(line,/BilibiliEnhance\.js\?v=1\.11\.13,/);
 });
 
 test('impression request and response logging never reads bodies or secrets and has no reject rule',()=>{
@@ -402,7 +402,7 @@ test('log page places version beside title and exposes request response phases',
  const h=harness();const request={url:'https://impression.biligame.com/api/impression/bilibili?token='+secret,method:'GET'};
  h.run({$request:request,$response:undefined});h.run({$request:request,$response:{status:200}});
  const html=h.page().response.body;
- assert.match(html,/<h1>开发日志<span class="page-version">v1\.11\.12<\/span><\/h1>/);
+ assert.match(html,/<h1>开发日志<span class="page-version">v1\.11\.13<\/span><\/h1>/);
  assert.match(html,/<footer>时间显示为北京时间<\/footer>/);
  assert.match(html,/请求发出/);assert.match(html,/响应返回/);
  assert.equal(JSON.parse(h.stored()).events[0].route_hint,'/api/impression/bilibili');
@@ -418,4 +418,16 @@ test('biligame logging excludes apex and unregistered subdomains',()=>{
   const h=harness();assert.deepEqual(h.run({$request:{url:'https://'+host+'/api',method:'GET'},$response:{status:200}}),{});assert.equal(h.writes(),0);
  }
  assert.doesNotMatch(plugin,/\*\.biligame\.com/);
+});
+
+test('param and myinfo have exact metadata endpoint names without reading or exposing bodies',()=>{
+ for(const path of ['/x/v2/param','/x/v2/account/myinfo']){
+  const h=harness();const response={status:200};Object.defineProperty(response,'body',{get(){throw Error('must not read body');}});
+  assert.deepEqual(h.run({$request:{url:'https://app.bilibili.com'+path+'?access_key='+secret,method:'GET'},$response:response}),{});
+  const event=JSON.parse(h.stored()).events[0];assert.equal(event.endpoint,path);assert.equal(event.outcome,'metadata_only');
+  assert.equal(event.route_hint,undefined);assert.equal(event.body_length,0);
+  for(const text of [h.page().response.body,h.page('/export').response.body]){assert.ok(text.includes(path));assert.ok(!text.includes(secret));}
+  h.run({$request:{url:'https://app.bilibili.com'+path+'/extra?token='+secret,method:'GET'},$response:response});
+  assert.equal(JSON.parse(h.stored()).events[1].endpoint,'other_api');
+ }
 });

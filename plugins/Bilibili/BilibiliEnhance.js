@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.11.12；更新时间：2026-10-08
+ * 版本：1.11.13；更新时间：2026-10-14
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -476,7 +476,7 @@
       }
     };
   }
-  const SCRIPT_VERSION = '1.11.12';
+  const SCRIPT_VERSION = '1.11.13';
   const LOG_KEY = 'bilibili.enhance.logs.v1';
   const NOTICE_KEY = 'bilibili.enhance.notice.v1';
   const LIMIT = 300;
@@ -490,6 +490,7 @@
     '/bilibili.app.dynamic.v2.Dynamic/DynAll', '/bilibili.app.show.v1.Popular/Index',
     '/bilibili.app.playurl.v1.PlayURL/PlayView', '/bilibili.app.playerunite.v1.Player/PlayViewUnite'
   ];
+  const metadataPaths = ['/x/v2/param', '/x/v2/account/myinfo'];
   const outcomes = ['modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
   const cardTypes = ['small_cover_v2', 'small_cover_v10', 'banner_v8', 'cm_v2', 'cm_double_v9'];
   const cardGotos = ['av', 'vertical_av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
@@ -514,7 +515,7 @@
   }
   function safeEvent(event) {
     if (!object(event)) return null;
-    const endpoints = Object.keys(paths).concat(rpcPaths, ['other_api']);
+    const endpoints = Object.keys(paths).concat(rpcPaths, metadataPaths, ['other_api']);
     if (!endpoints.includes(event.endpoint) || !outcomes.includes(event.outcome)) return null;
     const result = {
       time: typeof event.time === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(event.time) ? event.time : '',
@@ -793,7 +794,7 @@
     syncLogging(config);
     notifyLogging(config);
     if (config.log_enabled) event = {
-      time: new Date().toISOString(), endpoint: (route || rpcPaths.includes(match[1])) ? match[1] : 'other_api',
+      time: new Date().toISOString(), endpoint: (route || rpcPaths.includes(match[1]) || metadataPaths.includes(match[1])) ? match[1] : 'other_api',
       method: request.method || 'GET', status, body_length: route && typeof response.body === 'string' ? response.body.length : 0
     };
     if (event) {
