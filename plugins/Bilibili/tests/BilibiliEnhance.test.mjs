@@ -397,3 +397,22 @@ test('splash controls clear keep IDs and zero existing maximum time even when de
  assert.deepEqual(run({keep_ids:[1],max_time:4},{},'/x/v2/feed/index'),{});
  assert.deepEqual(run({keep_ids:[1],max_time:4},{},'/x/v2/splash/brand/list'),{});
 });
+
+test('splash GET requests receive local success without credentials/body access and exact route boundaries',()=>{
+ const paths=['/x/v2/splash/list','/x/v2/splash/show','/x/v2/splash/event/list2','/x/v2/splash/brand/list'];
+ const line=plugin.split('\n').find(l=>l.includes('tag=Bilibili 开屏本地空响应'));
+ assert.ok(line);assert.match(line,/requires-body=false/);const re=new RegExp(line.split(' ')[1]);
+ for(const host of ['app.bilibili.com','app.biliapi.net'])for(const path of paths){
+  const request={url:'https://'+host+path+'?access_key=PRIVATE_TOKEN',method:'GET'};
+  Object.defineProperty(request,'body',{get(){throw Error('request body');}});
+  const result=run({}, {},path,{$request:request,$response:undefined});
+  assert.equal(result.response.status,200);assert.ok(re.test(request.url));
+  const body=JSON.parse(result.response.body);assert.equal(body.code,0);
+  assert.deepEqual(body.data.list,[]);assert.deepEqual(body.data.show,[]);
+  if(!path.includes('/brand/')){assert.equal(body.data.max_time,0);assert.deepEqual(body.data.keep_ids,[]);}
+ }
+ for(const url of ['https://app.bilibili.com.evil.test/x/v2/splash/list','https://app.bilibili.com/x/v2/splash/list/extra','https://app.bilibili.com/x/v2/account/myinfo']){
+  assert.ok(!re.test(url));assert.deepEqual(run({}, {},undefined,{$request:{url,method:'GET'},$response:undefined}),{});
+ }
+ assert.deepEqual(run({}, {},undefined,{$request:{url:'https://app.bilibili.com/x/v2/splash/list',method:'POST'},$response:undefined}),{});
+});

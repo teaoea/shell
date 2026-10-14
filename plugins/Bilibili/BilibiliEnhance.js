@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.11.14；更新时间：2026-10-14
+ * 版本：1.11.15；更新时间：2026-10-14
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -476,7 +476,7 @@
       }
     };
   }
-  const SCRIPT_VERSION = '1.11.14';
+  const SCRIPT_VERSION = '1.11.15';
   const LOG_KEY = 'bilibili.enhance.logs.v1';
   const NOTICE_KEY = 'bilibili.enhance.notice.v1';
   const LIMIT = 300;
@@ -491,7 +491,7 @@
     '/bilibili.app.playurl.v1.PlayURL/PlayView', '/bilibili.app.playerunite.v1.Player/PlayViewUnite'
   ];
   const metadataPaths = ['/x/v2/param', '/x/v2/account/myinfo'];
-  const outcomes = ['modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
+  const outcomes = ['local_response', 'modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
   const cardTypes = ['small_cover_v2', 'small_cover_v10', 'banner_v8', 'cm_v2', 'cm_double_v9'];
   const cardGotos = ['av', 'vertical_av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
   const fields = ['data', 'type', 'items', 'list', 'event_list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title', 'keep_ids', 'max_time'].concat(memberPromoFields);
@@ -601,7 +601,7 @@
   }
   function renderPage(state, config, cleared = false) {
     const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-    const labels = { modified: '已过滤', unchanged: '无需修改', http_error: '响应异常', unsupported_body: '正文未处理', api_error: '接口异常', invalid_json: '解析后放行', unsupported_schema: '结构未识别', metadata_only: '仅元数据' };
+    const labels = { local_response: '本地空响应', modified: '已过滤', unchanged: '无需修改', http_error: '响应异常', unsupported_body: '正文未处理', api_error: '接口异常', invalid_json: '解析后放行', unsupported_schema: '结构未识别', metadata_only: '仅元数据' };
     const removed = state.events.reduce((sum, entry) => sum + entry.removed, 0);
     const rows = state.events.slice(-20).reverse().map(entry => {
       const time = entry.time && Number.isFinite(Date.parse(entry.time)) ? new Date(Date.parse(entry.time) + 8 * 3600000).toISOString().slice(5, 19).replace('T', ' ') : '时间未知';
@@ -766,6 +766,18 @@
       if (config.log_enabled) event = { time: new Date().toISOString(), endpoint: DEFAULT_WORDS_PATH, method: 'POST', status: 200,
         body_length: 0, before: 0, after: 0, removed: 0 };
       return finish(blankDefaultWords(), 'modified');
+    }
+    const splashRequest = /^https:\/\/(?:app\.bilibili\.com|app\.biliapi\.net)(?::443)?(\/x\/v2\/splash\/(?:list|show|event\/list2|brand\/list))(?:\?[^#]*)?$/.exec(String(request.url || ''));
+    if (!response && splashRequest && request.method === 'GET') {
+      syncLogging(config); notifyLogging(config);
+      const data = { list: [], show: [], event_list: [] };
+      if (paths[splashRequest[1]] === 'splash') { data.keep_ids = []; data.max_time = 0; }
+      if (config.log_enabled) event = { time: new Date().toISOString(), endpoint: splashRequest[1],
+        host: String(request.url).startsWith('https://app.biliapi.net') ? 'app.biliapi.net' : 'app.bilibili.com',
+        phase: 'request', method: 'GET', status: 200, body_length: 0, before: 0, after: 0, removed: 0,
+        data_schema: schema(data) };
+      return finish({ response: { status: 200, headers: { 'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store' }, body: JSON.stringify({ code: 0, message: '0', ttl: 1, data }) } }, 'local_response');
     }
     const impressionMatch = /^https?:\/\/((?:impression|static|game-data-api)\.biligame\.com)(?::443)?(\/[^?#]*)(?:\?[^#]*)?$/.exec(String(request.url || ''));
     if (impressionMatch) {
