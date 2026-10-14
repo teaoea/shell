@@ -1,7 +1,7 @@
 /**
  * Bilibili 增强：Loon 广告与播放引导过滤、本地开发日志。
  * 作者：可莉唯一的狗、ChatGPT
- * 版本：1.11.13；更新时间：2026-10-14
+ * 版本：1.11.14；更新时间：2026-10-14
  * 只处理已登记的 JSON 与二进制接口；异常、未知结构与未发生修改的响应原样放行。
  */
 (function () {
@@ -476,7 +476,7 @@
       }
     };
   }
-  const SCRIPT_VERSION = '1.11.13';
+  const SCRIPT_VERSION = '1.11.14';
   const LOG_KEY = 'bilibili.enhance.logs.v1';
   const NOTICE_KEY = 'bilibili.enhance.notice.v1';
   const LIMIT = 300;
@@ -494,7 +494,7 @@
   const outcomes = ['modified', 'unchanged', 'http_error', 'unsupported_body', 'api_error', 'invalid_json', 'unsupported_schema', 'metadata_only'];
   const cardTypes = ['small_cover_v2', 'small_cover_v10', 'banner_v8', 'cm_v2', 'cm_double_v9'];
   const cardGotos = ['av', 'vertical_av', 'live', 'live_rcmd', 'game', 'mall', 'banner', 'ad_web_s', 'ad_av', 'ad_web_gif', 'ad_player', 'ad_inline_3d', 'ad_inline_eggs', 'ad_inline_av'];
-  const fields = ['data', 'type', 'items', 'list', 'event_list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title'].concat(memberPromoFields);
+  const fields = ['data', 'type', 'items', 'list', 'event_list', 'top_list', 'show', 'tab', 'top', 'bottom', 'card_type', 'card_goto', 'goto', 'is_ad', 'ad_info', 'banner_item', 'args', 'title', 'keep_ids', 'max_time'].concat(memberPromoFields);
   function kind(value) {
     return value === null ? 'null' : Array.isArray(value) ? 'array' : object(value) ? 'object' :
       ['string', 'number', 'boolean'].includes(typeof value) ? typeof value : 'other';
@@ -882,6 +882,11 @@
       // 清空开屏投放及品牌开屏素材，不依赖素材是否携带广告标记；保留启动配置和未知字段。
       for (const key of ['list', 'show', 'event_list']) if (Array.isArray(data[key]) && data[key].length) {
         data[key] = []; changed = true;
+      }
+      // 常规开屏接口的附加控制字段；只处理已出现且类型符合的字段。
+      if (route === 'splash') {
+        if (Array.isArray(data.keep_ids) && data.keep_ids.length) { data.keep_ids = []; changed = true; }
+        if (typeof data.max_time === 'number' && data.max_time !== 0) { data.max_time = 0; changed = true; }
       }
     }
     if (route === 'feed') {

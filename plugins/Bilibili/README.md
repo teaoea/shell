@@ -224,3 +224,5 @@ UID／标题黑名单：JSON 首页与 `/x/v2/feed/index/story` 推荐读取 `ar
 请求列表解密范围：`app.bilibili.com` 已覆盖截图中的 `/x/v2/param`、`/x/v2/account/myinfo`、`/x/v2/account/mine`、推荐及开屏等 HTTPS URL 的主机；补充 `httpdns.bilivideo.com` 至 MitM 主机列表。截图里的 `http://httpdns.bilivideo.com/resolve` 是明文 HTTP，无需 MitM。登记主机不会自动新增接口过滤或日志，也不代表相关请求属于广告。
 
 已确认的 `/x/v2/param` 与 `/x/v2/account/myinfo` 在开发日志中按完整固定接口路径显示，不再归类为 `other_api`。仅精确匹配路径，只记元数据；不读取响应正文，不保存查询参数或账户资料。旧记录已脱敏的路径无法还原，更新后新请求生效。
+
+常规开屏接口补充处理：除素材及展示列表外，清空已存在的 `keep_ids` 数组，将已存在的数值型 `max_time` 设为 0；不新增缺失字段，不改变未知类型或拉取间隔。字段参考[开屏接口记录](https://raw.githubusercontent.com/pskdje/bilibili-API-collect/master/docs/APP_widget/splash.md)，其客户端行为仍需实机验证。日志仅保存这两个字段的结构类型，不保存 ID 或字段值。此处理不直接删除 App 本地文件，也不能证明剩余广告都来自缓存。

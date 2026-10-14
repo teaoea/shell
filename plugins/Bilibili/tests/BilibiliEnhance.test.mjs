@@ -384,3 +384,16 @@ test('mine embedded member banners are removed without changing ordinary service
   assert.deepEqual(run(expected,{},path),{});
  }
 });
+
+test('splash controls clear keep IDs and zero existing maximum time even when delivery lists are empty',()=>{
+ for(const path of ['/x/v2/splash/list','/x/v2/splash/show','/x/v2/splash/event/list2']){
+  const data={list:[],show:[],keep_ids:[123,456],max_time:5,min_interval:14400,pull_interval:900,future:{keep:true}};
+  const expected={...data,keep_ids:[],max_time:0};
+  assert.deepEqual(parsed(run(data,{},path)),expected);
+  assert.deepEqual(run(expected,{},path),{});
+  assert.deepEqual(run({keep_ids:null,max_time:'unknown',future:1},{},path),{});
+  assert.deepEqual(run({list:[],show:[],future:1},{},path),{});
+ }
+ assert.deepEqual(run({keep_ids:[1],max_time:4},{},'/x/v2/feed/index'),{});
+ assert.deepEqual(run({keep_ids:[1],max_time:4},{},'/x/v2/splash/brand/list'),{});
+});
