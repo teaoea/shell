@@ -67,7 +67,7 @@ bash -c 'set -e; xray_script=$(curl -fsSL --retry 3 https://raw.githubuserconten
 - 设置 `noKernelTun: true`，由 Xray 在进程内处理隧道；不安装或启动 `warp-cli`、`wg-quick`，不创建系统 WireGuard 接口，不修改系统默认路由。服务端 JSON 以 `root:xray`、`640` 保存，供 Xray 服务读取。
 - 指定非空域名列表时，对代理入口启用 HTTP/TLS/QUIC 嗅探和 `routeOnly: true`，辅助识别域名。没有可识别域名的纯 IP、加密 ClientHello 等请求可能无法匹配域名规则。
 
-**实际可用性检查：**在停止或替换现有 Xray 配置前，启动一个仅监听 `127.0.0.1`、仅含 WARP 出站的临时 Xray SOCKS 实例。通过该代理请求 Cloudflare trace，必须返回 `warp=on` 或 `warp=plus` 才继续；不会退回直连后将检测算作成功。注册、参数生成、配置校验或出口检测失败都会停止，临时实例会退出。已注册账户保留供重试；旧服务端配置沿用脚本原有备份与失败恢复流程。
+**实际可用性检查：**在停止或替换现有 Xray 配置前，启动一个仅监听 `127.0.0.1`、仅含 WARP 出站的临时 Xray SOCKS 实例。把 Endpoint 域名解析为 IPv4/IPv6 候选地址，按所选网络优先级依次检测；通过该代理请求 Cloudflare trace，必须返回 `warp=on` 或 `warp=plus` 才继续。正式 JSON 固定使用测通的 Endpoint IP，避免正式服务重新解析到另一个不通的地址族；不会退回直连后将检测算作成功。注册、参数生成、配置校验或出口检测失败都会停止，临时实例会退出。已注册账户保留供重试；旧服务端配置沿用脚本原有备份与失败恢复流程。
 
 “全部”指通过 Xray 代理入口的流量，不接管 VPS 自身的 SSH、软件更新等系统流量。已选择的仅 IPv4/仅 IPv6 目标地址族拦截规则仍优先执行，直接连接 WARP Endpoint 的地址族由 VPS 网络决定；原有 Freedom 出口模式不等于 WireGuard 隧道内的地址族策略。需要 VPS 可达 Cloudflare 注册 API、下载站和 WireGuard UDP Endpoint。真实检测反映安装时的状态，后续仍需保持账户与网络可用。
 

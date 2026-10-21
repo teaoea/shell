@@ -44,6 +44,7 @@ WARP_RESERVED_JSON="0,0,0"
 WARP_VERIFIED=false
 TEMP_WARP_DIR=""
 WARP_TEST_PID=""
+WARP_ENDPOINT_CANDIDATES=()
 
 UUID=""
 PRIVATE_KEY=""
@@ -599,7 +600,31 @@ stop_warp_test() {
   fi
 }
 
-verify_warp_connection() {
+prepare_warp_endpoints() {
+  local host port family address
+  local -a families=(4 6)
+  WARP_ENDPOINT_CANDIDATES=()
+  host=${WARP_ENDPOINT%:*}; port=${WARP_ENDPOINT##*:}
+  # 已经是 IP 的端点直接验证；域名端点展开为地址，避免两次实例随机选到不同地址族。
+  if [[ "$host" == \[*\] || "$host" =~ ^[0-9.]+$ ]]; then
+    WARP_ENDPOINT_CANDIDATES+=("$WARP_ENDPOINT")
+    return 0
+  fi
+  [[ "$PREFER_IPV6" != true ]] || families=(6 4)
+  for family in "${families[@]}"; do
+    while IFS= read -r address; do
+      valid_warp_ip "$address" || continue
+      if [[ "$address" == *:* ]]; then
+        WARP_ENDPOINT_CANDIDATES+=("[$address]:$port")
+      else
+        WARP_ENDPOINT_CANDIDATES+=("$address:$port")
+      fi
+    done < <(timeout 10 getent "ahostsv$family" "$host" 2>/dev/null | awk '$2 == "DGRAM" && !seen[$1]++ {print $1}' || true)
+  done
+  ((${#WARP_ENDPOINT_CANDIDATES[@]} > 0)) || die "无法解析 WARP Endpoint 的可用 IP 地址"
+}
+
+probe_warp_connection() {
   local warp_json=$1 port attempt trace=""
   WARP_VERIFIED=false
   [[ -n "$TEMP_WARP_DIR" ]] || die "WARP 临时工作目录不存在"
@@ -612,11 +637,10 @@ verify_warp_connection() {
   cat >"$TEMP_WARP_DIR/test.json" <<EOF
 {"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":$port,"protocol":"socks","settings":{"auth":"noauth","udp":false}}],"outbounds":[$warp_json]}
 EOF
-  "$XRAY_BIN" run -test -config "$TEMP_WARP_DIR/test.json" >"$TEMP_WARP_DIR/test.log" 2>&1 ||
-    die "WARP WireGuard 配置未通过 Xray 校验"
+  "$XRAY_BIN" run -test -config "$TEMP_WARP_DIR/test.json" >"$TEMP_WARP_DIR/test.log" 2>&1 || return 1
   "$XRAY_BIN" run -config "$TEMP_WARP_DIR/test.json" >>"$TEMP_WARP_DIR/test.log" 2>&1 &
   WARP_TEST_PID=$!
-  printf '正在通过 Xray WireGuard 隧道检查 WARP 实际出口...\n'
+  printf '正在通过 Xray WireGuard 隧道检查 WARP 实际出口（%s）...\n' "$WARP_ENDPOINT"
   for attempt in {1..3}; do
     sleep 1
     kill -0 "$WARP_TEST_PID" >/dev/null 2>&1 || break
@@ -627,8 +651,23 @@ EOF
     fi
   done
   stop_warp_test
-  [[ "$WARP_VERIFIED" == true ]] || die "WARP 实际出口检查失败：未返回 warp=on/plus；请检查 UDP 出站、Cloudflare 注册状态或端点连通性，保留原 Xray 配置"
+  [[ "$WARP_VERIFIED" == true ]] || return 1
   printf 'WARP 出口检查通过（%s）。\n' "$(printf '%s\n' "$trace" | grep '^warp=')"
+}
+
+verify_warp_connection() {
+  local warp_json=$1 original_endpoint=$WARP_ENDPOINT candidate_json needle replacement
+  prepare_warp_endpoints
+  needle="\"endpoint\": \"$original_endpoint\""
+  for WARP_ENDPOINT in "${WARP_ENDPOINT_CANDIDATES[@]}"; do
+    replacement="\"endpoint\": \"$WARP_ENDPOINT\""
+    candidate_json=${warp_json/"$needle"/"$replacement"}
+    if probe_warp_connection "$candidate_json"; then
+      return 0
+    fi
+    printf 'WARP Endpoint %s 未通过实际检测，尝试下一个地址。\n' "$WARP_ENDPOINT" >&2
+  done
+  die "WARP 实际出口检查失败：所有端点均未返回 warp=on/plus；请检查 UDP 出站或账户状态，保留原 Xray 配置"
 }
 
 select_reality_server_name() {
@@ -823,7 +862,7 @@ generate_credentials() {
 
 write_xray_config() {
   local tcp_fast_open_json="" shadowsocks_json="" outbound_json='"protocol": "freedom"' routing_json="" block_json="" dns_json=""
-  local routing_rules="" warp_json="" sniffing_json="" warp_rule=""
+  local routing_rules="" warp_json="" sniffing_json="" warp_rule="" original_endpoint needle replacement
   install -d -m 750 -o root -g xray "$XRAY_CONFIG_DIR"
   TEMP_CONFIG=$(mktemp /tmp/xray-config.XXXXXX.json)
   [[ "$OPTIMIZE_NETWORK" != true ]] || tcp_fast_open_json=', "tcpFastOpen": true'
@@ -850,6 +889,11 @@ write_xray_config() {
     validate_warp_key "$WARP_PUBLIC_KEY"
     validate_warp_endpoint
     warp_json=", {\"tag\": \"warp\", \"protocol\": \"wireguard\", \"settings\": {\"secretKey\": \"$WARP_SECRET_KEY\", \"address\": [$WARP_ADDRESSES_JSON], \"peers\": [{\"publicKey\": \"$WARP_PUBLIC_KEY\", \"endpoint\": \"$WARP_ENDPOINT\", \"allowedIPs\": [\"0.0.0.0/0\", \"::/0\"], \"keepAlive\": 25}], \"reserved\": [$WARP_RESERVED_JSON], \"mtu\": 1280, \"noKernelTun\": true}}"
+    original_endpoint=$WARP_ENDPOINT
+    verify_warp_connection "${warp_json#, }"
+    needle="\"endpoint\": \"$original_endpoint\""
+    replacement="\"endpoint\": \"$WARP_ENDPOINT\""
+    warp_json=${warp_json/"$needle"/"$replacement"}
     if [[ "$WARP_MODE" == all ]]; then
       warp_rule='{"type": "field", "network": "tcp,udp", "outboundTag": "warp"}'
     elif [[ -n "$WARP_DOMAINS_JSON" ]]; then
@@ -914,8 +958,6 @@ EOF
 EOF
 
   "$XRAY_BIN" run -test -config "$TEMP_CONFIG"
-  # 在停止/替换原服务前，使用仅有 WARP 出站的临时实例做端到端检测。
-  [[ "$ENABLE_WARP" != true ]] || verify_warp_connection "${warp_json#, }"
   systemctl stop xray
   install -m 640 -o root -g xray "$TEMP_CONFIG" "$XRAY_CONFIG_FILE"
   systemctl enable xray >/dev/null

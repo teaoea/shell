@@ -3,6 +3,7 @@
 from pathlib import Path
 import json
 import base64
+import shlex
 import os
 import re
 import pty
@@ -333,14 +334,14 @@ prepare_warp_reserved '12,034,255'
         self.assertEqual(json.loads('[' + p.stdout.strip() + ']'), ['domain:example.com', 'full:api.example.org', 'domain:example.net'])
         self.bash('prepare_warp_domains ""; [[ -z "$WARP_DOMAINS_JSON" ]]')
         for value in ('https://example.com/path', 'example.com:443', 'x\"],\"network\":\"tcp', 'geosite:openai'):
-            self.bash('prepare_warp_domains ' + __import__('shlex').quote(value), ok=False)
+            self.bash('prepare_warp_domains ' + shlex.quote(value), ok=False)
         for value in ('172.16.0.2/32', '2606:4700::1/128', '::/0', '1:2:3:4:5:6:7:8/128'):
-            self.bash('prepare_warp_addresses ' + __import__('shlex').quote(value))
+            self.bash('prepare_warp_addresses ' + shlex.quote(value))
         for value in ('', '256.1.1.1', '172.16.0.2/33', '2606::1/129', '1::2::3', '1:2:3:4:5:6:7:8::', '::ffff:999.1.1.1'):
-            self.bash('prepare_warp_addresses ' + __import__('shlex').quote(value), ok=False)
+            self.bash('prepare_warp_addresses ' + shlex.quote(value), ok=False)
         self.bash('WARP_ENDPOINT="[2606:4700::1]:2408"; validate_warp_endpoint')
         for value in ('host:0', '1.1.1.1:65536', '[1::2::3]:2408', '1.2.3.999:2408'):
-            self.bash('WARP_ENDPOINT=' + __import__('shlex').quote(value) + '; validate_warp_endpoint', ok=False)
+            self.bash('WARP_ENDPOINT=' + shlex.quote(value) + '; validate_warp_endpoint', ok=False)
         self.bash("prepare_warp_reserved '256,0,0'", ok=False)
 
     def test_warp_routing_matrix_and_client_secret_isolation(self):
@@ -386,6 +387,7 @@ write_client_configs
         fake.chmod(0o700)
         body = self.credentials() + self.warp_credentials() + r'''
 TEMP_WARP_DIR=$(mktemp -d /tmp/xray-warp-test.XXXXXX)
+WARP_ENDPOINT=162.159.192.1:2408
 sleep() { command sleep 0.02; }
 ss() { :; }
 curl() { echo "$*" >>"$LOG"; printf 'warp=%s\n' "$TRACE_STATE"; }
@@ -399,6 +401,29 @@ write_xray_config
             p = self.bash(f'TRACE_STATE={state}\n' + body + '; [[ $WARP_VERIFIED == true ]]')
             self.assertIn(f'warp={state}', p.stdout)
         self.assertIn('--proxy socks5h://127.0.0.1:', (self.root / 'operations').read_text())
+
+    def test_warp_verified_endpoint_is_pinned_in_production_json(self):
+        fake = self.root / 'xray'
+        fake.write_text('#!/bin/bash\nexit 0\n')
+        fake.chmod(0o700)
+        self.bash(self.credentials() + self.warp_credentials() + r'''
+getent() {
+  if [[ "$1" == ahostsv4 ]]; then echo '162.159.192.1 DGRAM';
+  elif [[ "$1" == ahostsv6 ]]; then echo '2606:4700:d0::1 DGRAM'; fi
+}
+timeout() { shift; "$@"; }
+probe_warp_connection() {
+  printf '%s\n' "$WARP_ENDPOINT" >>"$FIXTURE_ROOT/endpoints"
+  if [[ "$WARP_ENDPOINT" == '[2606:4700:d0::1]:2408' ]]; then
+    [[ "$1" == *'"endpoint": "[2606:4700:d0::1]:2408"'* ]]
+  else return 1; fi
+}
+write_xray_config
+''')
+        config = json.loads((self.root / 'config/config.json').read_text())
+        warp = next(o for o in config['outbounds'] if o.get('tag') == 'warp')
+        self.assertEqual(warp['settings']['peers'][0]['endpoint'], '[2606:4700:d0::1]:2408')
+        self.assertEqual((self.root / 'endpoints').read_text().splitlines(), ['162.159.192.1:2408', '[2606:4700:d0::1]:2408'])
 
     def test_wgcf_register_reuse_and_generate_failures(self):
         key = base64.b64encode(bytes(range(32))).decode()
