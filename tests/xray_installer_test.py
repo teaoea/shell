@@ -2,6 +2,7 @@
 """Isolated Bash fixtures: no package installs, system writes, or live services."""
 from pathlib import Path
 import json
+import base64
 import os
 import re
 import pty
@@ -26,6 +27,7 @@ class InstallerTests(unittest.TestCase):
             source = source.replace('/usr/local/bin/xray', str(self.root / 'xray'))
             source = source.replace('/usr/local/etc/xray', str(self.root / 'config'))
             source = source.replace('/etc/', str(self.root / 'etc') + '/')
+            source = source.replace('/var/lib/xray-warp', str(self.root / 'warp-state'))
             (self.root / name).write_text(source)
         (self.root / 'etc').mkdir()
         (self.root / 'etc/sysctl.d').mkdir()
@@ -51,7 +53,10 @@ id() {
 }
 # Only fixture file ownership is changed; no privilege escalation.
 chown() { return 0; }
-install() { command cp "${@: -2}"; }
+install() {
+  if [[ "$1" == -d ]]; then command mkdir -p "${@: -1}";
+  else command cp "${@: -2}"; fi
+}
 '''
         env = os.environ.copy()
         env.update(FIXTURE_ROOT=str(self.root), FIXTURE_SCRIPT=script)
@@ -312,6 +317,141 @@ apply_configuration
     def test_no_firewall_commands_remain(self):
         source = (REPO / 'install' / 'install_xray.sh').read_text()
         self.assertNotRegex(source, r'(?i)\bufw\b|firewall-cmd|firewall-offline-cmd|iptables|nft |firewalld')
+
+    def warp_credentials(self):
+        return f'''
+ENABLE_WARP=true
+WARP_SECRET_KEY={base64.b64encode(bytes(range(32))).decode()}
+WARP_PUBLIC_KEY={base64.b64encode(bytes(range(32, 64))).decode()}
+WARP_ENDPOINT=engage.cloudflareclient.com:2408
+prepare_warp_addresses '172.16.0.2/32,2606:4700:110:8000::1234/128'
+prepare_warp_reserved '12,034,255'
+'''
+
+    def test_warp_domain_and_address_validation(self):
+        p = self.bash('prepare_warp_domains "Example.COM,full:api.example.org *.example.net"; echo "$WARP_DOMAINS_JSON"')
+        self.assertEqual(json.loads('[' + p.stdout.strip() + ']'), ['domain:example.com', 'full:api.example.org', 'domain:example.net'])
+        self.bash('prepare_warp_domains ""; [[ -z "$WARP_DOMAINS_JSON" ]]')
+        for value in ('https://example.com/path', 'example.com:443', 'x\"],\"network\":\"tcp', 'geosite:openai'):
+            self.bash('prepare_warp_domains ' + __import__('shlex').quote(value), ok=False)
+        for value in ('172.16.0.2/32', '2606:4700::1/128', '::/0', '1:2:3:4:5:6:7:8/128'):
+            self.bash('prepare_warp_addresses ' + __import__('shlex').quote(value))
+        for value in ('', '256.1.1.1', '172.16.0.2/33', '2606::1/129', '1::2::3', '1:2:3:4:5:6:7:8::', '::ffff:999.1.1.1'):
+            self.bash('prepare_warp_addresses ' + __import__('shlex').quote(value), ok=False)
+        self.bash('WARP_ENDPOINT="[2606:4700::1]:2408"; validate_warp_endpoint')
+        for value in ('host:0', '1.1.1.1:65536', '[1::2::3]:2408', '1.2.3.999:2408'):
+            self.bash('WARP_ENDPOINT=' + __import__('shlex').quote(value) + '; validate_warp_endpoint', ok=False)
+        self.bash("prepare_warp_reserved '256,0,0'", ok=False)
+
+    def test_warp_routing_matrix_and_client_secret_isolation(self):
+        fake = self.root / 'xray'
+        fake.write_text('#!/bin/bash\nexit 0\n')
+        fake.chmod(0o700)
+        for mode in ('', 'IPv4', 'IPv6', 'IPv4v6', 'IPv6v4'):
+            for routing in ('empty', 'domains', 'all'):
+                with self.subTest(mode=mode, routing=routing):
+                    settings = 'WARP_MODE=all' if routing == 'all' else 'WARP_MODE=domains'
+                    if routing == 'domains': settings += '; prepare_warp_domains "example.com,full:api.example.net"'
+                    self.bash(self.credentials() + self.warp_credentials() + f'''
+parse_arguments --outbound '{mode}' --no-optimize-network --yes
+select_network_preferences
+{settings}
+verify_warp_connection() {{ echo WARP_CHECKED >>"$LOG"; }}
+write_xray_config
+write_client_configs
+''')
+                    server = json.loads((self.root / 'config/config.json').read_text())
+                    warp = next(out for out in server['outbounds'] if out.get('tag') == 'warp')
+                    self.assertEqual(warp['protocol'], 'wireguard')
+                    self.assertTrue(warp['settings']['noKernelTun'])
+                    self.assertEqual(warp['settings']['reserved'], [12, 34, 255])
+                    self.assertEqual(warp['settings']['address'], ['172.16.0.2/32', '2606:4700:110:8000::1234/128'])
+                    self.assertEqual(server['outbounds'][0]['protocol'], 'freedom')
+                    rules = server.get('routing', {}).get('rules', [])
+                    if mode in ('IPv4', 'IPv6'):
+                        self.assertEqual(rules.pop(0)['outboundTag'], 'block-other-family')
+                    if routing == 'empty': self.assertEqual(rules, [])
+                    elif routing == 'all': self.assertEqual(rules, [{'type': 'field', 'network': 'tcp,udp', 'outboundTag': 'warp'}])
+                    else: self.assertEqual(rules[0]['domain'], ['domain:example.com', 'full:api.example.net'])
+                    for inbound in server['inbounds']:
+                        self.assertEqual('sniffing' in inbound, routing == 'domains')
+                    bundle = (self.root / 'home/client_config').read_text()
+                    self.assertNotIn(warp['settings']['secretKey'], bundle)
+                    operations = (self.root / 'operations').read_text()
+                    self.assertLess(operations.rindex('WARP_CHECKED'), operations.rindex('systemctl stop xray'))
+
+    def test_warp_actual_check_requires_on_and_stops_before_replacement(self):
+        fake = self.root / 'xray'
+        fake.write_text('#!/bin/bash\nif [[ "$2" == -test ]]; then exit 0; fi\nexec sleep 10\n')
+        fake.chmod(0o700)
+        body = self.credentials() + self.warp_credentials() + r'''
+TEMP_WARP_DIR=$(mktemp -d /tmp/xray-warp-test.XXXXXX)
+sleep() { command sleep 0.02; }
+ss() { :; }
+curl() { echo "$*" >>"$LOG"; printf 'warp=%s\n' "$TRACE_STATE"; }
+write_xray_config
+'''
+        self.bash('TRACE_STATE=off\n' + body, ok=False)
+        operations = (self.root / 'operations').read_text()
+        self.assertNotIn('systemctl stop', operations)
+        self.assertFalse((self.root / 'config/config.json').exists())
+        for state in ('on', 'plus'):
+            p = self.bash(f'TRACE_STATE={state}\n' + body + '; [[ $WARP_VERIFIED == true ]]')
+            self.assertIn(f'warp={state}', p.stdout)
+        self.assertIn('--proxy socks5h://127.0.0.1:', (self.root / 'operations').read_text())
+
+    def test_wgcf_register_reuse_and_generate_failures(self):
+        key = base64.b64encode(bytes(range(32))).decode()
+        profile = f'[Interface]\nPrivateKey = {key}\nAddress = 172.16.0.2/32, 2606:4700::123/128\n[Peer]\nPublicKey = {key}\nEndpoint = engage.cloudflareclient.com:2408\n'
+        (self.root / 'profile-template').write_text(profile)
+        mock = self.root / 'mock-wgcf'
+        mock.write_text('''#!/bin/bash
+echo "$3" >>"$FIXTURE_ROOT/wgcf-calls"
+if [[ "$3" == register ]]; then
+  [[ "$MOCK_STAGE" != register-fail ]] || exit 1
+  echo fixture-account >"$2"
+elif [[ "$3" == generate ]]; then
+  [[ "$MOCK_STAGE" != generate-fail ]] || exit 1
+  cp "$FIXTURE_ROOT/profile-template" "$5"
+fi
+''')
+        mock.chmod(0o700)
+        body = r'''
+ENABLE_WARP=true
+export MOCK_STAGE=ok
+timeout() { shift; "$@"; }
+download_wgcf() { cp "$FIXTURE_ROOT/mock-wgcf" "$TEMP_WARP_DIR/wgcf"; }
+prepare_warp_account
+[[ -n "$WARP_ADDRESSES_JSON" ]]
+'''
+        self.bash(body)
+        account = self.root / 'warp-state/wgcf-account.toml'
+        original = account.read_text()
+        self.bash(body)
+        calls = (self.root / 'wgcf-calls').read_text().splitlines()
+        self.assertEqual(calls, ['register', 'generate', 'generate'])
+        self.assertEqual(account.stat().st_mode & 0o777, 0o600)
+        self.bash(body.replace('MOCK_STAGE=ok', 'MOCK_STAGE=generate-fail'), ok=False)
+        self.assertEqual(account.read_text(), original)
+        account.unlink()
+        self.bash(body.replace('MOCK_STAGE=ok', 'MOCK_STAGE=register-fail'), ok=False)
+        self.assertFalse(account.exists())
+
+    def test_warp_default_off_interaction(self):
+        for answer in (b'\n', b'n\n', b'N\n'):
+            master, slave = pty.openpty()
+            env = dict(os.environ, FIXTURE_ROOT=str(self.root))
+            try:
+                proc = subprocess.Popen(['bash', '-c', 'source "$FIXTURE_ROOT/install_xray.sh"; select_warp_preferences; [[ $ENABLE_WARP == false ]]; echo DISABLED_OK'], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+                os.close(slave); slave = None
+                os.write(master, answer)
+                stdout, stderr = proc.communicate(timeout=10)
+                self.assertEqual(proc.returncode, 0, stdout.decode() + stderr.decode())
+                self.assertIn(b'DISABLED_OK', stdout)
+            finally:
+                os.close(master)
+                if slave is not None: os.close(slave)
+        self.bash('ASSUME_YES=true; select_warp_preferences; prepare_warp_account; [[ $ENABLE_WARP == false && -z "$TEMP_WARP_DIR" ]]')
 
 
 if __name__ == '__main__':

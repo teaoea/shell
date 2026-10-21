@@ -9,6 +9,8 @@ readonly NETWORK_OPTIMIZER_URL="https://raw.githubusercontent.com/teaoea/shell/r
 readonly XRAY_BIN="/usr/local/bin/xray"
 readonly XRAY_CONFIG_DIR="/usr/local/etc/xray"
 readonly XRAY_CONFIG_FILE="$XRAY_CONFIG_DIR/config.json"
+readonly WGCF_VERSION="2.3.1"
+readonly WARP_STATE_DIR="/var/lib/xray-warp"
 
 XRAY_PORT_SET=false
 [[ -z "${XRAY_PORT:-}" ]] || XRAY_PORT_SET=true
@@ -31,6 +33,17 @@ SS_PORT_SET=false
 SS_PASSWORD=""
 SS_LISTENER_STATUS="未检查"
 CLIENT_BUNDLE_FILE=""
+ENABLE_WARP=false
+WARP_MODE=domains
+WARP_DOMAINS_JSON=""
+WARP_SECRET_KEY=""
+WARP_PUBLIC_KEY=""
+WARP_ADDRESSES_JSON=""
+WARP_ENDPOINT=""
+WARP_RESERVED_JSON="0,0,0"
+WARP_VERIFIED=false
+TEMP_WARP_DIR=""
+WARP_TEST_PID=""
 
 UUID=""
 PRIVATE_KEY=""
@@ -62,6 +75,8 @@ cleanup() {
   trap - EXIT
   set +e
 
+  stop_warp_test
+
   if ((status != 0)) && [[ "$REPLACEMENT_PENDING" == true ]]; then
     if [[ -n "$CONFIG_BACKUP" && -f "$CONFIG_BACKUP" ]]; then
       cp -a -- "$CONFIG_BACKUP" "$XRAY_CONFIG_FILE"
@@ -88,6 +103,7 @@ cleanup() {
   [[ -z "$TEMP_INSTALLER" ]] || rm -f -- "$TEMP_INSTALLER"
   [[ -z "$TEMP_NETWORK_OPTIMIZER" ]] || rm -f -- "$TEMP_NETWORK_OPTIMIZER"
   [[ -z "$TEMP_CONFIG" ]] || rm -f -- "$TEMP_CONFIG"
+  [[ -z "$TEMP_WARP_DIR" ]] || rm -rf -- "$TEMP_WARP_DIR"
   return "$status"
 }
 
@@ -122,6 +138,8 @@ usage() {
 REALITY_SERVER_NAME（默认 www.apple.com）。
 确认安装后会更新软件源索引，并通过 apt-get、dnf 或 yum 安装必要工具。
 默认生成 Loon、圈 X、Surge、Mihomo 配置，按标记汇总到用户家目录的 client_config。
+交互安装可选 WARP WireGuard 出站，默认不启用；支持指定域名或全部代理流量。
+启用时通过 wgcf 注册或复用 WARP 账户，并验证实际 WARP 出口；--yes 模式不启用 WARP。
 脚本不安装或修改防火墙，请自行放行 REALITY TCP 和 Shadowsocks TCP/UDP 端口。
 EOF
 }
@@ -298,7 +316,7 @@ install_required_tools() {
 
   # 精简镜像可能由 curl-minimal 或 coreutils-single 提供这些命令。
   command -v curl >/dev/null 2>&1 || packages+=(curl)
-  for command_name in install mktemp cp date; do
+  for command_name in install mktemp cp date timeout; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
       packages+=(coreutils)
       break
@@ -362,6 +380,255 @@ select_xray_port() {
     SS_PORT=$((10#$SS_PORT))
     [[ "$SS_PORT" != "$XRAY_PORT" ]] || die "Shadowsocks 与 REALITY 必须使用不同端口"
   fi
+}
+
+valid_warp_domain() {
+  ((${#1} <= 253)) &&
+    [[ "$1" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
+}
+
+prepare_warp_domains() {
+  local input=${1//,/ } item domain prefix separator=""
+  local -a items=()
+  WARP_DOMAINS_JSON=""
+  read -r -a items <<<"$input"
+  for item in "${items[@]}"; do
+    prefix=domain
+    case "$item" in
+      domain:*) domain=${item#domain:} ;;
+      full:*) prefix=full; domain=${item#full:} ;;
+      \*.*) domain=${item#\*.} ;;
+      *) domain=$item ;;
+    esac
+    valid_warp_domain "$domain" || die "WARP 分流域名无效；请输入域名，不能包含网址路径或端口"
+    domain=$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]')
+    WARP_DOMAINS_JSON+="$separator\"$prefix:$domain\""
+    separator=,
+  done
+}
+
+valid_warp_ip() {
+  local address=$1 octet expanded group
+  local -a parts=()
+  if [[ "$address" == *:* ]]; then
+    [[ "$address" =~ ^[0-9A-Fa-f:]+$ && "$address" != *:::* ]] || return 1
+    if [[ "$address" == *::* ]]; then
+      expanded=${address/::/:}
+      [[ "$expanded" != *::* ]] || return 1
+      expanded=${expanded#:}; expanded=${expanded%:}
+      IFS=: read -r -a parts <<<"$expanded"
+      ((${#parts[@]} < 8)) || return 1
+    else
+      [[ "$address" != :* && "$address" != *: ]] || return 1
+      IFS=: read -r -a parts <<<"$address"
+      ((${#parts[@]} == 8)) || return 1
+    fi
+    for group in "${parts[@]}"; do
+      [[ "$group" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1
+    done
+  else
+    [[ "$address" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    IFS=. read -r -a parts <<<"$address"
+    for octet in "${parts[@]}"; do
+      ((10#$octet <= 255)) || return 1
+    done
+  fi
+}
+
+prepare_warp_addresses() {
+  local input=${1//,/ } item address prefix separator="" max_prefix
+  local -a items=()
+  WARP_ADDRESSES_JSON=""
+  read -r -a items <<<"$input"
+  ((${#items[@]} > 0)) || die "必须输入 WARP 分配的隧道地址"
+  for item in "${items[@]}"; do
+    address=${item%%/*}
+    valid_warp_ip "$address" || die "WARP 隧道 IP 地址无效"
+    if [[ "$item" == */* ]]; then
+      prefix=${item#*/}; max_prefix=32
+      [[ "$address" != *:* ]] || max_prefix=128
+      [[ "$prefix" =~ ^[0-9]{1,3}$ ]] && ((10#$prefix <= max_prefix)) ||
+        die "WARP 隧道地址的 CIDR 前缀长度无效"
+    fi
+    WARP_ADDRESSES_JSON+="$separator\"$item\""
+    separator=,
+  done
+}
+
+validate_warp_key() {
+  [[ "$1" =~ ^[A-Za-z0-9+/]{43}=$ ]] || die "WireGuard 密钥必须是 32 字节的 Base64 格式"
+}
+
+validate_warp_endpoint() {
+  local host port
+  if [[ "$WARP_ENDPOINT" =~ ^\[([0-9A-Fa-f:]+)\]:([0-9]{1,5})$ ]]; then
+    host=${BASH_REMATCH[1]}; port=${BASH_REMATCH[2]}
+    valid_warp_ip "$host" || die "WARP Endpoint 的 IPv6 地址无效"
+  elif [[ "$WARP_ENDPOINT" =~ ^([A-Za-z0-9.-]+):([0-9]{1,5})$ ]]; then
+    host=${BASH_REMATCH[1]}; port=${BASH_REMATCH[2]}
+    if [[ "$host" =~ ^[0-9.]+$ ]]; then
+      valid_warp_ip "$host" || die "WARP Endpoint 的 IPv4 地址无效"
+    else
+      valid_warp_domain "$host" || die "WARP Endpoint 的域名无效"
+    fi
+  else
+    die "WARP Endpoint 必须是 主机:端口 或 [IPv6]:端口"
+  fi
+  ((10#$port >= 1 && 10#$port <= 65535)) || die "WARP Endpoint 端口无效"
+}
+
+prepare_warp_reserved() {
+  local input=${1//,/ } byte separator=""
+  local -a bytes=()
+  WARP_RESERVED_JSON=""
+  read -r -a bytes <<<"${input:-0 0 0}"
+  ((${#bytes[@]} == 3)) || die "Reserved 必须是三个 0-255 的整数"
+  for byte in "${bytes[@]}"; do
+    [[ "$byte" =~ ^[0-9]{1,3}$ ]] && ((10#$byte <= 255)) || die "Reserved 字节必须在 0-255 之间"
+    WARP_RESERVED_JSON+="$separator$((10#$byte))"
+    separator=,
+  done
+}
+
+select_warp_preferences() {
+  local answer
+  [[ "$ASSUME_YES" != true ]] || return 0
+  [[ -t 0 ]] || die "WARP 设置需要交互终端"
+  printf 'WARP 可通过 wgcf 注册；启用即同意 Cloudflare 服务条款：https://www.cloudflare.com/application/terms/\n'
+  read -r -p "是否启用 WARP WireGuard 出站并注册或复用账户？(y/N): " answer
+  [[ "$answer" =~ ^[Yy]$ ]] || return 0
+  ENABLE_WARP=true
+  while true; do
+    printf '请选择 WARP 出站范围：\n  1) 指定域名（默认，域名列表为空）\n  2) 全部代理流量走 WARP\n'
+    read -r -p "输入 1 或 2（默认 1）: " answer
+    case "$answer" in
+      "" | 1) WARP_MODE=domains; break ;;
+      2) WARP_MODE=all; break ;;
+      *) printf '请输入 1 或 2。\n' ;;
+    esac
+  done
+  if [[ "$WARP_MODE" == domains ]]; then
+    read -r -p "哪些域名走 WARP？空格或逗号分隔；回车不添加: " answer
+    prepare_warp_domains "$answer"
+    [[ -n "$WARP_DOMAINS_JSON" ]] || printf '域名列表为空：仅添加 WARP 出站，不分配流量；以后可编辑 config.json 的 routing.rules。\n'
+  fi
+}
+
+download_wgcf() {
+  local architecture asset base_url expected actual
+  case "$(uname -m)" in
+    x86_64 | amd64) architecture=amd64 ;;
+    aarch64 | arm64) architecture=arm64 ;;
+    i?86) architecture=386 ;;
+    armv7l) architecture=armv7 ;;
+    armv6l) architecture=armv6 ;;
+    *) die "wgcf 自动注册暂不支持此 CPU 架构" ;;
+  esac
+  asset="wgcf_${WGCF_VERSION}_linux_$architecture"
+  base_url="https://github.com/ViRb3/wgcf/releases/download/v$WGCF_VERSION"
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 "$base_url/$asset" -o "$TEMP_WARP_DIR/wgcf"
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 30 "$base_url/checksums.txt" -o "$TEMP_WARP_DIR/checksums.txt"
+  expected=$(awk -v name="$asset" '$2 == name {print $1}' "$TEMP_WARP_DIR/checksums.txt")
+  actual=$(openssl dgst -sha256 "$TEMP_WARP_DIR/wgcf" | awk '{print $NF}')
+  [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" ]] || die "wgcf 下载文件的 SHA-256 校验失败"
+  chmod 700 "$TEMP_WARP_DIR/wgcf"
+}
+
+load_wgcf_profile() {
+  local profile=$1 key value section="" addresses="" peers=0
+  WARP_SECRET_KEY=""; WARP_PUBLIC_KEY=""; WARP_ENDPOINT=""
+  while IFS= read -r value || [[ -n "$value" ]]; do
+    value=${value%$'\r'}
+    # 只读 INI 字段，不 source / eval 外部配置。
+    case "$value" in
+      '[Interface]') section=interface; continue ;;
+      '[Peer]') section=peer; peers=$((peers + 1)); continue ;;
+      *'='*) ;;
+      *) continue ;;
+    esac
+    key=${value%%=*}; key=${key//[[:space:]]/}
+    value=${value#*=}; value=${value//[[:space:]]/}
+    case "$section:$key" in
+      interface:PrivateKey) WARP_SECRET_KEY=$value ;;
+      interface:Address) addresses+=" $value" ;;
+      peer:PublicKey) WARP_PUBLIC_KEY=$value ;;
+      peer:Endpoint) WARP_ENDPOINT=$value ;;
+    esac
+  done <"$profile"
+  ((peers == 1)) || die "wgcf 配置必须包含且仅包含一个 WireGuard Peer"
+  validate_warp_key "$WARP_SECRET_KEY"
+  validate_warp_key "$WARP_PUBLIC_KEY"
+  validate_warp_endpoint
+  prepare_warp_addresses "$addresses"
+  prepare_warp_reserved "0,0,0"
+}
+
+prepare_warp_account() {
+  local account="$WARP_STATE_DIR/wgcf-account.toml"
+  [[ "$ENABLE_WARP" == true ]] || return 0
+  command -v timeout >/dev/null 2>&1 || die "WARP 注册需要 coreutils 的 timeout 命令"
+  TEMP_WARP_DIR=$(mktemp -d /tmp/xray-warp.XXXXXX)
+  download_wgcf
+  [[ ! -L "$WARP_STATE_DIR" ]] || die "WARP 账户目录不能是符号链接"
+  install -d -m 700 -o root -g root "$WARP_STATE_DIR"
+  [[ ! -L "$account" ]] || die "WARP 账户文件不能是符号链接"
+  if [[ -e "$account" ]]; then
+    [[ -f "$account" && -s "$account" ]] || die "已有 WARP 账户文件无效，拒绝覆盖"
+    chmod 600 "$account"
+    printf '正在复用已有 wgcf 账户并刷新 WireGuard 参数...\n'
+  else
+    printf '正在通过 wgcf 注册 WARP 账户...\n'
+    if ! timeout 90 "$TEMP_WARP_DIR/wgcf" --config "$TEMP_WARP_DIR/wgcf-account.toml" register --accept-tos >"$TEMP_WARP_DIR/register.log" 2>&1; then
+      die "wgcf 注册失败或超时；请检查到 Cloudflare 注册 API 的连通性或限制，未启用 WARP"
+    fi
+    [[ -s "$TEMP_WARP_DIR/wgcf-account.toml" ]] || die "wgcf 未生成有效账户文件"
+    install -m 600 -o root -g root "$TEMP_WARP_DIR/wgcf-account.toml" "$account"
+  fi
+  if ! timeout 90 "$TEMP_WARP_DIR/wgcf" --config "$account" generate --profile "$TEMP_WARP_DIR/wgcf-profile.conf" >"$TEMP_WARP_DIR/generate.log" 2>&1; then
+    die "wgcf 生成 WireGuard 参数失败或超时；保留账户以便重试，未替换 Xray 配置"
+  fi
+  [[ -s "$TEMP_WARP_DIR/wgcf-profile.conf" ]] || die "wgcf 未生成 WireGuard 配置"
+  load_wgcf_profile "$TEMP_WARP_DIR/wgcf-profile.conf"
+}
+
+stop_warp_test() {
+  if [[ -n "$WARP_TEST_PID" ]]; then
+    kill "$WARP_TEST_PID" >/dev/null 2>&1 || true
+    wait "$WARP_TEST_PID" >/dev/null 2>&1 || true
+    WARP_TEST_PID=""
+  fi
+}
+
+verify_warp_connection() {
+  local warp_json=$1 port attempt trace=""
+  WARP_VERIFIED=false
+  [[ -n "$TEMP_WARP_DIR" ]] || die "WARP 临时工作目录不存在"
+  for attempt in {1..10}; do
+    port=$((20000 + 16#$(openssl rand -hex 2) % 40000))
+    if ! ss -H -ltn | awk -v port="$port" '$4 ~ (":" port "$") {found=1} END {exit !found}'; then
+      break
+    fi
+  done
+  cat >"$TEMP_WARP_DIR/test.json" <<EOF
+{"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":$port,"protocol":"socks","settings":{"auth":"noauth","udp":false}}],"outbounds":[$warp_json]}
+EOF
+  "$XRAY_BIN" run -test -config "$TEMP_WARP_DIR/test.json" >"$TEMP_WARP_DIR/test.log" 2>&1 ||
+    die "WARP WireGuard 配置未通过 Xray 校验"
+  "$XRAY_BIN" run -config "$TEMP_WARP_DIR/test.json" >>"$TEMP_WARP_DIR/test.log" 2>&1 &
+  WARP_TEST_PID=$!
+  printf '正在通过 Xray WireGuard 隧道检查 WARP 实际出口...\n'
+  for attempt in {1..3}; do
+    sleep 1
+    kill -0 "$WARP_TEST_PID" >/dev/null 2>&1 || break
+    if trace=$(curl -fsS --proxy "socks5h://127.0.0.1:$port" --noproxy "" --connect-timeout 8 --max-time 20 https://www.cloudflare.com/cdn-cgi/trace 2>"$TEMP_WARP_DIR/trace.log" || true) &&
+      printf '%s\n' "$trace" | tr -d '\r' | grep -Eq '^warp=(on|plus)$'; then
+      WARP_VERIFIED=true
+      break
+    fi
+  done
+  stop_warp_test
+  [[ "$WARP_VERIFIED" == true ]] || die "WARP 实际出口检查失败：未返回 warp=on/plus；请检查 UDP 出站、Cloudflare 注册状态或端点连通性，保留原 Xray 配置"
+  printf 'WARP 出口检查通过（%s）。\n' "$(printf '%s\n' "$trace" | grep '^warp=')"
 }
 
 select_reality_server_name() {
@@ -556,6 +823,7 @@ generate_credentials() {
 
 write_xray_config() {
   local tcp_fast_open_json="" shadowsocks_json="" outbound_json='"protocol": "freedom"' routing_json="" block_json="" dns_json=""
+  local routing_rules="" warp_json="" sniffing_json="" warp_rule=""
   install -d -m 750 -o root -g xray "$XRAY_CONFIG_DIR"
   TEMP_CONFIG=$(mktemp /tmp/xray-config.XXXXXX.json)
   [[ "$OPTIMIZE_NETWORK" != true ]] || tcp_fast_open_json=', "tcpFastOpen": true'
@@ -569,13 +837,32 @@ write_xray_config() {
       dns_json="\"dns\": {\"servers\": [\"localhost\"], \"queryStrategy\": \"$query_strategy\"},"
       outbound_json="\"protocol\": \"freedom\", \"streamSettings\": {\"sockopt\": {\"domainStrategy\": \"ForceIP\", \"happyEyeballs\": {\"tryDelayMs\": 250, \"prioritizeIPv6\": $PREFER_IPV6, \"interleave\": 1, \"maxConcurrentTry\": 4}}}"
       # domainStrategy 只约束域名解析；显式阻止另一地址族的 IP 字面量目标。
-      routing_json="\"routing\": {\"rules\": [{\"type\": \"field\", \"ip\": [\"$blocked_family\"], \"outboundTag\": \"block-other-family\"}]},"
+      routing_rules="{\"type\": \"field\", \"ip\": [\"$blocked_family\"], \"outboundTag\": \"block-other-family\"}"
       block_json=', {"tag": "block-other-family", "protocol": "blackhole"}'
       ;;
     ipv4v6 | ipv6v4)
       outbound_json="\"protocol\": \"freedom\", \"streamSettings\": {\"sockopt\": {\"domainStrategy\": \"UseIP\", \"happyEyeballs\": {\"tryDelayMs\": 250, \"prioritizeIPv6\": $PREFER_IPV6, \"interleave\": 1, \"maxConcurrentTry\": 4}}}"
       ;;
   esac
+  if [[ "$ENABLE_WARP" == true ]]; then
+    [[ -n "$WARP_ADDRESSES_JSON" ]] || die "WARP 缺少隧道地址"
+    validate_warp_key "$WARP_SECRET_KEY"
+    validate_warp_key "$WARP_PUBLIC_KEY"
+    validate_warp_endpoint
+    warp_json=", {\"tag\": \"warp\", \"protocol\": \"wireguard\", \"settings\": {\"secretKey\": \"$WARP_SECRET_KEY\", \"address\": [$WARP_ADDRESSES_JSON], \"peers\": [{\"publicKey\": \"$WARP_PUBLIC_KEY\", \"endpoint\": \"$WARP_ENDPOINT\", \"allowedIPs\": [\"0.0.0.0/0\", \"::/0\"], \"keepAlive\": 25}], \"reserved\": [$WARP_RESERVED_JSON], \"mtu\": 1280, \"noKernelTun\": true}}"
+    if [[ "$WARP_MODE" == all ]]; then
+      warp_rule='{"type": "field", "network": "tcp,udp", "outboundTag": "warp"}'
+    elif [[ -n "$WARP_DOMAINS_JSON" ]]; then
+      warp_rule="{\"type\": \"field\", \"domain\": [$WARP_DOMAINS_JSON], \"outboundTag\": \"warp\"}"
+      # 仅辅助域名路由，不把嗅探域名改写成实际连接目标。
+      sniffing_json='"sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic"], "routeOnly": true},'
+    fi
+    if [[ -n "$warp_rule" ]]; then
+      [[ -z "$routing_rules" ]] || routing_rules+=,
+      routing_rules+="$warp_rule"
+    fi
+  fi
+  [[ -z "$routing_rules" ]] || routing_json="\"routing\": {\"domainStrategy\": \"AsIs\", \"rules\": [$routing_rules]},"
   if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
     shadowsocks_json=$(cat <<EOF
   ,{
@@ -583,6 +870,7 @@ write_xray_config() {
     "listen": "$LISTEN_ADDRESS",
     "port": $SS_PORT,
     "protocol": "shadowsocks",
+    $sniffing_json
     "settings": {
       "method": "aes-128-gcm",
       "password": "$SS_PASSWORD",
@@ -602,6 +890,7 @@ EOF
     "listen": "$LISTEN_ADDRESS",
     "port": $XRAY_PORT,
     "protocol": "vless",
+    $sniffing_json
     "settings": {
       "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
       "decryption": "none"
@@ -620,11 +909,13 @@ EOF
     }
   }$shadowsocks_json],
   $routing_json
-  "outbounds": [{$outbound_json}$block_json]
+  "outbounds": [{$outbound_json}$block_json$warp_json]
 }
 EOF
 
   "$XRAY_BIN" run -test -config "$TEMP_CONFIG"
+  # 在停止/替换原服务前，使用仅有 WARP 出站的临时实例做端到端检测。
+  [[ "$ENABLE_WARP" != true ]] || verify_warp_connection "${warp_json#, }"
   systemctl stop xray
   install -m 640 -o root -g xray "$TEMP_CONFIG" "$XRAY_CONFIG_FILE"
   systemctl enable xray >/dev/null
@@ -769,6 +1060,16 @@ print_client_configs() {
   fi
   printf 'REALITY 伪装域名: %s。\n' "$REALITY_SERVER_NAME"
   printf 'Xray 出口 IP 模式: %s。\n' "$mode_label"
+  if [[ "$ENABLE_WARP" != true ]]; then
+    printf 'WARP WireGuard 出站: 未启用。\n'
+  elif [[ "$WARP_MODE" == all ]]; then
+    printf 'WARP WireGuard 出站: 全部代理流量（仍遵循已选 IP 模式的目标地址族拦截规则）。\n'
+  elif [[ -n "$WARP_DOMAINS_JSON" ]]; then
+    printf 'WARP WireGuard 出站: 指定域名；其余流量直连。\n'
+  else
+    printf 'WARP WireGuard 出站: 已配置，域名列表为空，暂不分配流量。\n'
+  fi
+  [[ "$ENABLE_WARP" != true ]] || printf 'WARP 实际出口检查: 已通过；wgcf 账户保存在 %s，凭据不写入 client_config。\n' "$WARP_STATE_DIR"
   if [[ "$OPTIMIZE_NETWORK" == true ]]; then
     printf 'Xray-REALITY 系统网络优化: 已应用。\n'
   else
@@ -794,7 +1095,9 @@ main() {
   apply_network_optimization
   find_loon_address
   select_xray_port
+  select_warp_preferences
   select_reality_server_name
+  prepare_warp_account
   backup_existing_config
   install_xray
   generate_credentials
