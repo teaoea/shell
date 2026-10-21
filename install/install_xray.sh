@@ -530,7 +530,7 @@ install_xray() {
   printf '正在安装 Xray...\n'
   TEMP_INSTALLER=$(mktemp /tmp/xray-install.XXXXXX.sh)
   curl -fL --retry 3 "$XRAY_INSTALL_URL" -o "$TEMP_INSTALLER"
-  bash "$TEMP_INSTALLER" install -u root
+  bash "$TEMP_INSTALLER" install
   [[ -x "$XRAY_BIN" ]] || die "安装失败：未找到 $XRAY_BIN"
 }
 
@@ -556,7 +556,7 @@ generate_credentials() {
 
 write_xray_config() {
   local tcp_fast_open_json="" shadowsocks_json="" outbound_json='"protocol": "freedom"' routing_json="" block_json="" dns_json=""
-  mkdir -p "$XRAY_CONFIG_DIR"
+  install -d -m 750 -o root -g xray "$XRAY_CONFIG_DIR"
   TEMP_CONFIG=$(mktemp /tmp/xray-config.XXXXXX.json)
   [[ "$OPTIMIZE_NETWORK" != true ]] || tcp_fast_open_json=', "tcpFastOpen": true'
   case "$NETWORK_MODE" in
@@ -626,7 +626,7 @@ EOF
 
   "$XRAY_BIN" run -test -config "$TEMP_CONFIG"
   systemctl stop xray
-  install -m 600 -o root -g root "$TEMP_CONFIG" "$XRAY_CONFIG_FILE"
+  install -m 640 -o root -g xray "$TEMP_CONFIG" "$XRAY_CONFIG_FILE"
   systemctl enable xray >/dev/null
   if ! systemctl restart xray || ! systemctl is-active --quiet xray; then
     journalctl -u xray --no-pager -n 30 >&2 || true
