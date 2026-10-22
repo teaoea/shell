@@ -596,11 +596,26 @@ prepare_warp_account() {
   fetch_warp_reserved "$account"
 }
 
+wgcf_account_value() {
+  local account=$1 field=$2
+  awk -v field="$field" '
+    $0 ~ "^[[:space:]]*" field "[[:space:]]*=" {
+      sub(/^[^=]*=[[:space:]]*/, "")
+      quote = substr($0, 1, 1)
+      if (quote == "\"" || quote == "\047") {
+        value = substr($0, 2)
+        end = index(value, quote)
+        if (end > 0) print substr(value, 1, end - 1)
+      }
+      exit
+    }' "$account"
+}
+
 fetch_warp_reserved() {
   local account=$1 device token client_id bytes
   # wgcf 2.3.1 的 profile 未导出 client_id；从同一注册设备读取，禁止默认猜测为零。
-  device=$(awk -F'"' '/^[[:space:]]*device_id[[:space:]]*=/ {print $2; exit}' "$account")
-  token=$(awk -F'"' '/^[[:space:]]*access_token[[:space:]]*=/ {print $2; exit}' "$account")
+  device=$(wgcf_account_value "$account" device_id)
+  token=$(wgcf_account_value "$account" access_token)
   [[ "$device" =~ ^[A-Za-z0-9-]+$ && "$token" =~ ^[A-Za-z0-9._+/=-]+$ ]] || die "wgcf 账户缺少有效设备 ID 或访问令牌"
   # 令牌写入 root 私有的 curl 配置，不出现在进程参数或终端输出中。
   printf 'header = "Authorization: Bearer %s"\n' "$token" >"$TEMP_WARP_DIR/api-auth.conf"

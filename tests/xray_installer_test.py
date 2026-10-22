@@ -500,6 +500,14 @@ curl() { echo '{}' >"$TEMP_WARP_DIR/device.json"; }
 fetch_warp_reserved "$FIXTURE_ROOT/account.toml"
 ''', ok=False)
 
+    def test_wgcf_account_accepts_single_and_double_quoted_toml(self):
+        for quote in ("'", '"'):
+            (self.root / 'account.toml').write_text(f'device_id = {quote}fixture-device{quote}\naccess_token = {quote}private-test-token{quote}\n')
+            self.bash(r'''
+[[ "$(wgcf_account_value "$FIXTURE_ROOT/account.toml" device_id)" == fixture-device ]]
+[[ "$(wgcf_account_value "$FIXTURE_ROOT/account.toml" access_token)" == private-test-token ]]
+''')
+
     def test_warp_default_off_interaction(self):
         for answer in (b'\n', b'n\n', b'N\n'):
             master, slave = pty.openpty()
