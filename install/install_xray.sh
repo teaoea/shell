@@ -45,6 +45,7 @@ WARP_VERIFIED=false
 TEMP_WARP_DIR=""
 WARP_TEST_PID=""
 WARP_ENDPOINT_CANDIDATES=()
+TEMP_WARP_TEST_DIR=""
 
 UUID=""
 PRIVATE_KEY=""
@@ -105,6 +106,7 @@ cleanup() {
   [[ -z "$TEMP_NETWORK_OPTIMIZER" ]] || rm -f -- "$TEMP_NETWORK_OPTIMIZER"
   [[ -z "$TEMP_CONFIG" ]] || rm -f -- "$TEMP_CONFIG"
   [[ -z "$TEMP_WARP_DIR" ]] || rm -rf -- "$TEMP_WARP_DIR"
+  [[ -z "$TEMP_WARP_TEST_DIR" ]] || rm -rf -- "$TEMP_WARP_TEST_DIR"
   return "$status"
 }
 
@@ -317,7 +319,8 @@ install_required_tools() {
 
   # 精简镜像可能由 curl-minimal 或 coreutils-single 提供这些命令。
   command -v curl >/dev/null 2>&1 || packages+=(curl)
-  for command_name in install mktemp cp date timeout; do
+  command -v setpriv >/dev/null 2>&1 || packages+=(util-linux)
+  for command_name in install mktemp cp date timeout od; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
       packages+=(coreutils)
       break
@@ -590,6 +593,29 @@ prepare_warp_account() {
   fi
   [[ -s "$TEMP_WARP_DIR/wgcf-profile.conf" ]] || die "wgcf 未生成 WireGuard 配置"
   load_wgcf_profile "$TEMP_WARP_DIR/wgcf-profile.conf"
+  fetch_warp_reserved "$account"
+}
+
+fetch_warp_reserved() {
+  local account=$1 device token client_id bytes
+  # wgcf 2.3.1 的 profile 未导出 client_id；从同一注册设备读取，禁止默认猜测为零。
+  device=$(awk -F'"' '/^[[:space:]]*device_id[[:space:]]*=/ {print $2; exit}' "$account")
+  token=$(awk -F'"' '/^[[:space:]]*access_token[[:space:]]*=/ {print $2; exit}' "$account")
+  [[ "$device" =~ ^[A-Za-z0-9-]+$ && "$token" =~ ^[A-Za-z0-9._+/=-]+$ ]] || die "wgcf 账户缺少有效设备 ID 或访问令牌"
+  # 令牌写入 root 私有的 curl 配置，不出现在进程参数或终端输出中。
+  printf 'header = "Authorization: Bearer %s"\n' "$token" >"$TEMP_WARP_DIR/api-auth.conf"
+  curl -fsS --retry 2 --connect-timeout 10 --max-time 30 --tlsv1.2 --tls-max 1.2 \
+    --config "$TEMP_WARP_DIR/api-auth.conf" \
+    -H 'User-Agent: 1.1.1.1/6.38.9-5641 (Android 16.0.0)' \
+    -H 'CF-Client-Version: a-6.38.9-5641' \
+    "https://api.cloudflareclient.com/v0a5641/reg/$device" -o "$TEMP_WARP_DIR/device.json" ||
+    die "无法读取 WARP 注册设备参数，未启用 WARP"
+  client_id=$(grep -Eo '"client_id"[[:space:]]*:[[:space:]]*"[A-Za-z0-9+/=]+"' "$TEMP_WARP_DIR/device.json" | head -n 1 | awk -F'"' '{print $4}') ||
+    die "Cloudflare 未返回 WireGuard client_id，未启用 WARP"
+  [[ "$client_id" =~ ^[A-Za-z0-9+/]{4}$ ]] || die "WARP client_id 不是三个字节的 Base64"
+  bytes=$(printf '%s' "$client_id" | openssl base64 -d -A | od -An -tu1)
+  [[ -n "$bytes" ]] || die "无法解码 WARP Reserved 参数"
+  prepare_warp_reserved "$bytes"
 }
 
 stop_warp_test() {
@@ -625,7 +651,7 @@ prepare_warp_endpoints() {
 }
 
 probe_warp_connection() {
-  local warp_json=$1 port attempt trace=""
+  local warp_json=$1 port attempt trace="" service_user service_group
   WARP_VERIFIED=false
   [[ -n "$TEMP_WARP_DIR" ]] || die "WARP 临时工作目录不存在"
   for attempt in {1..10}; do
@@ -634,11 +660,23 @@ probe_warp_connection() {
       break
     fi
   done
-  cat >"$TEMP_WARP_DIR/test.json" <<EOF
+  service_user=$(systemctl show xray --property=User --value)
+  service_user=${service_user:-root}
+  service_group=$(id -gn "$service_user")
+  command -v setpriv >/dev/null 2>&1 || die "WARP 检测需要 util-linux 的 setpriv 命令"
+  if [[ -z "$TEMP_WARP_TEST_DIR" ]]; then
+    TEMP_WARP_TEST_DIR=$(mktemp -d /tmp/xray-warp-check.XXXXXX)
+    chown root:"$service_group" "$TEMP_WARP_TEST_DIR"
+    chmod 750 "$TEMP_WARP_TEST_DIR"
+  fi
+  cat >"$TEMP_WARP_TEST_DIR/test.json" <<EOF
 {"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":$port,"protocol":"socks","settings":{"auth":"noauth","udp":false}}],"outbounds":[$warp_json]}
 EOF
-  "$XRAY_BIN" run -test -config "$TEMP_WARP_DIR/test.json" >"$TEMP_WARP_DIR/test.log" 2>&1 || return 1
-  "$XRAY_BIN" run -config "$TEMP_WARP_DIR/test.json" >>"$TEMP_WARP_DIR/test.log" 2>&1 &
+  chown root:"$service_group" "$TEMP_WARP_TEST_DIR/test.json"
+  chmod 640 "$TEMP_WARP_TEST_DIR/test.json"
+  setpriv --reuid "$service_user" --regid "$service_group" --init-groups "$XRAY_BIN" run -test -config "$TEMP_WARP_TEST_DIR/test.json" >"$TEMP_WARP_DIR/test.log" 2>&1 || return 1
+  # setpriv 直接 exec Xray，记录的 PID 即检测实例本身。
+  setpriv --reuid "$service_user" --regid "$service_group" --init-groups "$XRAY_BIN" run -config "$TEMP_WARP_TEST_DIR/test.json" >>"$TEMP_WARP_DIR/test.log" 2>&1 &
   WARP_TEST_PID=$!
   printf '正在通过 Xray WireGuard 隧道检查 WARP 实际出口（%s）...\n' "$WARP_ENDPOINT"
   for attempt in {1..3}; do
@@ -890,6 +928,10 @@ write_xray_config() {
     validate_warp_endpoint
     warp_json=", {\"tag\": \"warp\", \"protocol\": \"wireguard\", \"settings\": {\"secretKey\": \"$WARP_SECRET_KEY\", \"address\": [$WARP_ADDRESSES_JSON], \"peers\": [{\"publicKey\": \"$WARP_PUBLIC_KEY\", \"endpoint\": \"$WARP_ENDPOINT\", \"allowedIPs\": [\"0.0.0.0/0\", \"::/0\"], \"keepAlive\": 25}], \"reserved\": [$WARP_RESERVED_JSON], \"mtu\": 1280, \"noKernelTun\": true}}"
     original_endpoint=$WARP_ENDPOINT
+    # 同一 WireGuard 密钥不能由旧服务和临时检测实例同时使用；失败由 cleanup 恢复。
+    if [[ -f "$XRAY_CONFIG_FILE" ]] && grep -Eq '"protocol"[[:space:]]*:[[:space:]]*"wireguard"' "$XRAY_CONFIG_FILE"; then
+      systemctl stop xray
+    fi
     verify_warp_connection "${warp_json#, }"
     needle="\"endpoint\": \"$original_endpoint\""
     replacement="\"endpoint\": \"$WARP_ENDPOINT\""

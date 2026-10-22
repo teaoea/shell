@@ -48,6 +48,7 @@ apt-get() { echo "apt-get $*" >>"$LOG"; }
 dnf() { echo "dnf $*" >>"$LOG"; }
 yum() { echo "yum $*" >>"$LOG"; }
 systemctl() { echo "systemctl $*" >>"$LOG"; return 0; }
+setpriv() { shift 5; "$@"; }
 getent() { printf 'fixture:x:1000:1000::%s:/bin/bash\n' "$FIXTURE_ROOT/home"; }
 id() {
   if [[ $# == 2 ]]; then command id "$1"; else command id "$@"; fi
@@ -425,6 +426,21 @@ write_xray_config
         self.assertEqual(warp['settings']['peers'][0]['endpoint'], '[2606:4700:d0::1]:2408')
         self.assertEqual((self.root / 'endpoints').read_text().splitlines(), ['162.159.192.1:2408', '[2606:4700:d0::1]:2408'])
 
+    def test_existing_wireguard_service_is_restored_after_failed_probe(self):
+        (self.root / 'config').mkdir()
+        original = '{"outbounds":[{"tag":"old","protocol":"wireguard"}]}\n'
+        config = self.root / 'config/config.json'
+        config.write_text(original)
+        self.bash(self.credentials() + self.warp_credentials() + r'''
+backup_existing_config
+verify_warp_connection() { die 'fixture WARP unavailable'; }
+write_xray_config
+''', ok=False)
+        self.assertEqual(config.read_text(), original)
+        operations = (self.root / 'operations').read_text()
+        self.assertIn('systemctl stop xray', operations)
+        self.assertIn('systemctl restart xray', operations)
+
     def test_wgcf_register_reuse_and_generate_failures(self):
         key = base64.b64encode(bytes(range(32))).decode()
         profile = f'[Interface]\nPrivateKey = {key}\nAddress = 172.16.0.2/32, 2606:4700::123/128\n[Peer]\nPublicKey = {key}\nEndpoint = engage.cloudflareclient.com:2408\n'
@@ -446,6 +462,7 @@ ENABLE_WARP=true
 export MOCK_STAGE=ok
 timeout() { shift; "$@"; }
 download_wgcf() { cp "$FIXTURE_ROOT/mock-wgcf" "$TEMP_WARP_DIR/wgcf"; }
+fetch_warp_reserved() { prepare_warp_reserved '1,2,3'; }
 prepare_warp_account
 [[ -n "$WARP_ADDRESSES_JSON" ]]
 '''
@@ -461,6 +478,27 @@ prepare_warp_account
         account.unlink()
         self.bash(body.replace('MOCK_STAGE=ok', 'MOCK_STAGE=register-fail'), ok=False)
         self.assertFalse(account.exists())
+
+    def test_registered_reserved_bytes_are_decoded_without_exposing_token(self):
+        account = self.root / 'account.toml'
+        account.write_text('device_id = "fixture-device"\naccess_token = "private-test-token"\n')
+        p = self.bash(r'''
+TEMP_WARP_DIR=$(mktemp -d /tmp/xray-warp-reserved.XXXXXX)
+curl() {
+  printf '%s\n' "$*" >"$LOG"
+  printf '{"config":{"client_id":"AQID"}}' >"$TEMP_WARP_DIR/device.json"
+}
+fetch_warp_reserved "$FIXTURE_ROOT/account.toml"
+[[ "$WARP_RESERVED_JSON" == '1,2,3' ]]
+[[ "$(stat -f %Lp "$TEMP_WARP_DIR/api-auth.conf" 2>/dev/null || stat -c %a "$TEMP_WARP_DIR/api-auth.conf")" == 600 ]]
+''')
+        self.assertNotIn('private-test-token', (self.root / 'operations').read_text())
+        self.assertNotIn('private-test-token', p.stdout + p.stderr)
+        self.bash(r'''
+TEMP_WARP_DIR=$(mktemp -d /tmp/xray-warp-reserved.XXXXXX)
+curl() { echo '{}' >"$TEMP_WARP_DIR/device.json"; }
+fetch_warp_reserved "$FIXTURE_ROOT/account.toml"
+''', ok=False)
 
     def test_warp_default_off_interaction(self):
         for answer in (b'\n', b'n\n', b'N\n'):

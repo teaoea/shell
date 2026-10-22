@@ -24,8 +24,8 @@ bash -c 'set -e; xray_script=$(curl -fsSL --retry 3 https://raw.githubuserconten
 2. 更新软件源索引，安装 CA 证书、OpenSSL、`curl`、解压、网络查询和 DNS 文件属性等必要工具。只更新索引和依赖包，不执行整机升级。
 3. 选择优化时下载本仓库的 [`optimize/networt_optimization.sh`](../optimize/networt_optimization.sh)，按所选地址族应用 REALITY TCP 参数、地址优先级和可安全修改的 Cloudflare DNS。DNS 无法写入时保留原配置并继续其他优化；后续安装失败会尝试回滚本次优化。
 4. 输入 REALITY 监听端口（默认 **TCP 443**），以及 Surge 的 Shadowsocks 兼容端口（默认 **TCP/UDP 8443**）。两者必须不同；输入 REALITY 8443 时，未指定的兼容端口默认改为 8444。
-5. 询问是否启用 WARP WireGuard 出站（默认不启用）。启用后选择指定域名或全部代理流量，并通过 `wgcf` 注册或复用账户。
-6. 最后输入 REALITY 伪装域名（默认 `www.apple.com`），随后获取 WARP 参数、安装 Xray、生成凭据并校验配置。启用 WARP 时，先做真实出口检测，通过后才替换服务端配置并启动服务。
+5. 询问是否启用 WARP WireGuard 出站（默认不启用）。启用后选择指定域名或全部代理流量。
+6. 最后输入 REALITY 伪装域名（默认 `www.apple.com`），随后通过 `wgcf` 注册或复用账户、获取 WARP 参数、安装 Xray、生成凭据并校验配置。启用 WARP 时，先做真实出口检测，通过后才替换服务端配置并启动服务。
 7. 检查开机启动、服务运行和两个入口的监听状态，在用户目录的 `client_config` 中写入所有客户端配置并显示输出。
 
 出口模式没有默认值，直接回车或非交互时不传模式参数，会保持留空，生成的出站只有 `protocol: freedom`，不写 `domainStrategy` 或 Happy Eyeballs 策略。四种模式如下：
@@ -63,11 +63,12 @@ bash -c 'set -e; xray_script=$(curl -fsSL --retry 3 https://raw.githubuserconten
 
 - 从 wgcf 官方发布下载固定版本 **2.3.1**，核对发布的 SHA-256 校验值后执行；支持 x86_64、ARM64、x86、ARMv6/ARMv7。二进制仅临时使用。
 - 账户保存在 `/var/lib/xray-warp/wgcf-account.toml`，目录权限 `700`、账户文件权限 `600`；重跑复用账户，不重复注册。生成的 WireGuard profile 只作临时转换，结束时删除。
+- `wgcf-profile.conf` 没有导出 WireGuard Reserved 字节，因此用同一账户的设备 API 读取 `client_id` 并解码为实际三个字节；缺失或读取失败会停止，不固定写成 `0,0,0`。访问令牌存放于 root 私有临时目录，不放入进程参数。
 - 将注册所得的私钥、隧道地址、对端公钥和 Endpoint 写入服务端 `config.json`，添加 `warp` 出站以及所选域名/全流量规则；不把 WARP 私钥写入 `client_config`。
 - 设置 `noKernelTun: true`，由 Xray 在进程内处理隧道；不安装或启动 `warp-cli`、`wg-quick`，不创建系统 WireGuard 接口，不修改系统默认路由。服务端 JSON 以 `root:xray`、`640` 保存，供 Xray 服务读取。
 - 指定非空域名列表时，对代理入口启用 HTTP/TLS/QUIC 嗅探和 `routeOnly: true`，辅助识别域名。没有可识别域名的纯 IP、加密 ClientHello 等请求可能无法匹配域名规则。
 
-**实际可用性检查：**在停止或替换现有 Xray 配置前，启动一个仅监听 `127.0.0.1`、仅含 WARP 出站的临时 Xray SOCKS 实例。把 Endpoint 域名解析为 IPv4/IPv6 候选地址，按所选网络优先级依次检测；通过该代理请求 Cloudflare trace，必须返回 `warp=on` 或 `warp=plus` 才继续。正式 JSON 固定使用测通的 Endpoint IP，避免正式服务重新解析到另一个不通的地址族；不会退回直连后将检测算作成功。注册、参数生成、配置校验或出口检测失败都会停止，临时实例会退出。已注册账户保留供重试；旧服务端配置沿用脚本原有备份与失败恢复流程。
+**实际可用性检查：**在替换现有 Xray 配置前，按正式服务的用户身份启动一个仅监听 `127.0.0.1`、仅含 WARP 出站的临时 Xray SOCKS 实例。把 Endpoint 域名解析为 IPv4/IPv6 候选地址，按所选网络优先级依次检测；通过该代理请求 Cloudflare trace，必须返回 `warp=on` 或 `warp=plus` 才继续。正式 JSON 固定使用测通的 Endpoint IP，避免正式服务重新解析到另一个不通的地址族；不会退回直连后将检测算作成功。注册、参数生成、配置校验或出口检测失败都会停止，临时实例会退出。重跑已有 WireGuard 配置时，检测前暂时停止旧服务，避免同一账户的两个实例互相干扰；失败时恢复原配置与原运行状态。已注册账户保留供重试；旧服务端配置沿用脚本原有备份与失败恢复流程。
 
 “全部”指通过 Xray 代理入口的流量，不接管 VPS 自身的 SSH、软件更新等系统流量。已选择的仅 IPv4/仅 IPv6 目标地址族拦截规则仍优先执行，直接连接 WARP Endpoint 的地址族由 VPS 网络决定；原有 Freedom 出口模式不等于 WireGuard 隧道内的地址族策略。需要 VPS 可达 Cloudflare 注册 API、下载站和 WireGuard UDP Endpoint。真实检测反映安装时的状态，后续仍需保持账户与网络可用。
 
