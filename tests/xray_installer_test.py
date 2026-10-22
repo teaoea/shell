@@ -114,6 +114,23 @@ install() {
             self.bash('parse_arguments --ipv4 --no-optimize-network --yes ' + flags + '; select_xray_port', ok=False)
         self.bash('parse_arguments --client-address=2001:db8::1; [[ $LOON_SERVER_IP == 2001:db8::1 ]]')
 
+    def test_explicit_xray_version_is_validated_and_forwarded(self):
+        fake = self.root / 'xray'
+        fake.write_text('#!/bin/bash\nexit 0\n')
+        fake.chmod(0o700)
+        for version in ('26.7.28', 'v26.7.28', 'latest'):
+            self.bash(f'parse_arguments --xray-version {version}; '
+                      r'''curl() { :; }; bash() { printf '%s\n' "$*" >"$LOG"; }; install_xray''')
+            args = (self.root / 'operations').read_text()
+            if version == 'latest':
+                self.assertNotIn('--version', args)
+            else:
+                self.assertIn('install --version v26.7.28 --force', args)
+        self.bash('parse_arguments --xray-version=26.7.28; [[ $XRAY_VERSION == 26.7.28 ]]')
+        for args in (('--xray-version',), ('--xray-version=',), ('--xray-version', '--yes'),
+                     ('--xray-version=26.7.28/evil',), ('--xray-version=latest;id',)):
+            self.bash('parse_arguments ' + ' '.join(map(shlex.quote, args)), ok=False)
+
     def test_ipv4_does_not_offer_ipv6_prefix(self):
         p = self.bash('MODE=ipv4; IPV6_SUPPORTED=true; IPV6_HAS_ADDRESS=false; prepare_ipv6_address', 'networt_optimization.sh')
         self.assertNotIn('IPv6', p.stdout + p.stderr)
@@ -366,6 +383,11 @@ write_client_configs
                     warp = next(out for out in server['outbounds'] if out.get('tag') == 'warp')
                     self.assertEqual(warp['protocol'], 'wireguard')
                     self.assertTrue(warp['settings']['noKernelTun'])
+                    self.assertEqual(warp['settings']['domainStrategy'], {
+                        'IPv4': 'ForceIPv4', 'IPv6': 'ForceIPv6',
+                        'IPv4v6': 'ForceIPv4v6', 'IPv6v4': 'ForceIPv6v4',
+                        '': 'ForceIPv4v6',
+                    }[mode])
                     self.assertEqual(warp['settings']['reserved'], [12, 34, 255])
                     self.assertEqual(warp['settings']['address'], ['172.16.0.2/32', '2606:4700:110:8000::1234/128'])
                     self.assertEqual(server['outbounds'][0]['protocol'], 'freedom')

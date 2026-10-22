@@ -74,6 +74,8 @@ bash -c 'set -e; xray_script=$(curl -fsSL --retry 3 https://raw.githubuserconten
 
 “全部”指通过 Xray 代理入口的流量，不接管 VPS 自身的 SSH、软件更新等系统流量。已选择的仅 IPv4/仅 IPv6 目标地址族拦截规则仍优先执行，直接连接 WARP Endpoint 的地址族由 VPS 网络决定；原有 Freedom 出口模式不等于 WireGuard 隧道内的地址族策略。需要 VPS 可达 Cloudflare 注册 API、下载站和 WireGuard UDP Endpoint。真实检测反映安装时的状态，后续仍需保持账户与网络可用。
 
+WireGuard 出站显式设置自身的 `domainStrategy`：仅 IPv4/IPv6 分别使用 `ForceIPv4`/`ForceIPv6`，双栈优先模式使用 `ForceIPv4v6`/`ForceIPv6v4`；未选择出口模式时，Freedom 仍不写策略，WARP 的域名解析采用 `ForceIPv4v6`。这只控制隧道内域名解析的地址族选择；不会改变 IP 字面量目标，也不是 TCP 连接失败后的 Happy Eyeballs 回退。该设置避免旧版 WireGuard 实现随机选择一个本机未测通的地址族。
+
 ### 客户端配置
 
 所有配置保存到同一个无后缀文件 `client_config`，用以下标记区分；复制时不包含这些分段标记：
@@ -95,6 +97,12 @@ Surge 使用 Xray 内置的 Shadowsocks 入口，不额外部署 WireGuard。该
 
 重跑时会生成新的 UUID、密钥、Short ID 和 Shadowsocks 密码，替换服务端及 `client_config`；原有服务端配置和 `client_config` 会先备份。所有客户端都应更新到新输出。配置校验与本机监听检查不等于客户端到 VPS 的公网连通性测试。
 
+### Mac Loon 兼容性
+
+节点格式正确不代表握手一定互通。实测 Mac Loon 0.4.0 (991) 的 Chrome 握手只发送 X25519，而 Xray 26.10.21 要求 X25519MLKEM768；即使 UUID、公钥、Short ID、SNI 都匹配，仍会失败。参考 [Loon 节点格式](https://nsloon.app/docs/Node/)及 [Xray 26.10.21 所用 REALITY 的握手校验](https://github.com/XTLS/REALITY/blob/83f621788ca8/tls.go#L203)。
+
+保留该版 Mac Loon 时，可通过 `--xray-version 26.7.28` 选择已实测的服务端兼容版本，并为 WARP 明确设置上述地址族解析顺序。26.7.28 是官方历史预发布版本，不会获得最新版后续改动；以后升级前应同时验证客户端握手和实际出口。脚本默认仍使用官方最新稳定版，不自动替其他用户降级。
+
 ### 参数
 
 `--yes` 跳过交互确认，须明确是否优化；出口模式省略时留空，端口等参数省略时使用默认值。例如：
@@ -103,6 +111,7 @@ Surge 使用 Xray 内置的 Shadowsocks 入口，不额外部署 WireGuard。该
 bash install_xray.sh --outbound IPv4v6 --optimize-network --port 443 --ss-port 8443 --yes
 ```
 
+- `--xray-version latest|版本号`：选择官方发行版；默认 `latest`。指定版本会重新安装该版本并保留安装器管理的配置路径，安装脚本仍会备份并重新生成节点凭据。
 - `--outbound IPv4|IPv6|IPv4v6|IPv6v4`：出口模式；支持传空值。简写分别是 `--ipv4`、`--ipv6`、`--ipv4v6`、`--ipv6v4`，前两项表示仅使用对应地址族。
 - `--optimize-network` / `--no-optimize-network`：是否应用系统网络优化。
 - `--port`：REALITY 端口，供 Loon、圈 X 与 Mihomo 使用。

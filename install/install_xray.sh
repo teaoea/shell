@@ -46,6 +46,7 @@ TEMP_WARP_DIR=""
 WARP_TEST_PID=""
 WARP_ENDPOINT_CANDIDATES=()
 TEMP_WARP_TEST_DIR=""
+XRAY_VERSION=latest
 
 UUID=""
 PRIVATE_KEY=""
@@ -120,6 +121,7 @@ usage() {
        [--reality-domain 域名]
        [--yes] [--port 端口] [--client-address IP]
        [--ss-port 端口 | --no-shadowsocks]
+       [--xray-version latest|版本号]
   --outbound 模式     Xray 出口 IP 模式；空值或未选择时不设置
   --ipv4 / --ipv6     仅使用对应地址族（--outbound 的简写）
   --ipv4v6 / --ipv6v4 优先前一个地址族，另一地址族回退
@@ -134,6 +136,7 @@ usage() {
   --loon-address IP   --client-address 的兼容别名
   --ss-port 端口      Shadowsocks 兼容入口，默认 8443（TCP/UDP）
   --no-shadowsocks    只安装 REALITY，不生成 Surge 配置
+  --xray-version 版本 指定官方 Xray 发行版，默认 latest；如 26.7.28
   -h, --help          显示帮助
 
 支持 Debian/Ubuntu 和红帽系 Linux；需要运行中的 systemd。
@@ -199,6 +202,18 @@ parse_arguments() {
         ;;
       --no-shadowsocks)
         ENABLE_SHADOWSOCKS=false
+        ;;
+      --xray-version | --xray-version=*)
+        if [[ "$1" == --xray-version ]]; then
+          (($# >= 2)) || die "--xray-version 缺少参数"
+          XRAY_VERSION=$2
+          shift
+        else
+          XRAY_VERSION=${1#*=}
+        fi
+        XRAY_VERSION=${XRAY_VERSION#v}
+        [[ "$XRAY_VERSION" == latest || "$XRAY_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+          die "Xray 版本必须是 latest 或三段数字版本号"
         ;;
       --ss-port | --ss-port=*)
         if [[ "$1" == --ss-port ]]; then
@@ -840,6 +855,7 @@ confirm_installation_plan() {
   [[ "$OPTIMIZE_NETWORK" != true ]] || optimization_text="应用 Xray-REALITY 系统网络优化"
   mode_label=$(network_mode_label)
   printf '出口 IP 模式: %s；%s。\n' "$mode_label" "$optimization_text"
+  printf 'Xray 安装版本: %s。\n' "$XRAY_VERSION"
   if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
     printf '同时安装 Shadowsocks AES-128-GCM 兼容入口，供 Surge 使用；默认端口 8443，稍后可修改。\n'
   fi
@@ -887,10 +903,14 @@ backup_existing_config() {
 }
 
 install_xray() {
+  local -a installer_arguments=(install)
+  if [[ "$XRAY_VERSION" != latest ]]; then
+    installer_arguments+=(--version "v$XRAY_VERSION" --force)
+  fi
   printf '正在安装 Xray...\n'
   TEMP_INSTALLER=$(mktemp /tmp/xray-install.XXXXXX.sh)
   curl -fL --retry 3 "$XRAY_INSTALL_URL" -o "$TEMP_INSTALLER"
-  bash "$TEMP_INSTALLER" install
+  bash "$TEMP_INSTALLER" "${installer_arguments[@]}"
   [[ -x "$XRAY_BIN" ]] || die "安装失败：未找到 $XRAY_BIN"
 }
 
@@ -916,7 +936,7 @@ generate_credentials() {
 
 write_xray_config() {
   local tcp_fast_open_json="" shadowsocks_json="" outbound_json='"protocol": "freedom"' routing_json="" block_json="" dns_json=""
-  local routing_rules="" warp_json="" sniffing_json="" warp_rule="" original_endpoint needle replacement
+  local routing_rules="" warp_json="" sniffing_json="" warp_rule="" original_endpoint needle replacement warp_domain_strategy=ForceIPv4v6
   install -d -m 750 -o root -g xray "$XRAY_CONFIG_DIR"
   TEMP_CONFIG=$(mktemp /tmp/xray-config.XXXXXX.json)
   [[ "$OPTIMIZE_NETWORK" != true ]] || tcp_fast_open_json=', "tcpFastOpen": true'
@@ -942,7 +962,13 @@ write_xray_config() {
     validate_warp_key "$WARP_SECRET_KEY"
     validate_warp_key "$WARP_PUBLIC_KEY"
     validate_warp_endpoint
-    warp_json=", {\"tag\": \"warp\", \"protocol\": \"wireguard\", \"settings\": {\"secretKey\": \"$WARP_SECRET_KEY\", \"address\": [$WARP_ADDRESSES_JSON], \"peers\": [{\"publicKey\": \"$WARP_PUBLIC_KEY\", \"endpoint\": \"$WARP_ENDPOINT\", \"allowedIPs\": [\"0.0.0.0/0\", \"::/0\"], \"keepAlive\": 25}], \"reserved\": [$WARP_RESERVED_JSON], \"mtu\": 1280, \"noKernelTun\": true}}"
+    case "$NETWORK_MODE" in
+      ipv4) warp_domain_strategy=ForceIPv4 ;;
+      ipv6) warp_domain_strategy=ForceIPv6 ;;
+      ipv6v4) warp_domain_strategy=ForceIPv6v4 ;;
+    esac
+    # WireGuard 不继承 Freedom 的 sockopt；显式指定解析顺序，避免旧内核随机选中不可达地址族。
+    warp_json=", {\"tag\": \"warp\", \"protocol\": \"wireguard\", \"settings\": {\"secretKey\": \"$WARP_SECRET_KEY\", \"address\": [$WARP_ADDRESSES_JSON], \"domainStrategy\": \"$warp_domain_strategy\", \"peers\": [{\"publicKey\": \"$WARP_PUBLIC_KEY\", \"endpoint\": \"$WARP_ENDPOINT\", \"allowedIPs\": [\"0.0.0.0/0\", \"::/0\"], \"keepAlive\": 25}], \"reserved\": [$WARP_RESERVED_JSON], \"mtu\": 1280, \"noKernelTun\": true}}"
     original_endpoint=$WARP_ENDPOINT
     # 同一 WireGuard 密钥不能由旧服务和临时检测实例同时使用；失败由 cleanup 恢复。
     if [[ -f "$XRAY_CONFIG_FILE" ]] && grep -Eq '"protocol"[[:space:]]*:[[:space:]]*"wireguard"' "$XRAY_CONFIG_FILE"; then
