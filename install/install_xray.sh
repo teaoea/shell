@@ -46,7 +46,6 @@ TEMP_WARP_DIR=""
 WARP_TEST_PID=""
 WARP_ENDPOINT_CANDIDATES=()
 TEMP_WARP_TEST_DIR=""
-XRAY_VERSION=latest
 
 UUID=""
 PRIVATE_KEY=""
@@ -121,7 +120,6 @@ usage() {
        [--reality-domain 域名]
        [--yes] [--port 端口] [--client-address IP]
        [--ss-port 端口 | --no-shadowsocks]
-       [--xray-version latest|版本号]
   --outbound 模式     Xray 出口 IP 模式；空值或未选择时不设置
   --ipv4 / --ipv6     仅使用对应地址族（--outbound 的简写）
   --ipv4v6 / --ipv6v4 优先前一个地址族，另一地址族回退
@@ -136,7 +134,6 @@ usage() {
   --loon-address IP   --client-address 的兼容别名
   --ss-port 端口      Shadowsocks 兼容入口，默认 8443（TCP/UDP）
   --no-shadowsocks    只安装 REALITY，不生成 Surge 配置
-  --xray-version 版本 指定官方 Xray 发行版，默认 latest；如 26.7.28
   -h, --help          显示帮助
 
 支持 Debian/Ubuntu 和红帽系 Linux；需要运行中的 systemd。
@@ -202,18 +199,6 @@ parse_arguments() {
         ;;
       --no-shadowsocks)
         ENABLE_SHADOWSOCKS=false
-        ;;
-      --xray-version | --xray-version=*)
-        if [[ "$1" == --xray-version ]]; then
-          (($# >= 2)) || die "--xray-version 缺少参数"
-          XRAY_VERSION=$2
-          shift
-        else
-          XRAY_VERSION=${1#*=}
-        fi
-        XRAY_VERSION=${XRAY_VERSION#v}
-        [[ "$XRAY_VERSION" == latest || "$XRAY_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-          die "Xray 版本必须是 latest 或三段数字版本号"
         ;;
       --ss-port | --ss-port=*)
         if [[ "$1" == --ss-port ]]; then
@@ -855,7 +840,7 @@ confirm_installation_plan() {
   [[ "$OPTIMIZE_NETWORK" != true ]] || optimization_text="应用 Xray-REALITY 系统网络优化"
   mode_label=$(network_mode_label)
   printf '出口 IP 模式: %s；%s。\n' "$mode_label" "$optimization_text"
-  printf 'Xray 安装版本: %s。\n' "$XRAY_VERSION"
+  printf 'Xray 安装版本: 官方最新稳定版。\n'
   if [[ "$ENABLE_SHADOWSOCKS" == true ]]; then
     printf '同时安装 Shadowsocks AES-128-GCM 兼容入口，供 Surge 使用；默认端口 8443，稍后可修改。\n'
   fi
@@ -903,14 +888,10 @@ backup_existing_config() {
 }
 
 install_xray() {
-  local -a installer_arguments=(install)
-  if [[ "$XRAY_VERSION" != latest ]]; then
-    installer_arguments+=(--version "v$XRAY_VERSION" --force)
-  fi
   printf '正在安装 Xray...\n'
   TEMP_INSTALLER=$(mktemp /tmp/xray-install.XXXXXX.sh)
   curl -fL --retry 3 "$XRAY_INSTALL_URL" -o "$TEMP_INSTALLER"
-  bash "$TEMP_INSTALLER" "${installer_arguments[@]}"
+  bash "$TEMP_INSTALLER" install
   [[ -x "$XRAY_BIN" ]] || die "安装失败：未找到 $XRAY_BIN"
 }
 
@@ -967,7 +948,7 @@ write_xray_config() {
       ipv6) warp_domain_strategy=ForceIPv6 ;;
       ipv6v4) warp_domain_strategy=ForceIPv6v4 ;;
     esac
-    # WireGuard 不继承 Freedom 的 sockopt；显式指定解析顺序，避免旧内核随机选中不可达地址族。
+    # WireGuard 不继承 Freedom 的 sockopt，需显式指定自身的域名解析顺序。
     warp_json=", {\"tag\": \"warp\", \"protocol\": \"wireguard\", \"settings\": {\"secretKey\": \"$WARP_SECRET_KEY\", \"address\": [$WARP_ADDRESSES_JSON], \"domainStrategy\": \"$warp_domain_strategy\", \"peers\": [{\"publicKey\": \"$WARP_PUBLIC_KEY\", \"endpoint\": \"$WARP_ENDPOINT\", \"allowedIPs\": [\"0.0.0.0/0\", \"::/0\"], \"keepAlive\": 25}], \"reserved\": [$WARP_RESERVED_JSON], \"mtu\": 1280, \"noKernelTun\": true}}"
     original_endpoint=$WARP_ENDPOINT
     # 同一 WireGuard 密钥不能由旧服务和临时检测实例同时使用；失败由 cleanup 恢复。
@@ -1174,7 +1155,7 @@ write_client_configs() {
 
   cat >"$bundle_temp" <<EOF
 [loon]
-Xray-REALITY = VLESS,$LOON_SERVER_IP,$XRAY_PORT,"$UUID",transport=tcp,flow=xtls-rprx-vision,public-key="$PUBLIC_KEY",short-id=$SHORT_ID,over-tls=true,sni=$REALITY_SERVER_NAME,tls-profile=chrome,udp=true,block-quic=false
+Xray-REALITY = VLESS,$LOON_SERVER_IP,$XRAY_PORT,"$UUID",transport=tcp,flow=xtls-rprx-vision,public-key="$PUBLIC_KEY",short-id=$SHORT_ID,over-tls=true,sni=$REALITY_SERVER_NAME,tls-profile=chrome147,udp=true,block-quic=false
 
 [quantumult-x]
 vless=$endpoint:$XRAY_PORT, method=none, password=$UUID, obfs=over-tls, obfs-host=$REALITY_SERVER_NAME, reality-base64-pubkey=$PUBLIC_KEY, reality-hex-shortid=$SHORT_ID, vless-flow=xtls-rprx-vision, udp-relay=true, tag=Xray-REALITY
@@ -1188,7 +1169,7 @@ Xray-SS = ss, $endpoint, $SS_PORT, encrypt-method=aes-128-gcm, password=$SS_PASS
 EOF
   fi
 
-  # Mihomo 使用 REALITY；新 Xray 的版本门槛已在服务端显式兼容。
+  # Mihomo 使用 REALITY，并要求客户端实现新的后量子握手。
   cat >>"$bundle_temp" <<EOF
 
 [mihomo]

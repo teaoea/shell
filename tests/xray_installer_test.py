@@ -145,22 +145,15 @@ install() {
                     os.close(master)
                     if slave is not None: os.close(slave)
 
-    def test_explicit_xray_version_is_validated_and_forwarded(self):
+    def test_installer_uses_latest_core_without_legacy_version_options(self):
         fake = self.root / 'xray'
         fake.write_text('#!/bin/bash\nexit 0\n')
         fake.chmod(0o700)
-        for version in ('26.7.28', 'v26.7.28', 'latest'):
-            self.bash(f'parse_arguments --xray-version {version}; '
-                      r'''curl() { :; }; bash() { printf '%s\n' "$*" >"$LOG"; }; install_xray''')
-            args = (self.root / 'operations').read_text()
-            if version == 'latest':
-                self.assertNotIn('--version', args)
-            else:
-                self.assertIn('install --version v26.7.28 --force', args)
-        self.bash('parse_arguments --xray-version=26.7.28; [[ $XRAY_VERSION == 26.7.28 ]]')
-        for args in (('--xray-version',), ('--xray-version=',), ('--xray-version', '--yes'),
-                     ('--xray-version=26.7.28/evil',), ('--xray-version=latest;id',)):
-            self.bash('parse_arguments ' + ' '.join(map(shlex.quote, args)), ok=False)
+        self.bash(r'''curl() { :; }; bash() { printf '%s\n' "$*" >"$LOG"; }; install_xray''')
+        args = (self.root / 'operations').read_text().strip().split()
+        self.assertEqual(args[1:], ['install'])
+        for flags in ('--xray-version=26.7.28', '--xray-version latest'):
+            self.bash('parse_arguments ' + flags, ok=False)
 
     def test_ipv4_does_not_offer_ipv6_prefix(self):
         p = self.bash('MODE=ipv4; IPV6_SUPPORTED=true; IPV6_HAS_ADDRESS=false; prepare_ipv6_address', 'networt_optimization.sh')
@@ -206,6 +199,9 @@ NETWORK_MODE=ipv4
                 content = file.read_text()
                 self.assertEqual(re.findall(r'^\[([^]]+)\]$', content, re.M), ['loon', 'quantumult-x', 'surge', 'mihomo'])
                 self.assertTrue(content.startswith('[loon]\nXray-REALITY'))
+                loon = content.split('[loon]\n', 1)[1].split('\n\n', 1)[0]
+                self.assertIn('tls-profile=chrome147', loon)
+                self.assertNotRegex(loon, r'tls-profile=chrome(?:,|$)')
                 self.assertNotIn('server_private_key', content)
                 self.assertIn('type: vless', content)
                 self.assertIn('support-x25519mlkem768: true', content)
