@@ -395,6 +395,7 @@ prepare_warp_domains() {
   local input=${1//,/ } item domain prefix separator=""
   local -a items=()
   WARP_DOMAINS_JSON=""
+  [[ -n "${input//[[:space:]]/}" ]] || return 0
   read -r -a items <<<"$input"
   for item in "${items[@]}"; do
     prefix=domain
@@ -1065,7 +1066,69 @@ verify_xray_installation() {
     XRAY_LISTENER_STATUS="TCP ${XRAY_PORT}（未检查，系统缺少 ss）"
   fi
 
+  verify_warp_service
   REPLACEMENT_PENDING=false
+}
+
+# 临时 WireGuard 实例测通不代表正式代理入口可用；使用本次凭据经过正式服务再检查。
+verify_warp_service() {
+  [[ "$ENABLE_WARP" == true ]] || return 0
+  local expected=off rule domain protocol port attempt trace client_outbound address=127.0.0.1
+  [[ "$LISTEN_ADDRESS" != :: ]] || address=::1
+  if [[ "$WARP_MODE" == all ]]; then
+    expected=on
+  else
+    # 输入规则已校验且不含空格或转义字符，逐条判断检测域名的实际路由。
+    for rule in ${WARP_DOMAINS_JSON//,/ }; do
+      rule=${rule//\"/}
+      domain=${rule#*:}
+      if [[ "$rule" == full:www.cloudflare.com ||
+        ( "$rule" == domain:* && ( www.cloudflare.com == "$domain" || www.cloudflare.com == *."$domain" ) ) ]]; then
+        expected=on
+      fi
+    done
+  fi
+  for protocol in vless shadowsocks; do
+    [[ "$protocol" != shadowsocks || "$ENABLE_SHADOWSOCKS" == true ]] || continue
+    port=""
+    for attempt in {1..10}; do
+      port=$((20000 + 16#$(openssl rand -hex 2) % 40000))
+      if ! ss -H -ltn | awk -v port="$port" '$4 ~ (":" port "$") {found=1} END {exit !found}'; then
+        break
+      fi
+      port=""
+    done
+    [[ -n "$port" ]] || die "正式入口检测无法找到临时监听端口"
+    if [[ "$protocol" == vless ]]; then
+      client_outbound="{\"protocol\":\"vless\",\"settings\":{\"vnext\":[{\"address\":\"$address\",\"port\":$XRAY_PORT,\"users\":[{\"id\":\"$UUID\",\"encryption\":\"none\",\"flow\":\"xtls-rprx-vision\"}]}]},\"streamSettings\":{\"network\":\"raw\",\"security\":\"reality\",\"realitySettings\":{\"serverName\":\"$REALITY_SERVER_NAME\",\"fingerprint\":\"chrome\",\"password\":\"$PUBLIC_KEY\",\"shortId\":\"$SHORT_ID\"}}}"
+    else
+      client_outbound="{\"protocol\":\"shadowsocks\",\"settings\":{\"servers\":[{\"address\":\"$address\",\"port\":$SS_PORT,\"method\":\"aes-128-gcm\",\"password\":\"$SS_PASSWORD\"}]}}"
+    fi
+    cat >"$TEMP_WARP_DIR/service-client.json" <<EOF
+{"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":$port,"protocol":"socks","settings":{"auth":"noauth","udp":false}}],"outbounds":[$client_outbound]}
+EOF
+    "$XRAY_BIN" run -test -config "$TEMP_WARP_DIR/service-client.json" >"$TEMP_WARP_DIR/service-client.log" 2>&1 || die "正式入口检测客户端配置校验失败"
+    "$XRAY_BIN" run -config "$TEMP_WARP_DIR/service-client.json" >>"$TEMP_WARP_DIR/service-client.log" 2>&1 &
+    WARP_TEST_PID=$!
+    for attempt in {1..20}; do
+      kill -0 "$WARP_TEST_PID" >/dev/null 2>&1 || break
+      if ss -H -ltn | awk -v port="$port" '$4 ~ (":" port "$") {found=1} END {exit !found}'; then
+        break
+      fi
+      sleep 0.1
+    done
+    printf '正在通过正式 %s 入口检测实际出口...\n' "$protocol"
+    trace=$(curl -fsS --proxy "socks5h://127.0.0.1:$port" --noproxy "" --connect-timeout 8 --max-time 25 https://www.cloudflare.com/cdn-cgi/trace 2>"$TEMP_WARP_DIR/service-trace.log" || true)
+    stop_warp_test
+    if [[ "$expected" == on ]]; then
+      printf '%s\n' "$trace" | tr -d '\r' | grep -Eq '^warp=(on|plus)$' ||
+        die "正式 $protocol 入口未通过 WARP 出口检测，恢复原配置"
+    else
+      printf '%s\n' "$trace" | tr -d '\r' | grep -Eq '^warp=off$' ||
+        die "正式 $protocol 入口的直连检测失败或与域名分流不一致，恢复原配置"
+    fi
+    printf '正式 %s 入口检测通过（%s）。\n' "$protocol" "$(printf '%s\n' "$trace" | tr -d '\r' | grep '^warp=')"
+  done
 }
 
 write_client_configs() {

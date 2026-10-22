@@ -70,6 +70,8 @@ bash -c 'set -e; xray_script=$(curl -fsSL --retry 3 https://raw.githubuserconten
 
 **实际可用性检查：**在替换现有 Xray 配置前，按正式服务的用户身份启动一个仅监听 `127.0.0.1`、仅含 WARP 出站的临时 Xray SOCKS 实例。把 Endpoint 域名解析为 IPv4/IPv6 候选地址，按所选网络优先级依次检测；通过该代理请求 Cloudflare trace，必须返回 `warp=on` 或 `warp=plus` 才继续。正式 JSON 固定使用测通的 Endpoint IP，避免正式服务重新解析到另一个不通的地址族；不会退回直连后将检测算作成功。注册、参数生成、配置校验或出口检测失败都会停止，临时实例会退出。重跑已有 WireGuard 配置时，检测前暂时停止旧服务，避免同一账户的两个实例互相干扰；失败时恢复原配置与原运行状态。已注册账户保留供重试；旧服务端配置沿用脚本原有备份与失败恢复流程。
 
+正式服务启动后，还会用本次生成的凭据分别连接本机的 REALITY 与 Shadowsocks 入口，再通过这些入口请求 Cloudflare trace。全流量模式必须返回 `warp=on/plus`；域名模式按 `www.cloudflare.com` 是否匹配所填规则核对出口，空列表应返回 `warp=off`。任一入口连接失败或出口与规则不一致，都会停止并恢复原配置和原运行状态；只有全部通过才保存新的 `client_config`。该检查覆盖本机代理入口，不代替公网端口和客户端应用的连接测试。
+
 “全部”指通过 Xray 代理入口的流量，不接管 VPS 自身的 SSH、软件更新等系统流量。已选择的仅 IPv4/仅 IPv6 目标地址族拦截规则仍优先执行，直接连接 WARP Endpoint 的地址族由 VPS 网络决定；原有 Freedom 出口模式不等于 WireGuard 隧道内的地址族策略。需要 VPS 可达 Cloudflare 注册 API、下载站和 WireGuard UDP Endpoint。真实检测反映安装时的状态，后续仍需保持账户与网络可用。
 
 ### 客户端配置

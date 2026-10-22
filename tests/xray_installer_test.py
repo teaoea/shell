@@ -508,6 +508,70 @@ fetch_warp_reserved "$FIXTURE_ROOT/account.toml"
 [[ "$(wgcf_account_value "$FIXTURE_ROOT/account.toml" access_token)" == private-test-token ]]
 ''')
 
+    def formal_service_fixture(self):
+        fake = self.root / 'xray'
+        fake.write_text('#!/bin/bash\nif [[ "$2" == -test ]]; then exit 0; fi\nexec sleep 10\n')
+        fake.chmod(0o700)
+        return self.credentials() + r'''
+ENABLE_WARP=true
+TEMP_WARP_DIR=$(mktemp -d /tmp/xray-warp-service-test.XXXXXX)
+sleep() { command sleep 0.01; }
+ss() {
+  printf 'LISTEN 0 128 *:443 *:*\nLISTEN 0 128 *:8443 *:*\n'
+  if [[ -f "$TEMP_WARP_DIR/service-client.json" ]]; then
+    local data port
+    data=$(cat "$TEMP_WARP_DIR/service-client.json")
+    port=${data#*\"port\":}; port=${port%%,*}
+    printf 'LISTEN 0 128 127.0.0.1:%s *:*\n' "$port"
+  fi
+}
+curl() {
+  local count=1
+  [[ ! -f "$FIXTURE_ROOT/count" ]] || count=$(cat "$FIXTURE_ROOT/count")
+  cp "$TEMP_WARP_DIR/service-client.json" "$FIXTURE_ROOT/client-$count.json"
+  echo $((count+1)) >"$FIXTURE_ROOT/count"
+  printf 'warp=%s\n' "$TRACE_STATE"
+}
+'''
+
+    def test_formal_warp_service_checks_both_protocols_and_domain_routes(self):
+        body = self.formal_service_fixture()
+        for mode, domains, expected in (
+            ('all', '', 'on'), ('domains', '', 'off'),
+            ('domains', 'example.com', 'off'),
+            ('domains', 'cloudflare.com', 'on'),
+            ('domains', 'full:www.cloudflare.com', 'plus'),
+            ('domains', 'full:cloudflare.com', 'off'),
+        ):
+            with self.subTest(mode=mode, domains=domains):
+                (self.root / 'count').unlink(missing_ok=True)
+                self.bash(body + f'\nWARP_MODE={mode}; prepare_warp_domains {shlex.quote(domains)}; TRACE_STATE={expected}; verify_warp_service')
+                clients = [json.loads((self.root / f'client-{n}.json').read_text()) for n in (1, 2)]
+                self.assertEqual([c['outbounds'][0]['protocol'] for c in clients], ['vless', 'shadowsocks'])
+                reality = clients[0]['outbounds'][0]
+                self.assertEqual(reality['settings']['vnext'][0]['address'], '127.0.0.1')
+                self.assertEqual(reality['streamSettings']['realitySettings']['password'], 'public_key')
+                self.assertNotIn('secretKey', json.dumps(clients))
+
+    def test_formal_warp_service_failure_keeps_rollback_pending(self):
+        body = self.formal_service_fixture()
+        (self.root / 'config').mkdir()
+        config = self.root / 'config/config.json'
+        original = '{"outbounds":[{"protocol":"freedom"}]}\n'
+        config.write_text(original)
+        result = self.bash(body + r'''
+backup_existing_config
+echo '{}' >"$XRAY_CONFIG_FILE"
+WARP_MODE=all; TRACE_STATE=off
+verify_xray_installation
+''', ok=False)
+        self.assertIn('正式 vless 入口未通过', result.stderr)
+        self.assertEqual(config.read_text(), original)
+        self.assertIn('systemctl restart xray', (self.root / 'operations').read_text())
+
+    def test_formal_warp_service_skipped_when_disabled(self):
+        self.bash('verify_warp_service; [[ -z "$TEMP_WARP_DIR" ]]')
+
     def test_warp_default_off_interaction(self):
         for answer in (b'\n', b'n\n', b'N\n'):
             master, slave = pty.openpty()
