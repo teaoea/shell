@@ -114,6 +114,37 @@ install() {
             self.bash('parse_arguments --ipv4 --no-optimize-network --yes ' + flags + '; select_xray_port', ok=False)
         self.bash('parse_arguments --client-address=2001:db8::1; [[ $LOON_SERVER_IP == 2001:db8::1 ]]')
 
+    def test_interactive_ports_with_utf8_locale(self):
+        for flags, answers, expected, ss_prompt in (
+            ('', b'\n\n', '443,8443', True),
+            ('', b'8443\n\n', '8443,8444', True),
+            ('', b'9443\n9444\n', '9443,9444', True),
+            ('--ss-port 9444', b'\n', '443,9444', False),
+            ('--no-shadowsocks', b'\n', '443,8443', False),
+        ):
+            with self.subTest(flags=flags, expected=expected):
+                master, slave = pty.openpty()
+                env = dict(os.environ, FIXTURE_ROOT=str(self.root),
+                           LC_ALL='en_US.UTF-8' if os.uname().sysname == 'Darwin' else 'C.UTF-8')
+                body = ('source "$FIXTURE_ROOT/install_xray.sh"; parse_arguments ' + flags +
+                        '; select_xray_port; printf "PORTS=%s,%s\\n" "$XRAY_PORT" "$SS_PORT"')
+                proc = subprocess.Popen(['bash', '-c', body], stdin=slave,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+                try:
+                    os.close(slave); slave = None
+                    os.write(master, answers)
+                    stdout, stderr = proc.communicate(timeout=10)
+                    output = (stdout + stderr).decode('utf-8', errors='replace')
+                    self.assertEqual(proc.returncode, 0, output)
+                    self.assertIn('PORTS=' + expected, output)
+                    self.assertEqual('输入 Surge 的 Shadowsocks 端口' in output, ss_prompt)
+                    self.assertNotIn('unbound variable', output)
+                finally:
+                    if proc.poll() is None:
+                        proc.kill(); proc.communicate()
+                    os.close(master)
+                    if slave is not None: os.close(slave)
+
     def test_explicit_xray_version_is_validated_and_forwarded(self):
         fake = self.root / 'xray'
         fake.write_text('#!/bin/bash\nexit 0\n')

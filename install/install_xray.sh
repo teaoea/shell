@@ -390,7 +390,7 @@ select_xray_port() {
     if [[ "$SS_PORT_SET" != true ]]; then
       [[ "$XRAY_PORT" != "$SS_PORT" ]] || SS_PORT=8444
       if [[ "$ASSUME_YES" != true ]]; then
-        read -r -p "输入 Surge 的 Shadowsocks 端口（默认 $SS_PORT，TCP/UDP）: " answer
+        read -r -p "输入 Surge 的 Shadowsocks 端口（默认 ${SS_PORT}，TCP/UDP）: " answer
         [[ -z "$answer" ]] || SS_PORT=$answer
       fi
     fi
