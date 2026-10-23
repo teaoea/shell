@@ -1,0 +1,63 @@
+#!name = Claude 固定节点与故障拒绝
+#!author = 可莉唯一的狗
+#!desc = Claude 使用指定节点；每 15 秒检测一次，探测失败或超时自动切换 REJECT，恢复后自动回切。先按 README 建立 Claude固定出口 专用策略组（仅 REJECT 和一个节点），在下方填写相同节点名称，并将「代理指向的策略 → PROXY」绑定此组。无需 MitM；UDP/QUIC 始终拒绝。检测有延迟，不代表瞬时拦截。
+#!homepage = https://github.com/teaoea/shell/blob/main/plugins/Claude/README.md
+#!system = iOS,iPadOS
+#!loon_version = 3.5.1(983)
+#!date = 2026-10-23
+
+[Argument]
+claude_node = input,"",tag=指定节点,desc=填写已存在的单个节点完整名称，必须与 Claude固定出口 组中节点一致；留空则守卫选择 REJECT
+
+[Rule]
+# 先拒绝 UDP / QUIC，避免节点不支持 UDP 时受主配置直连回退影响。
+# 每个域名同时列出 UDP 与 QUIC，兼容 Loon 的协议识别结果。
+AND,((DOMAIN-SUFFIX,anthropic.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,anthropic.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN-SUFFIX,claude.ai),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,claude.ai),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN-SUFFIX,claude.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,claude.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN-SUFFIX,claude.app),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,claude.app),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN-SUFFIX,claudeusercontent.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,claudeusercontent.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN-SUFFIX,claudemcpcontent.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN-SUFFIX,claudemcpcontent.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,challenges.cloudflare.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,challenges.cloudflare.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,fonts.googleapis.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,fonts.googleapis.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,fonts.gstatic.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,fonts.gstatic.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,cdnjs.cloudflare.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,cdnjs.cloudflare.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,cdn.jsdelivr.net),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,cdn.jsdelivr.net),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,cdn.tailwindcss.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,cdn.tailwindcss.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,code.jquery.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,code.jquery.com),(PROTOCOL,QUIC)),REJECT
+AND,((DOMAIN,unpkg.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,unpkg.com),(PROTOCOL,QUIC)),REJECT
+
+# Claude / Anthropic 官方域名：主站、登录、API、静态资源、文件与 MCP 内容。
+DOMAIN-SUFFIX,anthropic.com,PROXY
+DOMAIN-SUFFIX,claude.ai,PROXY
+DOMAIN-SUFFIX,claude.com,PROXY
+DOMAIN-SUFFIX,claude.app,PROXY
+DOMAIN-SUFFIX,claudeusercontent.com,PROXY
+DOMAIN-SUFFIX,claudemcpcontent.com,PROXY
+# 验证及 Artifact 字体/脚本依赖；这些共享主机在其他网站的请求也会受影响。
+DOMAIN,challenges.cloudflare.com,PROXY
+DOMAIN,fonts.googleapis.com,PROXY
+DOMAIN,fonts.gstatic.com,PROXY
+DOMAIN,cdnjs.cloudflare.com,PROXY
+DOMAIN,cdn.jsdelivr.net,PROXY
+DOMAIN,cdn.tailwindcss.com,PROXY
+DOMAIN,code.jquery.com,PROXY
+DOMAIN,unpkg.com,PROXY
+
+[Script]
+cron "*/15 * * * * *" then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/ClaudeNodeGuard.js", {${claude_node}}) with timeout=8, tag="Claude 节点自动检测"
+generic then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/ClaudeNodeGuard.js", {${claude_node}}) with timeout=8, img_url="network.badge.shield.half.filled", tag="Claude 立即检测节点"
