@@ -1078,10 +1078,37 @@ verify_xray_installation() {
 }
 
 # 临时 WireGuard 实例测通不代表正式代理入口可用；使用本次凭据经过正式服务再检查。
+save_service_probe_failure() {
+  local protocol=$1 status=$2 trace_state=$3 report_dir file content secret
+  report_dir="$WARP_STATE_DIR/diagnostics/$(date +%Y%m%d-%H%M%S)-$$-$protocol"
+  mkdir -p -m 700 "$WARP_STATE_DIR/diagnostics" "$report_dir"
+  chmod 700 "$WARP_STATE_DIR/diagnostics" "$report_dir"
+  printf 'protocol=%s\ncurl_exit=%s\nexpected_warp=%s\nobserved_warp=%s\n' \
+    "$protocol" "$status" "$expected" "${trace_state:-missing}" >"$report_dir/result"
+  journalctl -u xray --no-pager -n 30 >"$TEMP_WARP_DIR/service-journal.log" 2>&1 || true
+  # 只保留文本日志，不复制含有连接凭据的检测 JSON，并移除本次已知的凭据。
+  for file in service-client.log service-trace.log service-journal.log; do
+    [[ -f "$TEMP_WARP_DIR/$file" ]] || continue
+    content=$(tail -n 30 "$TEMP_WARP_DIR/$file")
+    for secret in "$PRIVATE_KEY" "$PUBLIC_KEY" "$UUID" "$SHORT_ID" "$SS_PASSWORD" "$WARP_SECRET_KEY"; do
+      [[ -z "$secret" ]] || content=${content//"$secret"/[redacted]}
+    done
+    printf '%s\n' "$content" >"$report_dir/$file"
+    chmod 600 "$report_dir/$file"
+  done
+  chmod 600 "$report_dir/result"
+  printf '正式 %s 入口检测失败：curl 退出码 %s，预期 warp=%s，实际 warp=%s。\n' \
+    "$protocol" "$status" "$expected" "${trace_state:-未返回}" >&2
+  [[ ! -s "$report_dir/service-trace.log" ]] || cat "$report_dir/service-trace.log" >&2
+  printf '检测日志已保存（仅 root 可读，无检测 JSON）：%s\n' "$report_dir" >&2
+}
+
 verify_warp_service() {
   [[ "$ENABLE_WARP" == true ]] || return 0
   local expected=off rule domain protocol port attempt trace client_outbound address=127.0.0.1
-  [[ "$LISTEN_ADDRESS" != :: ]] || address=::1
+  local status trace_state request_attempt ready
+  # 正式入口的 :: 配合 v6only=false 接受 IPv4；不能据此推断 ::1 存在。
+  # 某些 VPS 镜像没有配置 IPv6 回环地址，此时 127.0.0.1 仍然可用。
   if [[ "$WARP_MODE" == all ]]; then
     expected=on
   else
@@ -1114,25 +1141,43 @@ verify_warp_service() {
     cat >"$TEMP_WARP_DIR/service-client.json" <<EOF
 {"log":{"loglevel":"warning"},"inbounds":[{"listen":"127.0.0.1","port":$port,"protocol":"socks","settings":{"auth":"noauth","udp":false}}],"outbounds":[$client_outbound]}
 EOF
-    "$XRAY_BIN" run -test -config "$TEMP_WARP_DIR/service-client.json" >"$TEMP_WARP_DIR/service-client.log" 2>&1 || die "正式入口检测客户端配置校验失败"
+    if ! "$XRAY_BIN" run -test -config "$TEMP_WARP_DIR/service-client.json" >"$TEMP_WARP_DIR/service-client.log" 2>&1; then
+      save_service_probe_failure "$protocol" not-started ""
+      die "正式入口检测客户端配置校验失败"
+    fi
     "$XRAY_BIN" run -config "$TEMP_WARP_DIR/service-client.json" >>"$TEMP_WARP_DIR/service-client.log" 2>&1 &
     WARP_TEST_PID=$!
+    ready=false
     for attempt in {1..20}; do
       kill -0 "$WARP_TEST_PID" >/dev/null 2>&1 || break
       if ss -H -ltn | awk -v port="$port" '$4 ~ (":" port "$") {found=1} END {exit !found}'; then
+        ready=true
         break
       fi
       sleep 0.1
     done
+    if [[ "$ready" != true ]]; then
+      stop_warp_test
+      save_service_probe_failure "$protocol" not-started ""
+      die "正式入口检测客户端未能启动监听，恢复原配置"
+    fi
     printf '正在通过正式 %s 入口检测实际出口...\n' "$protocol"
-    trace=$(curl -fsS --proxy "socks5h://127.0.0.1:$port" --noproxy "" --connect-timeout 8 --max-time 25 https://www.cloudflare.com/cdn-cgi/trace 2>"$TEMP_WARP_DIR/service-trace.log" || true)
+    for request_attempt in {1..3}; do
+      status=0
+      trace=$(curl -fsS --proxy "socks5h://127.0.0.1:$port" --noproxy "" --connect-timeout 8 --max-time 25 https://www.cloudflare.com/cdn-cgi/trace 2>"$TEMP_WARP_DIR/service-trace.log") || status=$?
+      # 仅重试传输失败；已返回的错误出口不能用重试掩盖。
+      [[ "$status" != 0 ]] || break
+      case "$status" in 7|28|35|52|56|97) ;; *) break ;; esac
+      ((request_attempt < 3)) || break
+      printf '正式 %s 入口请求失败（curl %s），重试 %s/3...\n' "$protocol" "$status" "$((request_attempt + 1))" >&2
+      sleep 1
+    done
     stop_warp_test
-    if [[ "$expected" == on ]]; then
-      printf '%s\n' "$trace" | tr -d '\r' | grep -Eq '^warp=(on|plus)$' ||
-        die "正式 $protocol 入口未通过 WARP 出口检测，恢复原配置"
-    else
-      printf '%s\n' "$trace" | tr -d '\r' | grep -Eq '^warp=off$' ||
-        die "正式 $protocol 入口的直连检测失败或与域名分流不一致，恢复原配置"
+    trace_state=$(printf '%s\n' "$trace" | tr -d '\r' | sed -n 's/^warp=//p')
+    if [[ "$status" != 0 || ( "$expected" == on && "$trace_state" != on && "$trace_state" != plus ) ||
+      ( "$expected" == off && "$trace_state" != off ) ]]; then
+      save_service_probe_failure "$protocol" "$status" "$trace_state"
+      die "正式 $protocol 入口未通过出口检测，恢复原配置"
     fi
     printf '正式 %s 入口检测通过（%s）。\n' "$protocol" "$(printf '%s\n' "$trace" | tr -d '\r' | grep '^warp=')"
   done

@@ -563,6 +563,7 @@ fetch_warp_reserved "$FIXTURE_ROOT/account.toml"
         fake.chmod(0o700)
         return self.credentials() + r'''
 ENABLE_WARP=true
+LISTEN_ADDRESS=::
 TEMP_WARP_DIR=$(mktemp -d /tmp/xray-warp-service-test.XXXXXX)
 sleep() { command sleep 0.01; }
 ss() {
@@ -620,6 +621,49 @@ verify_xray_installation
 
     def test_formal_warp_service_skipped_when_disabled(self):
         self.bash('verify_warp_service; [[ -z "$TEMP_WARP_DIR" ]]')
+
+    def test_formal_probe_transport_retry_and_wrong_route_is_not_retried(self):
+        body = self.formal_service_fixture()
+        self.bash(body + r'''
+ENABLE_SHADOWSOCKS=false
+WARP_MODE=all
+curl() {
+  local count=0
+  [[ ! -f "$FIXTURE_ROOT/attempts" ]] || count=$(cat "$FIXTURE_ROOT/attempts")
+  echo $((count+1)) >"$FIXTURE_ROOT/attempts"
+  if ((count < 1)); then echo 'curl: (28) timed out' >&2; return 28; fi
+  echo warp=on
+}
+verify_warp_service
+[[ $(cat "$FIXTURE_ROOT/attempts") == 2 ]]
+''')
+        (self.root / 'count').unlink(missing_ok=True)
+        self.bash(body + '\nWARP_MODE=all; TRACE_STATE=off; verify_warp_service', ok=False)
+        self.assertEqual((self.root / 'count').read_text().strip(), '2')  # one request
+
+    def test_formal_probe_failure_retains_private_sanitized_diagnostics(self):
+        body = self.formal_service_fixture()
+        result = self.bash(body + r'''
+ENABLE_SHADOWSOCKS=false
+WARP_MODE=all
+journalctl() { printf 'uuid=%s private=%s ss=%s wg=%s\n' "$UUID" "$PRIVATE_KEY" "$SS_PASSWORD" "$WARP_SECRET_KEY"; }
+curl() { printf 'curl: (28) timed out\n' >&2; return 28; }
+verify_warp_service
+''', ok=False)
+        self.assertIn('curl 退出码 28', result.stderr)
+        self.assertIn('timed out', result.stderr)
+        reports = list((self.root / 'warp-state/diagnostics').glob('*'))
+        self.assertEqual(len(reports), 1)
+        report = reports[0]
+        self.assertEqual(report.stat().st_mode & 0o777, 0o700)
+        self.assertFalse(list(report.glob('*.json')))
+        for path in report.iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        journal = (report / 'service-journal.log').read_text()
+        self.assertIn('[redacted]', journal)
+        self.assertNotIn('private_key', journal)
+        self.assertNotIn('uuid=', journal.replace('uuid=[redacted]', ''))
+        self.assertIn('observed_warp=missing', (report / 'result').read_text())
 
     def test_warp_default_off_interaction(self):
         for answer in (b'\n', b'n\n', b'N\n'):
