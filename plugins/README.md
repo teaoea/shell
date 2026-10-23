@@ -4,7 +4,7 @@
 
 ## 插件介绍
 
-- **Claude 固定节点与故障拒绝**：Loon 插件，将 Claude 已列域名绑定指定节点，每 15 秒检测，失败自动选择 REJECT，恢复后回切；拒绝匹配域名的 UDP／QUIC。需配套专用策略组，有检测延迟，效果待实机验证。详见 [Claude 说明](Claude/README.md)。
+- **Claude 固定节点与故障拒绝**：Loon 插件，每个匹配请求先探测指定节点，成功后当前请求走该节点，失败则 REJECT；无定时任务。HTTPS 需 MitM，原生 App 证书兼容性与拒绝效果待实机验证。详见 [Claude 说明](Claude/README.md)。
 - **Bilibili 增强**：Loon 插件，过滤已识别的 JSON 开屏及首页广告，可选推荐／导航过滤与默认关闭的本地开发日志。不保存令牌或原始正文，暂不处理 gRPC／Protobuf 广告。详见 [Bilibili 说明](Bilibili/README.md)。
 - **ChatGPT 网络选择与本地日志**：支持 Loon、圈 X、Stash 和 Surge，手动选择直连或已有代理，可选本地元数据日志。默认不解密 ChatGPT。详见 [ChatGPT 说明](ChatGPT/README.md)。
 - **YouTube 去广告**：支持 Loon、圈 X、Surge 和 Stash，清理已识别的广告配置和赞助卡片，可选后台播放、隐藏首页 Shorts、字幕翻译和本地日志。详见 [YouTube 说明](YouTube/README.md)。

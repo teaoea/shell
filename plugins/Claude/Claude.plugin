@@ -1,13 +1,13 @@
 #!name = Claude 固定节点与故障拒绝
 #!author = 可莉唯一的狗
 #!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/assets/claude.jpg
-#!desc = Claude 使用指定节点；每 15 秒检测一次，探测失败或超时自动切换 REJECT，恢复后自动回切。先按 README 建立 Claude固定出口 专用策略组（仅 REJECT 和一个节点），在下方填写相同节点名称，并将「代理指向的策略 → PROXY」绑定此组。无需 MitM；UDP/QUIC 始终拒绝。检测有延迟，不代表瞬时拦截。
+#!desc = 每次匹配的 HTTP/HTTPS 请求先探测指定节点，成功后当前请求走该节点，失败或超时当前请求使用 REJECT。无定时任务。HTTPS 必须启用 MitM 并信任 Loon 证书，原生 App 如拒绝证书则无法使用。指定节点填写真实单节点名，PROXY 同样绑定此节点。UDP/QUIC 始终拒绝。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/Claude/README.md
 #!loon_version = 3.5.1(983)
 #!date = 2026-10-23
 
 [Argument]
-claude_node = input,"",tag=指定节点,desc=填写实际单个节点的完整名称，不要填 PROXY 或策略组名称；必须与 Claude固定出口 组中节点一致；留空则守卫选择 REJECT
+claude_node = input,"",tag=指定节点,desc=填写真实单个节点完整名称，不要填 PROXY 或策略组；下方 PROXY 绑定同一节点；留空则当前请求 REJECT
 
 [Rule]
 # 先拒绝 UDP / QUIC，避免节点不支持 UDP 时受主配置直连回退影响。
@@ -59,5 +59,7 @@ DOMAIN,code.jquery.com,PROXY
 DOMAIN,unpkg.com,PROXY
 
 [Script]
-cron "*/15 * * * * *" then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/ClaudeNodeGuard.js", {${claude_node}}) with timeout=8, tag="Claude 节点自动检测"
-generic then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/ClaudeNodeGuard.js", {${claude_node}}) with timeout=8, img_url="network.badge.shield.half.filled", tag="Claude 立即检测节点"
+request if ${url} ~= /^https?:\/\/(?:(?:[a-z0-9-]+\.)*(?:anthropic\.com|claude\.ai|claude\.com|claude\.app|claudeusercontent\.com|claudemcpcontent\.com)|challenges\.cloudflare\.com|fonts\.googleapis\.com|fonts\.gstatic\.com|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|cdn\.tailwindcss\.com|code\.jquery\.com|unpkg\.com)(?::\d+)?(?:\/|$)/i then script("https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/ClaudeNodeGuard.js", {${claude_node}}) with requires_body=false, timeout=8, tag="Claude 请求前节点探测"
+
+[Mitm]
+hostname = anthropic.com,*.anthropic.com,claude.ai,*.claude.ai,claude.com,*.claude.com,claude.app,*.claude.app,claudeusercontent.com,*.claudeusercontent.com,claudemcpcontent.com,*.claudemcpcontent.com,challenges.cloudflare.com,fonts.googleapis.com,fonts.gstatic.com,cdnjs.cloudflare.com,cdn.jsdelivr.net,cdn.tailwindcss.com,code.jquery.com,unpkg.com
