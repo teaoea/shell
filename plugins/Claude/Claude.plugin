@@ -1,13 +1,13 @@
 #!name = Claude 固定节点与故障拒绝
 #!author = 可莉唯一的狗
+#!icon = https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/assets/claude.jpg
 #!desc = Claude 使用指定节点；每 15 秒检测一次，探测失败或超时自动切换 REJECT，恢复后自动回切。先按 README 建立 Claude固定出口 专用策略组（仅 REJECT 和一个节点），在下方填写相同节点名称，并将「代理指向的策略 → PROXY」绑定此组。无需 MitM；UDP/QUIC 始终拒绝。检测有延迟，不代表瞬时拦截。
 #!homepage = https://github.com/teaoea/shell/blob/main/plugins/Claude/README.md
-#!system = iOS,iPadOS
 #!loon_version = 3.5.1(983)
 #!date = 2026-10-23
 
 [Argument]
-claude_node = input,"",tag=指定节点,desc=填写已存在的单个节点完整名称，必须与 Claude固定出口 组中节点一致；留空则守卫选择 REJECT
+claude_node = input,"",tag=指定节点,desc=填写实际单个节点的完整名称，不要填 PROXY 或策略组名称；必须与 Claude固定出口 组中节点一致；留空则守卫选择 REJECT
 
 [Rule]
 # 先拒绝 UDP / QUIC，避免节点不支持 UDP 时受主配置直连回退影响。

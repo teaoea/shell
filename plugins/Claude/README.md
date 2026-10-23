@@ -1,16 +1,18 @@
 # Claude 固定节点与故障拒绝（Loon）
 
+![Claude 图标](assets/claude.jpg)
+
 将 Claude 官网、App、登录、API、文件与 Artifact 内容的已列域名统一绑定指定节点。无需安装证书或开启 HTTPS 解密。
 
 **正常时使用指定节点；探测失败或超时自动选择 `REJECT`；节点恢复后自动回切。** 守卫每 15 秒运行一次，通过指定节点请求 HTTPS 204 探测地址。HTTP 超时 3 秒，整次检测设有 4.5 秒看门狗；正常调度下，故障发现约需 0–19.5 秒，系统调度暂停时可能更久。这不是逐连接、零延迟的故障拦截。
 
 ## 安装与设置
 
-远程入口：[安装 Claude.plugin](https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/Claude.plugin)。适用于 iPhone／iPad 的 Loon 3.5.1 (983) 或更新版本。插件自动引用同目录的远程守卫脚本，无需单独安装脚本。配套策略组仍需按下方步骤合并一次。
+远程入口：[安装 Claude.plugin](https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/Claude.plugin)。插件不声明系统限制，需使用 Loon 3.5.1 (983) 或更新版本；具体平台仍取决于 Loon 本身的可用性及脚本接口支持。插件自动引用同目录的远程守卫脚本，无需单独安装脚本。配套策略组仍需按下方步骤合并一次。
 
 1. 将 [Claude.loon.conf](Claude.loon.conf) 中的 `YOUR_CLAUDE_NODE` 替换为已经存在的**单个节点**名称，把策略组行合并到主配置的 `[Proxy Group]` 段。不要用自动组或整个订阅替代节点。
 2. 导入 `Claude.plugin`，先保持插件关闭。在插件详情的「代理指向的策略 → PROXY」中绑定 `Claude固定出口`。
-3. 在插件参数「指定节点」填写同一个节点的完整名称。留空、填写策略组或配置不匹配时，守卫尝试保持 `REJECT`。
+3. 在插件参数「指定节点」填写同一个节点的完整名称，**不要填 `PROXY` 或其他策略组名称**。留空、填写策略组或配置不匹配时，守卫尝试保持 `REJECT`。
 4. 策略组默认选择 `REJECT`。确认绑定无误后启用插件，手动运行「Claude 立即检测节点」，核对成功后组已自动选中指定节点。之后每 15 秒自动检测与切换。
 5. 使用规则分流模式，将本插件安排在冲突的分流资源之前，并核对连接记录中的实际命中规则、策略与最终节点。修改后结束旧连接，再重新打开 Claude 验证。
 
@@ -20,6 +22,8 @@
 [Proxy Group]
 Claude固定出口 = select,REJECT,YOUR_CLAUDE_NODE
 ```
+
+例如实际节点名为 `美国 01`，组应写成 `Claude固定出口 = select,REJECT,美国 01`；插件「指定节点」填写 `美国 01`，而「代理指向的策略 → PROXY」选择 `Claude固定出口`。这两处填写的对象不同。
 
 `PROXY` 是 Loon 插件的固定策略入口。**插件未绑定或专用组被删除时，守卫无法控制实际出口，也不能保证默认拒绝**，启用前和订阅更新后应核对绑定。节点被删除但专用组仍保留 `REJECT` 时，守卫会尝试切到 `REJECT`。不要绑定其他策略组，不要手动向专用组添加 DIRECT 或其他候选；守卫只接受 `REJECT` 加指定节点这两个成员。
 
@@ -76,3 +80,5 @@ https://raw.githubusercontent.com/teaoea/shell/main/plugins/Claude/Claude.plugin
 - [Claude 网络要求及 Artifact 第三方依赖](https://code.claude.com/docs/en/network-config#network-access-requirements)
 
 非官方插件，与 Anthropic、Loon 无隶属关系。许可证沿用仓库 MIT。
+
+图标来自 Anthropic 发布的 [Claude App Store 应用](https://apps.apple.com/us/app/claude-by-anthropic/id6473753684)，通过 Apple Lookup API 核对应用名称和开发者为 Anthropic PBC 后保存为 `assets/claude.jpg`，用于辨识本插件。
