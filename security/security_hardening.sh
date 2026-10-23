@@ -14,6 +14,7 @@ readonly LATEST="$STATE_DIR/latest"
 readonly TIMER=vps-security-rollback.timer
 readonly SERVICE_FILE=/etc/systemd/system/vps-security-rollback.service
 readonly TIMER_FILE=/etc/systemd/system/vps-security-rollback.timer
+readonly SOCKET_OVERRIDE=/etc/systemd/system/ssh.socket.d/zzzz-vps-security.conf
 readonly BEGIN_MARK='# BEGIN security_hardening.sh'
 readonly END_MARK='# END security_hardening.sh'
 ACTION=apply
@@ -24,6 +25,8 @@ LOGIN_USER="${SUDO_USER:-root}"
 KEY_CONFIRMED=false
 ASSUME_YES=false
 SSH_SERVICE=""
+SSH_SOCKET_MODE=false
+SOCKET_LISTEN=()
 SSHD=""
 BACKUP=""
 APPLYING=false
@@ -40,7 +43,7 @@ usage() {
   cat <<'HELP'
 用法: bash security_hardening.sh [选项]
       bash security_hardening.sh --confirm|--rollback|--status
-适用 Debian/Ubuntu、systemd 和常驻 OpenSSH 服务。需要 root 权限。
+适用 Debian/Ubuntu、systemd，支持常驻 OpenSSH 或 ssh.socket 激活。需要 root 权限。
   --ssh-port N          新 SSH 端口；交互默认保留当前端口
   --disable-password    关闭密码及键盘交互登录，仅允许公钥认证
   --keep-password       保留原有认证配置
@@ -115,7 +118,10 @@ require_environment() {
     command -v "$name" >/dev/null 2>&1 || die "缺少工具: $name"
   done
   SSHD=$(command -v sshd) || die "未安装 OpenSSH 服务端"
-  if systemctl is-active --quiet ssh.service; then SSH_SERVICE=ssh.service
+  if systemctl is-active --quiet ssh.socket; then
+    SSH_SOCKET_MODE=true
+    SSH_SERVICE=ssh.service
+  elif systemctl is-active --quiet ssh.service; then SSH_SERVICE=ssh.service
   elif systemctl is-active --quiet sshd.service; then SSH_SERVICE=sshd.service
   elif [[ "$ACTION" != rollback ]]; then die "未找到正在运行的 SSH 服务"; fi
   mkdir -p -m 700 "$STATE_DIR"
@@ -134,6 +140,10 @@ connection_context() {
 read_current_ports() {
   local port config
   config=$("$SSHD" -T)
+  if [[ "$SSH_SOCKET_MODE" == true ]]; then
+    read_socket_listeners
+    config=$(printf 'port %s\n' "${SOCKET_LISTEN[@]##*:}")
+  fi
   while read -r port; do
     validate_port "$port" || die "无法识别 SSH 端口"
     OLD_PORTS+=("$port")
@@ -143,6 +153,51 @@ read_current_ports() {
     port=${SSH_CONNECTION##* }
     validate_port "$port" || die "SSH_CONNECTION 中的服务端端口无效"
     if ! printf '%s\n' "${OLD_PORTS[@]}" | grep -Fxq "$port"; then OLD_PORTS+=("$port"); fi
+  fi
+}
+
+read_socket_listeners() {
+  local value endpoint kind port
+  value=$(systemctl show ssh.socket --property=Listen --value)
+  SOCKET_LISTEN=()
+  # systemd 的 Listen 属性形如 “[::]:22 (Stream) 0.0.0.0:2222 (Stream)”。
+  while read -r endpoint kind; do
+    [[ -n "$endpoint" ]] || continue
+    port=${endpoint##*:}
+    [[ "$kind" == '(Stream)' && ( "$endpoint" =~ ^\[[0-9a-fA-F:%.]+\]:[0-9]+$ ||
+      "$endpoint" =~ ^[0-9.]+:[0-9]+$ ) ]] && validate_port "$port" ||
+      die "无法安全处理 ssh.socket 的监听地址: $endpoint $kind"
+    SOCKET_LISTEN+=("$endpoint")
+  done < <(printf '%s\n' "$value" | awk '{for(i=1;i<NF;i+=2) print $i, $(i+1)}')
+  ((${#SOCKET_LISTEN[@]})) || die "未读取到 ssh.socket 的 TCP 监听地址"
+}
+
+write_socket_config() {
+  local stage=$1 endpoint
+  [[ "$SSH_SOCKET_MODE" == true ]] || return 0
+  mkdir -p -m 755 "${SOCKET_OVERRIDE%/*}"
+  {
+    printf '[Socket]\nListenStream=\n'
+    # 复用实际 socket 的地址绑定，不把仅绑定某个网卡的 SSH 扩大为全网监听。
+    for endpoint in "${SOCKET_LISTEN[@]}"; do
+      printf 'ListenStream=%s:%s\n' "${endpoint%:*}" "$SSH_PORT"
+      [[ "$stage" != pending ]] || printf 'ListenStream=%s\n' "$endpoint"
+    done | sort -u
+  } >"$SOCKET_OVERRIDE"
+  chmod 644 "$SOCKET_OVERRIDE"
+}
+
+reload_ssh() {
+  if [[ "$SSH_SOCKET_MODE" == true ]]; then
+    systemctl daemon-reload
+    local actual expected
+    actual=$(read_socket_listeners; printf '%s\n' "${SOCKET_LISTEN[@]}" | sort -u)
+    expected=$(sed -n 's/^ListenStream=\(.\{1,\}\)$/\1/p' "$SOCKET_OVERRIDE" | sort -u)
+    [[ "$actual" == "$expected" ]] || die "SSH socket 有效监听与计划不符，请检查其他 systemd 覆盖配置"
+    # 必须一同重启，确保 sshd 不再持有旧的监听描述符；KillMode=process 保留已登录会话。
+    systemctl restart ssh.socket "$SSH_SERVICE"
+  else
+    systemctl reload "$SSH_SERVICE"
   fi
 }
 
@@ -295,7 +350,15 @@ preflight() {
   local file port include basename
   [[ -f "${BASH_SOURCE[0]}" ]] || die "请从保存的脚本文件运行，以便安装自动回滚程序"
   [[ ! -e "$PENDING" && ! -L "$PENDING" ]] || die "上次修改尚未确认，请先 --confirm 或 --rollback"
-  systemctl is-active --quiet ssh.socket && die "检测到 SSH socket 激活模式；本脚本仅支持常驻 SSH 服务，未修改配置"
+  if [[ "$SSH_SOCKET_MODE" == true ]]; then
+    [[ "$(systemctl show ssh.socket --property=Accept --value)" == no &&
+       "$(systemctl show ssh.socket --property=Triggers --value)" == ssh.service ]] ||
+      die "仅支持 Accept=no 且激活 ssh.service 的 ssh.socket"
+    [[ "$(systemctl show "$SSH_SERVICE" --property=KillMode --value)" == process ]] ||
+      die "SSH socket 重启需要 KillMode=process 以保留当前会话，请先检查服务设置"
+    [[ ! -L "${SOCKET_OVERRIDE%/*}" && ! -L "$SOCKET_OVERRIDE" &&
+       ( ! -e "$SOCKET_OVERRIDE" || -f "$SOCKET_OVERRIDE" ) ]] || die "SSH socket 配置路径不是普通文件或目录"
+  fi
   "$SSHD" -t
   CONFIG_FILES=("$SSH_CONFIG")
   for file in "$SSH_CONFIG_D"/*.conf; do [[ ! -f "$file" ]] || CONFIG_FILES+=("$file"); done
@@ -344,6 +407,11 @@ save_backup() {
     index=$((index + 1))
   done
   printf '%s\n' "$SSH_SERVICE" >"$BACKUP/ssh-service"
+  printf '%s\n' "$SSH_SOCKET_MODE" >"$BACKUP/socket-mode"
+  if [[ "$SSH_SOCKET_MODE" == true ]]; then
+    printf '%s\n' "${SOCKET_LISTEN[@]}" >"$BACKUP/socket-listen"
+    if [[ -f "$SOCKET_OVERRIDE" ]]; then cp -a -- "$SOCKET_OVERRIDE" "$BACKUP/socket-override"; fi
+  fi
   printf '%s\n' "$SSH_PORT" >"$BACKUP/new-port"
   printf '%s\n' "${OLD_PORTS[@]}" >"$BACKUP/old-ports"
   printf '%s\n' "$LOGIN_USER" >"$BACKUP/login-user"
@@ -444,8 +512,15 @@ apply_firewall() {
 }
 
 verify_listener() {
+  local port
   systemctl is-active --quiet "$SSH_SERVICE" || die "SSH 服务未运行"
+  if [[ "$SSH_SOCKET_MODE" == true ]]; then
+    systemctl is-active --quiet ssh.socket || die "SSH socket 未运行"
+  fi
   ss -H -lnt | awk -v port="$SSH_PORT" '$4 ~ (":" port "$") {found=1} END {exit !found}' || die "新 SSH 端口未监听"
+  for port in ${OLD_PORTS[@]+"${OLD_PORTS[@]}"}; do
+    ss -H -lnt | awk -v port="$port" '$4 ~ (":" port "$") {found=1} END {exit !found}' || die "待确认的旧 SSH 端口未监听: $port"
+  done
 }
 
 restore_backup() {
@@ -455,8 +530,17 @@ restore_backup() {
     cp -a -- "$backup/ssh-$index" "$file" || failed=1
   done <"$backup/ssh-files.tsv"
   service=$(<"$backup/ssh-service")
+  SSH_SOCKET_MODE=false
+  [[ ! -f "$backup/socket-mode" ]] || SSH_SOCKET_MODE=$(<"$backup/socket-mode")
+  if [[ "$SSH_SOCKET_MODE" == true ]]; then
+    if [[ -f "$backup/socket-override" ]]; then cp -a -- "$backup/socket-override" "$SOCKET_OVERRIDE" || failed=1
+    else rm -f -- "$SOCKET_OVERRIDE" || failed=1; fi
+  fi
   if "$SSHD" -t; then
-    if systemctl is-active --quiet "$service"; then systemctl reload "$service" || failed=1
+    if [[ "$SSH_SOCKET_MODE" == true ]]; then
+      systemctl daemon-reload || failed=1
+      systemctl restart ssh.socket "$service" || failed=1
+    elif systemctl is-active --quiet "$service"; then systemctl reload "$service" || failed=1
     else systemctl start "$service" || failed=1; fi
   else failed=1; fi
   mode=$(<"$backup/firewall-mode")
@@ -529,8 +613,9 @@ apply_changes() {
   verify_ssh_config confirmed
   write_ssh_config pending
   verify_ssh_config pending
+  write_socket_config pending
   apply_firewall
-  systemctl reload "$SSH_SERVICE"
+  reload_ssh
   verify_listener
   APPLYING=false
   log "已应用，等待确认；请保留当前会话，从新端口重新登录 ${LOGIN_USER}；关闭密码登录时必须使用公钥。"
@@ -545,6 +630,13 @@ confirm_changes() {
   SSH_PORT=$(<"$BACKUP/new-port")
   LOGIN_USER=$(<"$BACKUP/login-user")
   PASSWORD_MODE=$(<"$BACKUP/password-mode")
+  SSH_SERVICE=$(<"$BACKUP/ssh-service")
+  SSH_SOCKET_MODE=false
+  [[ ! -f "$BACKUP/socket-mode" ]] || SSH_SOCKET_MODE=$(<"$BACKUP/socket-mode")
+  SOCKET_LISTEN=()
+  if [[ "$SSH_SOCKET_MODE" == true ]]; then
+    while read -r port; do SOCKET_LISTEN+=("$port"); done <"$BACKUP/socket-listen"
+  fi
   [[ -n "${SSH_CONNECTION:-}" ]] || die "请在新 SSH 连接中执行确认"
   session_port=${SSH_CONNECTION##* }
   [[ "$session_port" == "$SSH_PORT" ]] || die "当前连接不是新 SSH 端口，请重新连接后确认"
@@ -558,7 +650,8 @@ confirm_changes() {
   APPLYING=true
   write_ssh_config confirmed
   verify_ssh_config confirmed
-  systemctl reload "$SSH_SERVICE"
+  write_socket_config confirmed
+  reload_ssh
   verify_listener
   while read -r port; do
     [[ "$port" != "$SSH_PORT" ]] || continue

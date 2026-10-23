@@ -10,7 +10,7 @@
 bash -c 'set -e; runner=(); if [ "$(id -u)" -ne 0 ]; then runner=(sudo --preserve-env=SSH_CONNECTION); fi; if ! command -v curl >/dev/null 2>&1; then "${runner[@]}" apt-get update; "${runner[@]}" apt-get install -y ca-certificates curl; fi; security_script=$(mktemp); trap "rm -f -- \"$security_script\"" EXIT; curl -fsSL --retry 3 https://raw.githubusercontent.com/teaoea/shell/refs/heads/main/security/security_hardening.sh -o "$security_script"; "${runner[@]}" bash "$security_script"'
 ```
 
-该命令在缺少 `curl` 时先安装首次下载所需工具，自动处理 root / `sudo`，保留 `SSH_CONNECTION`，并在退出时删除下载的临时文件。本地文件可用 `sudo --preserve-env=SSH_CONNECTION bash security_hardening.sh` 运行；已登录 root 时省略 `sudo --preserve-env=SSH_CONNECTION`。脚本会询问新 SSH 端口（默认保留当前端口）、是否关闭密码登录、防火墙模式和额外放行的业务端口；最后展示计划和当前监听端口，确认后应用。支持 Debian/Ubuntu 的常驻 `ssh.service` 或 `sshd.service`；检测到 `ssh.socket` 正在运行时会停止。标准 `sshd_config.d` 目录以外的自定义 `Include`、带端口的 `ListenAddress` 或冲突的 `Match` 认证策略需要先处理，避免修改后实际配置与计划不一致。
+该命令在缺少 `curl` 时先安装首次下载所需工具，自动处理 root / `sudo`，保留 `SSH_CONNECTION`，并在退出时删除下载的临时文件。本地文件可用 `sudo --preserve-env=SSH_CONNECTION bash security_hardening.sh` 运行；已登录 root 时省略 `sudo --preserve-env=SSH_CONNECTION`。脚本会询问新 SSH 端口（默认保留当前端口）、是否关闭密码登录、防火墙模式和额外放行的业务端口；最后展示计划和当前监听端口，确认后应用。支持 Debian/Ubuntu 的常驻 `ssh.service`、`sshd.service`，以及 `Accept=no` 且激活 `ssh.service` 的 `ssh.socket`。socket 模式要求服务使用 `KillMode=process`，避免重启监听主进程时终止已登录会话；不支持的自定义单元会在备份和修改前停止。标准 `sshd_config.d` 目录以外的自定义 `Include`、带端口的 `ListenAddress` 或冲突的 `Match` 认证策略需要先处理，避免修改后实际配置与计划不一致。
 
 ### SSH 端口和认证
 
@@ -20,6 +20,14 @@ bash -c 'set -e; runner=(); if [ "$(id -u)" -ne 0 ]; then runner=(sudo --preserv
 - 公钥写入当前 `AuthorizedKeysFile` 已启用的用户家目录标准 `.ssh/authorized_keys` 或 `.ssh/authorized_keys2`，原有内容保留，相同密钥不重复追加。目录权限设为 `700`、文件权限设为 `600`，归属目标用户；存在旧文件时先备份到 `/var/lib/vps-security/public-key-backups/`，再通过临时文件替换。符号链接路径不会写入。
 - 关闭密码登录必须明确确认已实际用公钥登录。新公钥写入后，先保留当前 SSH 认证配置，提示在另一个终端用该密钥验证；确认成功才继续关闭密码登录。未确认时，本次改为保留原认证配置，继续其余安全设置，之后可以重跑脚本关闭密码登录。非交互模式不会索取或自动安装公钥，需要事先准备密钥并明确传入 `--key-login-confirmed`。
 - 只配置 SSH 证书、`AuthorizedKeysCommand` 或自定义公钥路径、未启用标准用户公钥文件的环境需要单独处理。公钥文件检查不能替代真实登录测试；公钥安装属于独立准备步骤，SSH/UFW 回滚不会删除本次新安装的公钥。
+
+### Ubuntu 的 SSH socket 激活
+
+新版 Ubuntu 默认可能由 systemd 的 `ssh.socket` 持有监听端口；仅重载 `sshd_config` 不足以更新这些端口。脚本保留 socket 激活模式，不切换为常驻启动，也不改变 SSH 单元原有的开机启用状态。参见 [Ubuntu 官方说明](https://discourse.ubuntu.com/t/sshd-now-uses-socket-based-activation-ubuntu-22-10-and-later/30189)。
+
+- 从 socket 的实际监听地址读取原端口，在 `/etc/systemd/system/ssh.socket.d/zzzz-vps-security.conf` 写入本次覆盖配置，沿用原有地址绑定；待确认阶段保留原来的完整监听地址，再在相同地址增加新端口。
+- 先放行端口，再重载 systemd，核对有效 socket 监听与计划一致，一同重启 socket 和 SSH 主进程并检查监听；已有登录会话保留。
+- 新连接确认后，将 socket 和 SSH 配置同时改为新端口。失败或超时回滚时，同时恢复 SSH 配置和本次覆盖文件；原来没有该文件则删除本次创建的文件。其他 socket 覆盖文件保持原状。
 
 ### UFW 防火墙
 

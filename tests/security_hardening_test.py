@@ -37,10 +37,23 @@ systemctl() {
   if [[ "$1" == is-active ]]; then
     case "${@: -1}" in
       ssh.service) [[ "${SSH_INACTIVE:-0}" != 1 ]]; return ;;
+      ssh.socket) [[ "$SSH_SOCKET_MODE" == true ]]; return ;;
       vps-security-rollback.timer) [[ "${TIMER_FAIL:-0}" != 1 ]]; return ;;
       *) return 1 ;;
     esac
   fi
+  if [[ "$1" == show ]]; then
+    case "$*" in
+      *--property=Listen*)
+        if [[ -f "$SOCKET_OVERRIDE" && "${SOCKET_OVERRIDE_CONFLICT:-0}" == 0 ]]; then
+          awk -F= '$1=="ListenStream" && $2!="" {print $2 " (Stream)"}' "$SOCKET_OVERRIDE"
+        else printf '%s\n' "${SOCKET_ENDPOINTS:-0.0.0.0:22 (Stream) [::]:2200 (Stream)}"; fi ;;
+      *--property=Accept*) echo "${SOCKET_ACCEPT:-no}" ;;
+      *--property=Triggers*) echo ssh.service ;;
+      *--property=KillMode*) echo "${SSH_KILL_MODE:-process}" ;;
+    esac
+  fi
+  if [[ "$1" == restart && "${SOCKET_RESTART_FAIL:-0}" == 1 ]]; then SOCKET_RESTART_FAIL=0; return 1; fi
   return 0
 }
 ufw() {
@@ -192,8 +205,59 @@ apply_changes
 PORT_BUSY=1
 apply_changes
 ''', 1)
-    run('socket activation refuses all changes', r'''
-systemctl() { [[ "$1" == is-active && "${@: -1}" == ssh.socket ]]; }
+    run('socket activation keeps addresses and old endpoints until confirmation', r'''
+SSH_SOCKET_MODE=true
+apply_changes
+grep -Fxq 'ListenStream=' "$SOCKET_OVERRIDE"
+grep -Fxq 'ListenStream=0.0.0.0:22222' "$SOCKET_OVERRIDE"
+grep -Fxq 'ListenStream=[::]:22222' "$SOCKET_OVERRIDE"
+grep -Fxq 'ListenStream=0.0.0.0:22' "$SOCKET_OVERRIDE"
+grep -Fxq 'ListenStream=[::]:2200' "$SOCKET_OVERRIDE"
+! grep -Fxq 'ListenStream=0.0.0.0:2200' "$SOCKET_OVERRIDE"
+! grep -Fxq 'ListenStream=[::]:22' "$SOCKET_OVERRIDE"
+grep -q 'systemctl restart ssh.socket ssh.service' "$LOG"
+! grep -q 'systemctl .*disable.*ssh.socket' "$LOG"
+SSH_CONNECTION='203.0.113.10 60000 192.0.2.10 22222'
+confirm_changes
+! grep -Fxq 'ListenStream=0.0.0.0:22' "$SOCKET_OVERRIDE"
+! grep -Fxq 'ListenStream=[::]:2200' "$SOCKET_OVERRIDE"
+[[ ! -e "$PENDING" ]]
+''')
+    run('socket keeps restricted interface binding', r'''
+SSH_SOCKET_MODE=true
+SOCKET_ENDPOINTS='192.0.2.10:22 (Stream)'
+apply_changes
+grep -Fxq 'ListenStream=192.0.2.10:22222' "$SOCKET_OVERRIDE"
+! grep -q '0.0.0.0\|\[::\]' "$SOCKET_OVERRIDE"
+restore_backup "$BACKUP"
+[[ ! -e "$SOCKET_OVERRIDE" ]]
+''', verify=restored)
+    run('socket restart failure rolls back config and newly created override', r'''
+SSH_SOCKET_MODE=true
+SOCKET_RESTART_FAIL=1
+apply_changes
+''', 1, verify=lambda f,m,o,r: (restored(f,m,o,r), not (f/'etc/systemd/system/ssh.socket.d/zzzz-vps-security.conf').exists() or (_ for _ in ()).throw(AssertionError('override not removed'))))
+    run('socket rollback restores an existing override', r'''
+SSH_SOCKET_MODE=true
+mkdir -p "${SOCKET_OVERRIDE%/*}"
+printf '[Socket]\nListenStream=127.0.0.1:22\n' >"$SOCKET_OVERRIDE"
+apply_changes
+restore_backup "$BACKUP"
+[[ "$(cat "$SOCKET_OVERRIDE")" == $'[Socket]\nListenStream=127.0.0.1:22' ]]
+''', verify=restored)
+    run('socket unsafe KillMode refuses before backup', r'''
+SSH_SOCKET_MODE=true
+SSH_KILL_MODE=control-group
+apply_changes
+''', 1)
+    run('socket conflicting override fails effective-listener check and rolls back', r'''
+SSH_SOCKET_MODE=true
+SOCKET_OVERRIDE_CONFLICT=1
+apply_changes
+''', 1, verify=restored)
+    run('per-connection socket activation refuses before backup', r'''
+SSH_SOCKET_MODE=true
+SOCKET_ACCEPT=yes
 apply_changes
 ''', 1)
     run('Match authentication conflict refuses changes', r'''
