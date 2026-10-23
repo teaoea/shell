@@ -37,6 +37,15 @@
 
 退出码 `0`。该测试使用 `--firewall keep`，不证明真实 UFW 改动；root 登录关闭和管理员创建新增功能另由隔离命令夹具及真实 sshd 配置解析检查，未在生产服务器创建管理员或关闭 root 登录。
 
+新增管理员功能发布为 `b97ea0f` 后，重新从 GitHub 获取最终脚本，再完成一次相同的真实 socket 登录、确认和回滚流程（`50161 -> 55131`），退出码 `0`。生产 SSH 配置与主进程仍未改变，临时单元及计时器已清理。
+
+服务器下载 GitHub `main` 内容的 SHA-256 与本地一致：
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `security/security_hardening.sh` | `3f337e2d761dc77ecaf44a508eb5b01c12d764abfb80278e563505d76ec2e1aa` |
+| `install/install_xray.sh` | `316629f7afb9c73bc2c3337466f6cc416ccc1b8da8bfe5bb879a1dbdb9ee4116` |
+
 ## 本地检查
 
 - Xray 安装器：35 项隔离检查通过，包括 IPv6 通配监听但使用 IPv4 回环检测、传输重试、错误出口不重试、失败恢复和日志权限，以及标准端点的备用端口列表。
