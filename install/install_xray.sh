@@ -643,7 +643,7 @@ stop_warp_test() {
 }
 
 prepare_warp_endpoints() {
-  local host port family address
+  local host port family address candidate fallback_port
   local -a families=(4 6)
   WARP_ENDPOINT_CANDIDATES=()
   host=${WARP_ENDPOINT%:*}; port=${WARP_ENDPOINT##*:}
@@ -664,6 +664,15 @@ prepare_warp_endpoints() {
     done < <(timeout 10 getent "ahostsv$family" "$host" 2>/dev/null | awk '$2 == "DGRAM" && !seen[$1]++ {print $1}' || true)
   done
   ((${#WARP_ENDPOINT_CANDIDATES[@]} > 0)) || die "无法解析 WARP Endpoint 的可用 IP 地址"
+  # wgcf 的标准 Cloudflare 端点才尝试官方备用 UDP 端口；不改写其他端点。
+  if [[ "$host" == engage.cloudflareclient.com && "$port" == 2408 ]]; then
+    local -a primary_candidates=("${WARP_ENDPOINT_CANDIDATES[@]}")
+    for fallback_port in 500 1701 4500; do
+      for candidate in "${primary_candidates[@]}"; do
+        WARP_ENDPOINT_CANDIDATES+=("${candidate%:*}:$fallback_port")
+      done
+    done
+  fi
 }
 
 probe_warp_connection() {

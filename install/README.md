@@ -74,6 +74,8 @@ bash -c 'set -e; xray_script=$(curl -fsSL --retry 3 https://raw.githubuserconten
 
 检测统一连接 IPv4 回环地址 `127.0.0.1`；正式入口监听 `::` 时允许双栈，因此不依赖 VPS 是否配置 `::1`。传输错误最多尝试三次，已返回的错误出口不会重试掩盖。失败时保留 curl 退出码、错误信息及最近的检测/服务日志到 `/var/lib/xray-warp/diagnostics/`（目录 `700`、文件 `600`，移除本次已知凭据且不保存检测 JSON），然后回滚。
 
+wgcf 标准端点 `engage.cloudflareclient.com:2408` 的默认地址未测通时，会继续检测同一批地址的 [Cloudflare 官方备用 UDP 端口](https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/cloudflare-one-client/deployment/firewall/#wireguard)：`500`、`1701`、`4500`。仅固定实际返回 `warp=on/plus` 的端点，不修改自定义端点，不修改防火墙。2026-10-23 在 joysol 的隔离实例中，`162.159.192.1:1701` 已通过 REALITY 与 Shadowsocks 的全流量 WARP HTTPS 检查；生产配置与凭据未改动。
+
 “全部”指通过 Xray 代理入口的流量，不接管 VPS 自身的 SSH、软件更新等系统流量。已选择的仅 IPv4/仅 IPv6 目标地址族拦截规则仍优先执行，直接连接 WARP Endpoint 的地址族由 VPS 网络决定；原有 Freedom 出口模式不等于 WireGuard 隧道内的地址族策略。需要 VPS 可达 Cloudflare 注册 API、下载站和 WireGuard UDP Endpoint。真实检测反映安装时的状态，后续仍需保持账户与网络可用。
 
 WireGuard 出站显式设置自身的 `domainStrategy`：仅 IPv4/IPv6 分别使用 `ForceIPv4`/`ForceIPv6`，双栈优先模式使用 `ForceIPv4v6`/`ForceIPv6v4`；未选择出口模式时，Freedom 仍不写策略，WARP 的域名解析采用 `ForceIPv4v6`。这只控制隧道内域名解析的地址族选择；不会改变 IP 字面量目标，也不是 TCP 连接失败后的 Happy Eyeballs 回退。WireGuard 的解析策略独立于 Freedom，需要分别设置。

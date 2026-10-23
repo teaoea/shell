@@ -622,6 +622,30 @@ verify_xray_installation
     def test_formal_warp_service_skipped_when_disabled(self):
         self.bash('verify_warp_service; [[ -z "$TEMP_WARP_DIR" ]]')
 
+    def test_warp_standard_endpoint_has_official_fallback_ports(self):
+        self.bash(r'''
+getent() {
+  case "$1" in
+    ahostsv4) echo '162.159.192.1 DGRAM fixture' ;;
+    ahostsv6) echo '2606:4700:d0::1 DGRAM fixture' ;;
+  esac
+}
+timeout() { shift; "$@"; }
+WARP_ENDPOINT=engage.cloudflareclient.com:2408
+prepare_warp_endpoints
+[[ "${#WARP_ENDPOINT_CANDIDATES[@]}" == 8 ]]
+[[ "${WARP_ENDPOINT_CANDIDATES[0]}" == 162.159.192.1:2408 ]]
+[[ "${WARP_ENDPOINT_CANDIDATES[1]}" == '[2606:4700:d0::1]:2408' ]]
+[[ "${WARP_ENDPOINT_CANDIDATES[4]}" == 162.159.192.1:1701 ]]
+[[ "${WARP_ENDPOINT_CANDIDATES[7]}" == '[2606:4700:d0::1]:4500' ]]
+WARP_ENDPOINT=example.com:2408
+prepare_warp_endpoints
+[[ "${#WARP_ENDPOINT_CANDIDATES[@]}" == 2 ]]
+WARP_ENDPOINT=162.159.192.1:2408
+prepare_warp_endpoints
+[[ "${#WARP_ENDPOINT_CANDIDATES[@]}" == 1 ]]
+''')
+
     def test_formal_probe_transport_retry_and_wrong_route_is_not_retried(self):
         body = self.formal_service_fixture()
         self.bash(body + r'''
