@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import shutil
+import shlex
 import subprocess
 import tempfile
 
@@ -23,6 +24,8 @@ SSH_CONNECTION='203.0.113.10 50000 192.0.2.10 22'
 LOGIN_USER=root
 SSH_PORT=22222
 PASSWORD_MODE=disable-password
+ROOT_LOGIN_MODE=keep-root-login
+ADMIN_SELECTION_SET=true
 KEY_CONFIRMED=true
 FIREWALL_MODE=enable
 ASSUME_YES=true
@@ -85,7 +88,7 @@ def fixture(directory):
     (directory / 'etc/ufw/user.rules').write_text('original-firewall\n')
     (directory / 'etc/default/ufw').write_text('IPV6=no\n')
     source = SCRIPT.read_text().rsplit('main "$@"', 1)[0]
-    source = re.sub(r'(readonly [A-Z_]+=)(/etc/[^\n]+|/var/lib/vps-security)', lambda m: m[1] + str(directory / m[2].lstrip('/')), source)
+    source = re.sub(r'(readonly [A-Z_]+=)(/etc/[^\n]+|/var/lib/vps-security|/home)', lambda m: m[1] + str(directory / m[2].lstrip('/')), source)
     (directory / 'fixture.sh').write_text(source)
     wrapper = directory / 'sshd-wrapper'
     wrapper.write_text('#!/bin/bash\nexec ' + repr(SSHD) + ' -f ' + repr(str(main)) + ' "$@"\n')
@@ -109,6 +112,7 @@ with tempfile.TemporaryDirectory(prefix='security-hardening-test-') as temp:
         env = dict(os.environ)
         code = COMMON
         if platform.system() == 'Darwin':
+            code += 'openssl() { ' + shlex.quote(shutil.which('openssl')) + ' "$@"; }\n'
             code += 'sed() { if [[ "$1" == -i ]]; then shift; command sed -i "" "$@"; else command sed "$@"; fi; }\n'
             code += 'mv() { if [[ "$1" == -fT ]]; then shift; command mv -f "$@"; else command mv "$@"; fi; }\n'
         code += body
@@ -287,6 +291,136 @@ SSH_CONNECTION='203.0.113.10 60000 192.0.2.10 22222'
 SUDO_USER=otheruser
 confirm_changes
 ''', 1)
+
+    ADMIN_MOCK = r'''
+getent() {
+  if [[ "$1" == group && "$2" == sudo ]]; then echo 'sudo:x:27:'; return; fi
+  if [[ "$1" == passwd && "$2" == alice && -f "$FIXTURE_ROOT/account-created" ]]; then
+    printf 'alice:x:%s:%s::%s:/bin/bash\n' "$(command id -u)" "$(command id -g)" "$FIXTURE_ROOT/home/alice"; return
+  fi
+  return 2
+}
+useradd() { echo 'useradd alice' >>"$LOG"; touch "$FIXTURE_ROOT/account-created"; mkdir -m 700 "$FIXTURE_ROOT/home/alice"; }
+usermod() { printf 'usermod %s\n' "$*" >>"$LOG"; }
+sudo() { [[ "${DENY_SUDO:-0}" != 1 ]]; }
+visudo() { [[ "${INVALID_SUDO:-0}" != 1 ]]; }
+install() {
+  if [[ "$1" == -m && "$2" == 440 ]]; then
+    command cp "${@: -2}"; chmod 440 "${@: -1}"
+  else command install "$@"; fi
+}
+'''
+
+    def admin_config_setup(folder, main):
+        main.write_text(main.read_text().replace(f'AuthorizedKeysFile {folder}/home/.ssh/authorized_keys', 'AuthorizedKeysFile %h/.ssh/authorized_keys'))
+
+    def new_admin_verified(folder, main, original, result):
+        assert (folder/'account-created').is_file()
+        key=folder/'home/alice/.ssh/authorized_keys'
+        assert key.read_text().strip()==(folder/'host-key.pub').read_text().strip()
+        assert key.stat().st_mode & 0o777==0o600
+        sudoers=folder/'etc/sudoers.d/90-vps-security-alice'
+        assert sudoers.read_text()=='alice ALL=(ALL:ALL) NOPASSWD: ALL\n'
+        assert sudoers.stat().st_mode & 0o777==0o440
+
+    run('interactive admin creation, key-only auth, root deny and rollback', ADMIN_MOCK+r'''
+ASSUME_YES=false
+CREATE_ADMIN=alice
+LOGIN_USER=alice
+ROOT_LOGIN_MODE=disable-root-login
+PASSWORD_MODE=keep-password
+apply_changes
+[[ "$(config_value "$("$SSHD" -T -C "$(connection_context root)")" permitrootlogin)" == no ]]
+[[ "$(config_value "$("$SSHD" -T -C "$(connection_context alice)")" authenticationmethods)" == publickey ]]
+[[ "$(config_value "$("$SSHD" -T -C "$(connection_context other)")" passwordauthentication)" == yes ]]
+SSH_CONNECTION='203.0.113.10 60000 192.0.2.10 22222'
+SUDO_USER=alice
+confirm_changes
+[[ "$(config_value "$("$SSHD" -T -C "$(connection_context root)")" permitrootlogin)" == no ]]
+[[ "$(grep -c '^Match User alice$' "$SSH_CONFIG")" == 1 ]]
+restore_backup "$BACKUP"
+[[ "$(config_value "$("$SSHD" -T -C "$(connection_context root)")" permitrootlogin)" == yes ]]
+[[ -f "$SUDOERS_DIR/90-vps-security-alice" && -f "$FIXTURE_ROOT/home/alice/.ssh/authorized_keys" ]]
+''', setup=admin_config_setup, inputs=lambda f:'y\n'+(f/'host-key.pub').read_text()+'y\ny\n', verify=new_admin_verified)
+
+    run('unverified administrator keeps root login', ADMIN_MOCK+r'''
+ASSUME_YES=false
+CREATE_ADMIN=alice
+LOGIN_USER=alice
+ROOT_LOGIN_MODE=disable-root-login
+PASSWORD_MODE=keep-password
+apply_changes
+[[ "$ROOT_LOGIN_MODE" == keep-root-login ]]
+[[ "$(config_value "$("$SSHD" -T -C "$(connection_context root)")" permitrootlogin)" == yes ]]
+''', setup=admin_config_setup, inputs=lambda f:'y\n'+(f/'host-key.pub').read_text()+'n\ny\n', verify=new_admin_verified)
+
+    run('root disable rejected without alternate administrator', r'''
+ROOT_LOGIN_MODE=disable-root-login
+select_options
+''', 1)
+    run('root disable rejected without explicit noninteractive key verification', r'''
+ROOT_LOGIN_MODE=disable-root-login
+LOGIN_USER=alice
+KEY_CONFIRMED=false
+select_options
+''', 1)
+    run('root disable rejected when alternate user lacks sudo', ADMIN_MOCK+r'''
+ROOT_LOGIN_MODE=disable-root-login
+LOGIN_USER=alice
+DENY_SUDO=1
+check_administrator
+''', 1)
+    run('noninteractive account creation rejected before mutation', r'''
+CREATE_ADMIN=alice
+select_options
+''', 1)
+    run('interactive defaults keep root and do not create an account', r'''
+ASSUME_YES=false
+SSH_PORT=""
+PASSWORD_MODE=""
+FIREWALL_MODE=""
+ROOT_LOGIN_MODE=""
+ADMIN_SELECTION_SET=false
+select_options
+[[ -z "$CREATE_ADMIN" && "$ROOT_LOGIN_MODE" == keep-root-login && "$SSH_PORT" == 22 ]]
+''', inputs=lambda f:'\n\n\n\n3\n')
+    run('new administrator selection assigns the root replacement user', r'''
+ASSUME_YES=false
+ROOT_LOGIN_MODE=""
+ADMIN_SELECTION_SET=false
+select_options
+[[ "$CREATE_ADMIN" == alice && "$LOGIN_USER" == alice && "$ROOT_LOGIN_MODE" == disable-root-login ]]
+''', inputs=lambda f:'y\nalice\ny\n')
+    run('managed key-only block for prior admin survives adding another', r'''
+CREATE_ADMIN=alice
+CONFIG_FILES=("$SSH_CONFIG")
+write_ssh_config confirmed
+CREATE_ADMIN=bob
+write_ssh_config confirmed
+[[ $(grep -c '^Match User alice$' "$SSH_CONFIG") == 1 ]]
+[[ $(grep -c '^Match User bob$' "$SSH_CONFIG") == 1 ]]
+"$SSHD" -t
+''')
+    run('root-login CLI flags validate administrator and conflict', r'''
+ROOT_LOGIN_MODE=""
+parse_arguments --disable-root-login --login-user alice
+[[ "$LOGIN_USER" == alice && "$ROOT_LOGIN_MODE" == disable-root-login ]]
+parse_arguments --keep-root-login
+''', 1)
+    run('existing managed restrictions survive keep choices on rerun', r'''
+ROOT_LOGIN_MODE=disable-root-login
+LOGIN_USER=alice
+sudo() { return 0; }
+apply_changes
+systemctl disable --now "$TIMER"
+rm -f "$PENDING"
+OLD_PORTS=()
+PASSWORD_MODE=keep-password
+ROOT_LOGIN_MODE=keep-root-login
+apply_changes
+[[ "$(config_value "$("$SSHD" -T -C "$(connection_context root)")" permitrootlogin)" == no ]]
+[[ "$(config_value "$("$SSHD" -T)" passwordauthentication)" == no ]]
+''')
 
     def installed_key(folder, main, original, result):
         target = folder / 'home/.ssh/authorized_keys'

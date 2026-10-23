@@ -15,13 +15,23 @@ readonly TIMER=vps-security-rollback.timer
 readonly SERVICE_FILE=/etc/systemd/system/vps-security-rollback.service
 readonly TIMER_FILE=/etc/systemd/system/vps-security-rollback.timer
 readonly SOCKET_OVERRIDE=/etc/systemd/system/ssh.socket.d/zzzz-vps-security.conf
+readonly SUDOERS_DIR=/etc/sudoers.d
+readonly ADMIN_HOME_ROOT=/home
 readonly BEGIN_MARK='# BEGIN security_hardening.sh'
 readonly END_MARK='# END security_hardening.sh'
+readonly ADMIN_BEGIN='# BEGIN security_hardening.sh admin-key-only'
+readonly ADMIN_END='# END security_hardening.sh admin-key-only'
 ACTION=apply
 SSH_PORT=""
 PASSWORD_MODE=""
 FIREWALL_MODE=""
 LOGIN_USER="${SUDO_USER:-root}"
+LOGIN_USER_SET=false
+CREATE_ADMIN=""
+ADMIN_SELECTION_SET=false
+ROOT_LOGIN_MODE=""
+ROOT_LOGIN_POLICY=""
+PRESERVED_AUTH_SETTINGS=""
 KEY_CONFIRMED=false
 ASSUME_YES=false
 SSH_SERVICE=""
@@ -48,6 +58,9 @@ usage() {
   --disable-password    关闭密码及键盘交互登录，仅允许公钥认证
   --keep-password       保留原有认证配置
   --login-user USER     检查该用户的公钥登录条件，默认 sudo 用户或 root
+  --create-admin USER   交互创建管理员，安装公钥并授予免密 sudo；不支持 --yes
+  --disable-root-login  关闭 root SSH 登录；须指定并验证非 root 管理员的密钥登录
+  --keep-root-login     保留现有 root SSH 登录策略（交互默认）
   --key-login-confirmed 确认已实际使用公钥登录该用户；非交互关闭密码时必需
   --firewall MODE       configure：配置 UFW 并保留启用状态（交互默认）
                         enable：配置并启用 UFW；keep：不修改防火墙
@@ -59,7 +72,8 @@ usage() {
   -h, --help            显示帮助
 应用后须在 10 分钟内从新端口执行 --confirm，否则自动回滚。
 交互运行时，缺少公钥会提示粘贴并安装；验证登录前保留原认证配置。
-保持原有 root 登录策略。不会生成私钥或修改云安全组。
+默认保持原有 root 登录策略。不会生成私钥或修改云安全组。
+新建管理员及安装公钥属于准备步骤，SSH/UFW 回滚不会删除该账号或公钥。
 HELP
 }
 
@@ -80,11 +94,12 @@ parse_arguments() {
   local choices=0
   while (($#)); do
     case "$1" in
-      --ssh-port|--login-user|--firewall|--allow)
+      --ssh-port|--login-user|--create-admin|--firewall|--allow)
         [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 缺少参数"
         case "$1" in
           --ssh-port) SSH_PORT=$2 ;;
-          --login-user) LOGIN_USER=$2 ;;
+          --login-user) LOGIN_USER=$2; LOGIN_USER_SET=true ;;
+          --create-admin) CREATE_ADMIN=$2; ADMIN_SELECTION_SET=true ;;
           --firewall) FIREWALL_MODE=$2 ;;
           --allow) normalize_allow_port "$2" ;;
         esac
@@ -93,6 +108,9 @@ parse_arguments() {
         [[ -z "$PASSWORD_MODE" ]] || die "只能指定一种认证选择"
         PASSWORD_MODE=${1#--} ;;
       --key-login-confirmed) KEY_CONFIRMED=true ;;
+      --disable-root-login|--keep-root-login)
+        [[ -z "$ROOT_LOGIN_MODE" ]] || die "只能指定一种 root 登录选择"
+        ROOT_LOGIN_MODE=${1#--} ;;
       --yes) ASSUME_YES=true ;;
       --confirm|--rollback|--status) ACTION=${1#--}; choices=$((choices + 1)) ;;
       -h|--help) usage; exit 0 ;;
@@ -102,8 +120,13 @@ parse_arguments() {
   done
   ((choices <= 1)) || die "一次只能指定一个操作"
   [[ "$LOGIN_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*[$]?$ ]] || die "无效的登录用户名"
+  if [[ -n "$CREATE_ADMIN" ]]; then
+    [[ "$CREATE_ADMIN" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$CREATE_ADMIN" != root ]] || die "无效的管理员用户名"
+    [[ "$LOGIN_USER_SET" != true || "$LOGIN_USER" == "$CREATE_ADMIN" ]] || die "新建管理员必须是本次登录验证用户"
+    LOGIN_USER=$CREATE_ADMIN
+  fi
   if [[ "$ACTION" != apply ]]; then
-    [[ -z "$SSH_PORT$PASSWORD_MODE$FIREWALL_MODE" && ${#ALLOW_PORTS[@]} -eq 0 && "$KEY_CONFIRMED" == false ]] ||
+    [[ -z "$SSH_PORT$PASSWORD_MODE$FIREWALL_MODE$CREATE_ADMIN$ROOT_LOGIN_MODE" && ${#ALLOW_PORTS[@]} -eq 0 && "$KEY_CONFIRMED" == false ]] ||
       die "配置选项只能用于应用修改"
   fi
 }
@@ -134,12 +157,14 @@ config_value() { awk -v key="$2" 'tolower($1) == key {$1=""; sub(/^ /, ""); prin
 connection_context() {
   local client client_port server server_port
   read -r client client_port server server_port <<<"${SSH_CONNECTION:-127.0.0.1 0 127.0.0.1 22}"
-  printf 'user=%s,addr=%s,host=%s,laddr=%s,lport=%s' "$LOGIN_USER" "$client" "$client" "$server" "${SSH_PORT:-$server_port}"
+  printf 'user=%s,addr=%s,host=%s,laddr=%s,lport=%s' "${1:-$LOGIN_USER}" "$client" "$client" "$server" "${SSH_PORT:-$server_port}"
 }
 
 read_current_ports() {
   local port config
   config=$("$SSHD" -T)
+  ROOT_LOGIN_POLICY=$(config_value "$("$SSHD" -T -C "$(connection_context root)")" permitrootlogin)
+  PRESERVED_AUTH_SETTINGS=$(awk 'tolower($1) ~ /^(pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|authenticationmethods)$/ {print}' <<<"$config")
   if [[ "$SSH_SOCKET_MODE" == true ]]; then
     read_socket_listeners
     config=$(printf 'port %s\n' "${SOCKET_LISTEN[@]##*:}")
@@ -205,6 +230,8 @@ select_options() {
   local answer port=${OLD_PORTS[0]:-22}
   [[ -z "${SSH_CONNECTION:-}" ]] || port=${SSH_CONNECTION##* }
   if [[ "$ASSUME_YES" == true ]]; then
+    [[ -z "$CREATE_ADMIN" ]] || die "新建管理员需要交互输入公钥和验证登录，请去掉 --yes"
+    ROOT_LOGIN_MODE=${ROOT_LOGIN_MODE:-keep-root-login}
     [[ -n "$SSH_PORT" && -n "$PASSWORD_MODE" && -n "$FIREWALL_MODE" ]] ||
       die "--yes 需显式指定 --ssh-port、认证选择和 --firewall"
   else
@@ -212,6 +239,23 @@ select_options() {
     if [[ -z "$SSH_PORT" ]]; then
       read -r -p "新的 SSH 端口（默认 ${port}）: " answer
       SSH_PORT=${answer:-$port}
+    fi
+    if [[ "$ADMIN_SELECTION_SET" != true ]]; then
+      read -r -p '是否新建通过 SSH 公钥登录的管理员（可免密 sudo）？(y/N): ' answer
+      if [[ "$answer" =~ ^[Yy]$ ]]; then
+        read -r -p '新管理员用户名（小写字母、数字、下划线或短横线）: ' CREATE_ADMIN
+        [[ "$CREATE_ADMIN" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$CREATE_ADMIN" != root ]] || die "无效的管理员用户名"
+        LOGIN_USER=$CREATE_ADMIN
+      fi
+      ADMIN_SELECTION_SET=true
+    fi
+    if [[ -z "$ROOT_LOGIN_MODE" ]]; then
+      read -r -p '是否关闭 root 的 SSH 登录？(y/N): ' answer
+      if [[ "$answer" =~ ^[Yy]$ ]]; then ROOT_LOGIN_MODE=disable-root-login; else ROOT_LOGIN_MODE=keep-root-login; fi
+    fi
+    if [[ "$ROOT_LOGIN_MODE" == disable-root-login && "$LOGIN_USER" == root ]]; then
+      read -r -p '用于替代 root 登录的现有管理员用户名: ' LOGIN_USER
+      [[ "$LOGIN_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*[$]?$ && "$LOGIN_USER" != root ]] || die "关闭 root 登录需要非 root 管理员"
     fi
     if [[ -z "$PASSWORD_MODE" ]]; then
       read -r -p '是否关闭密码及键盘交互登录，仅保留公钥？(y/N): ' answer
@@ -232,9 +276,51 @@ select_options() {
   validate_port "$SSH_PORT" || die "SSH 端口必须是 1-65535"
   SSH_PORT=$((10#$SSH_PORT))
   case "$FIREWALL_MODE" in configure|enable|keep) ;; *) die "无效的防火墙模式" ;; esac
-  if [[ "$ASSUME_YES" == true && "$PASSWORD_MODE" == disable-password && "$KEY_CONFIRMED" != true ]]; then
-    die "非交互关闭密码登录需要 --key-login-confirmed"
+  [[ "$ROOT_LOGIN_MODE" != disable-root-login || "$LOGIN_USER" != root ]] || die "关闭 root 登录需要非 root 管理员"
+  if [[ "$ASSUME_YES" == true && ( "$PASSWORD_MODE" == disable-password || "$ROOT_LOGIN_MODE" == disable-root-login ) && "$KEY_CONFIRMED" != true ]]; then
+    die "非交互关闭密码或 root 登录需要 --key-login-confirmed"
   fi
+}
+
+create_administrator() {
+  local answer hash temp sudoers home="$ADMIN_HOME_ROOT/$CREATE_ADMIN"
+  [[ -n "$CREATE_ADMIN" ]] || return 0
+  getent passwd "$CREATE_ADMIN" >/dev/null && die "用户已存在；请改用 --login-user $CREATE_ADMIN"
+  sudoers="$SUDOERS_DIR/90-vps-security-$CREATE_ADMIN"
+  [[ ! -e "$sudoers" && ! -L "$sudoers" && ! -L "$SUDOERS_DIR" &&
+     ( ! -e "$SUDOERS_DIR" || -d "$SUDOERS_DIR" ) ]] || die "管理员 sudo 配置路径已存在或不是普通目录"
+  [[ ! -e "$home" && ! -L "$home" && -d "$ADMIN_HOME_ROOT" && ! -L "$ADMIN_HOME_ROOT" ]] || die "管理员家目录已存在或路径不可安全使用"
+  log "将创建管理员 ${CREATE_ADMIN}，使用 SSH 公钥登录并可免密 sudo。账号、公钥和 sudo 授权在 SSH/UFW 回滚后保留。"
+  read -r -p '创建此管理员并继续安装公钥？(y/N): ' answer
+  [[ "$answer" =~ ^[Yy]$ ]] || die "已取消创建管理员，未修改 SSH 配置"
+  if ! command -v sudo >/dev/null || ! command -v visudo >/dev/null || ! command -v openssl >/dev/null; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y sudo openssl
+  fi
+  command -v useradd >/dev/null && command -v usermod >/dev/null || die "缺少 useradd/usermod，请先安装 passwd 软件包"
+  visudo -c >/dev/null || die "现有 sudo 配置未通过校验"
+  # 使用不可获知的随机密码摘要，兼容 UsePAM=no 时拒绝锁定账号的 OpenSSH；SSH 另有公钥限定。
+  hash=$(openssl rand -base64 48 | openssl passwd -6 -stdin)
+  [[ "$hash" == '$6$'* ]] || die "无法初始化管理员认证信息"
+  useradd --create-home --home-dir "$home" --shell /bin/bash --password "$hash" "$CREATE_ADMIN"
+  chmod 700 "$home"
+  if getent group sudo >/dev/null; then usermod -aG sudo "$CREATE_ADMIN"; fi
+  mkdir -p -m 750 "$SUDOERS_DIR"
+  temp=$(mktemp /tmp/vps-security-sudo.XXXXXX)
+  TEMP_FILES+=("$temp")
+  printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$CREATE_ADMIN" >"$temp"
+  visudo -cf "$temp" >/dev/null || die "管理员 sudo 授权未通过校验"
+  install -m 440 -o root -g root "$temp" "$sudoers"
+  if ! visudo -c >/dev/null; then rm -f -- "$sudoers"; die "sudo 配置验证失败，已移除本次授权"; fi
+  KEY_CONFIRMED=false
+  log "管理员已创建: ${CREATE_ADMIN}；接下来安装其 SSH 公钥。"
+}
+
+check_administrator() {
+  [[ "$ROOT_LOGIN_MODE" == disable-root-login || -n "$CREATE_ADMIN" ]] || return 0
+  [[ "$LOGIN_USER" != root ]] || die "关闭 root 登录需要非 root 管理员"
+  command -v sudo >/dev/null && sudo -n -l -U "$LOGIN_USER" -- /bin/sh -c id >/dev/null 2>&1 ||
+    die "未确认 ${LOGIN_USER} 具有 sudo 管理权限，保留 root 登录"
 }
 
 write_public_key() {
@@ -336,13 +422,14 @@ check_public_key() {
 confirm_key_login() {
   local answer
   [[ "$KEY_CONFIRMED" != true ]] || return 0
-  log "当前 SSH 认证配置尚未修改。请保留此会话，另开终端，用公钥登录 ${LOGIN_USER} 验证。"
-  read -r -p '已经实际使用公钥重新登录成功，继续关闭密码登录？(y/N): ' answer
+  log "当前 SSH 认证配置尚未修改。请保留此会话，另开终端，用公钥登录 ${LOGIN_USER} 验证；管理员还应执行 sudo -n id 确认权限。"
+  read -r -p '已经实际使用公钥重新登录成功，继续应用登录限制？(y/N): ' answer
   if [[ "$answer" =~ ^[Yy]$ ]]; then
     KEY_CONFIRMED=true
   else
     PASSWORD_MODE=keep-password
-    log '本次保留原有 SSH 认证配置，继续其他安全配置；验证公钥登录后可再次运行以关闭密码登录。'
+    ROOT_LOGIN_MODE=keep-root-login
+    log '本次保留原有密码和 root 登录配置，继续其他安全配置；验证管理员公钥登录后可再次运行。'
   fi
 }
 
@@ -350,6 +437,7 @@ preflight() {
   local file port include basename
   [[ -f "${BASH_SOURCE[0]}" ]] || die "请从保存的脚本文件运行，以便安装自动回滚程序"
   [[ ! -e "$PENDING" && ! -L "$PENDING" ]] || die "上次修改尚未确认，请先 --confirm 或 --rollback"
+  [[ -z "$CREATE_ADMIN" ]] || ! getent passwd "$CREATE_ADMIN" >/dev/null || die "新管理员用户名已存在"
   if [[ "$SSH_SOCKET_MODE" == true ]]; then
     [[ "$(systemctl show ssh.socket --property=Accept --value)" == no &&
        "$(systemctl show ssh.socket --property=Triggers --value)" == ssh.service ]] ||
@@ -373,10 +461,11 @@ preflight() {
     if awk 'tolower($1)=="listenaddress" && ($2 ~ /^\[.*\]:[0-9]+$/ || $2 ~ /^[^:]+:[0-9]+$/) {found=1} END {exit !found}' "$file"; then
       die "发现绑定指定端口的 ListenAddress，需先调整该配置: $file"
     fi
-    if [[ "$PASSWORD_MODE" == disable-password ]] && awk '
+    if [[ "$PASSWORD_MODE" == disable-password || "$ROOT_LOGIN_MODE" == disable-root-login ]] && awk -v begin="$ADMIN_BEGIN" -v end="$ADMIN_END" '
+      index($0,begin " ")==1 {owned=1; next} index($0,end " ")==1 {owned=0; next} owned {next}
       /^[[:space:]]*#/ {next}
       tolower($1)=="match" {matched=1; next}
-      matched && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication|authenticationmethods|pubkeyauthentication)$/ {conflict=1}
+      matched && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication|authenticationmethods|pubkeyauthentication|permitrootlogin)$/ {conflict=1}
       END {exit !conflict}
     ' "$file"; then die "Match 块存在自定义认证策略，请先处理该配置: $file"; fi
   done
@@ -417,6 +506,10 @@ save_backup() {
   printf '%s\n' "$LOGIN_USER" >"$BACKUP/login-user"
   printf '%s\n' "${SSH_CONNECTION:-}" >"$BACKUP/original-connection"
   printf '%s\n' "$PASSWORD_MODE" >"$BACKUP/password-mode"
+  printf '%s\n' "$ROOT_LOGIN_MODE" >"$BACKUP/root-login-mode"
+  printf '%s\n' "$CREATE_ADMIN" >"$BACKUP/admin-user"
+  printf '%s\n' "$ROOT_LOGIN_POLICY" >"$BACKUP/root-login-policy"
+  printf '%s\n' "$PRESERVED_AUTH_SETTINGS" >"$BACKUP/preserved-auth"
   printf '%s\n' "$FIREWALL_MODE" >"$BACKUP/firewall-mode"
   if [[ "$FIREWALL_MODE" != keep ]]; then
     cp -a -- "$UFW_DIR" "$BACKUP/ufw"
@@ -442,14 +535,22 @@ write_ssh_config() {
       fi
       if [[ "$PASSWORD_MODE" == disable-password ]]; then
         printf 'PubkeyAuthentication yes\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nAuthenticationMethods publickey\n' >>"$temp"
+      elif [[ -n "$PRESERVED_AUTH_SETTINGS" ]]; then
+        printf '%s\n' "$PRESERVED_AUTH_SETTINGS" >>"$temp"
       fi
+      if [[ "$ROOT_LOGIN_MODE" == disable-root-login ]]; then printf 'PermitRootLogin no\n' >>"$temp"
+      elif [[ -n "$ROOT_LOGIN_POLICY" ]]; then printf 'PermitRootLogin %s\n' "$ROOT_LOGIN_POLICY" >>"$temp"; fi
       printf '%s\n' "$END_MARK" >>"$temp"
     else : >"$temp"; fi
-    awk -v begin="$BEGIN_MARK" -v end="$END_MARK" '
+    awk -v begin="$BEGIN_MARK" -v end="$END_MARK" -v admin_begin="$ADMIN_BEGIN $CREATE_ADMIN" -v admin_end="$ADMIN_END $CREATE_ADMIN" -v admin="$CREATE_ADMIN" '
+      admin!="" && $0==admin_begin {admin_block=1; next} admin!="" && $0==admin_end {admin_block=0; next} admin_block {next}
       $0==begin {block=1; next} $0==end {block=0; next} block {next}
       tolower($1)=="port" {print "# security_hardening.sh disabled: " $0; next}
       {print}
     ' "$file" >>"$temp"
+    if [[ "$file" == "$SSH_CONFIG" && -n "$CREATE_ADMIN" ]]; then
+      printf '\n%s %s\nMatch User %s\n  PubkeyAuthentication yes\n  PasswordAuthentication no\n  KbdInteractiveAuthentication no\n  AuthenticationMethods publickey\n%s %s\n' "$ADMIN_BEGIN" "$CREATE_ADMIN" "$CREATE_ADMIN" "$ADMIN_END" "$CREATE_ADMIN" >>"$temp"
+    fi
     cat "$temp" >"$file"
   done
 }
@@ -466,6 +567,14 @@ verify_ssh_config() {
        "$(config_value "$effective" kbdinteractiveauthentication)" == no &&
        "$(config_value "$effective" pubkeyauthentication)" == yes &&
        "$(config_value "$effective" authenticationmethods)" == publickey ]] || die "公钥认证设置未按预期生效"
+  fi
+  if [[ "$ROOT_LOGIN_MODE" == disable-root-login ]]; then
+    [[ "$(config_value "$("$SSHD" -T -C "$(connection_context root)")" permitrootlogin)" == no ]] || die "关闭 root SSH 登录的设置未生效"
+  fi
+  if [[ -n "$CREATE_ADMIN" ]]; then
+    [[ "$(config_value "$effective" authenticationmethods)" == publickey &&
+       "$(config_value "$effective" passwordauthentication)" == no &&
+       "$(config_value "$effective" kbdinteractiveauthentication)" == no ]] || die "管理员 SSH 公钥登录限制未生效"
   fi
 }
 
@@ -588,14 +697,17 @@ apply_changes() {
   read_current_ports
   select_options
   preflight
-  if [[ "$PASSWORD_MODE" == disable-password ]]; then
+  create_administrator
+  if [[ "$PASSWORD_MODE" == disable-password || "$ROOT_LOGIN_MODE" == disable-root-login || -n "$CREATE_ADMIN" ]]; then
     check_public_key
+    check_administrator
     confirm_key_login
   elif [[ "$ASSUME_YES" != true ]]; then
     check_public_key false
   fi
   log "SSH 端口: ${OLD_PORTS[*]} -> ${SSH_PORT}（确认前同时保留旧端口）"
   log "认证: ${PASSWORD_MODE}；防火墙: ${FIREWALL_MODE}；额外放行: ${ALLOW_PORTS[*]:-无}"
+  log "root SSH 登录: ${ROOT_LOGIN_MODE}；验证登录用户: ${LOGIN_USER}"
   if [[ "$FIREWALL_MODE" != keep ]]; then
     log 'UFW 将拒绝未放行的入站连接并允许出站连接；请确认业务端口已指定。当前监听情况：'
     ss -lntu
@@ -630,6 +742,12 @@ confirm_changes() {
   SSH_PORT=$(<"$BACKUP/new-port")
   LOGIN_USER=$(<"$BACKUP/login-user")
   PASSWORD_MODE=$(<"$BACKUP/password-mode")
+  ROOT_LOGIN_MODE=keep-root-login
+  [[ ! -f "$BACKUP/root-login-mode" ]] || ROOT_LOGIN_MODE=$(<"$BACKUP/root-login-mode")
+  CREATE_ADMIN=""
+  [[ ! -f "$BACKUP/admin-user" ]] || CREATE_ADMIN=$(<"$BACKUP/admin-user")
+  [[ ! -f "$BACKUP/root-login-policy" ]] || ROOT_LOGIN_POLICY=$(<"$BACKUP/root-login-policy")
+  [[ ! -f "$BACKUP/preserved-auth" ]] || PRESERVED_AUTH_SETTINGS=$(<"$BACKUP/preserved-auth")
   SSH_SERVICE=$(<"$BACKUP/ssh-service")
   SSH_SOCKET_MODE=false
   [[ ! -f "$BACKUP/socket-mode" ]] || SSH_SOCKET_MODE=$(<"$BACKUP/socket-mode")

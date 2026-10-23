@@ -15,7 +15,7 @@ bash -c 'set -e; runner=(); if [ "$(id -u)" -ne 0 ]; then runner=(sudo --preserv
 ### SSH 端口和认证
 
 - 修改端口时暂时同时监听新旧端口，先放行 SSH 端口，再重载 SSH 服务；应用前检查配置语法和实际生效选项，应用后检查新端口监听状态。
-- 可选关闭 `PasswordAuthentication` 和 `KbdInteractiveAuthentication`，启用公钥并将 `AuthenticationMethods` 设置为 `publickey`。保持已有 root 登录策略；不会生成或索取客户端私钥。
+- 可选关闭 `PasswordAuthentication` 和 `KbdInteractiveAuthentication`，启用公钥并将 `AuthenticationMethods` 设置为 `publickey`。root SSH 登录另行询问，默认保留现有策略；不会生成或索取客户端私钥。
 - 交互模式会检查目标用户是否已有可识别公钥；没有时提示粘贴 `.pub` 文件中的完整一行，如 `ssh-ed25519 AAAA... user@device`。输入空行可跳过安装并保留认证配置；如果选择关闭密码登录，则空输入会取消该操作。私钥、无效格式或无法解析的密钥会被拒绝，可以重新输入。
 - 公钥写入当前 `AuthorizedKeysFile` 已启用的用户家目录标准 `.ssh/authorized_keys` 或 `.ssh/authorized_keys2`，原有内容保留，相同密钥不重复追加。目录权限设为 `700`、文件权限设为 `600`，归属目标用户；存在旧文件时先备份到 `/var/lib/vps-security/public-key-backups/`，再通过临时文件替换。符号链接路径不会写入。
 - 关闭密码登录必须明确确认已实际用公钥登录。新公钥写入后，先保留当前 SSH 认证配置，提示在另一个终端用该密钥验证；确认成功才继续关闭密码登录。未确认时，本次改为保留原认证配置，继续其余安全设置，之后可以重跑脚本关闭密码登录。非交互模式不会索取或自动安装公钥，需要事先准备密钥并明确传入 `--key-login-confirmed`。
@@ -28,6 +28,33 @@ bash -c 'set -e; runner=(); if [ "$(id -u)" -ne 0 ]; then runner=(sudo --preserv
 - 从 socket 的实际监听地址读取原端口，在 `/etc/systemd/system/ssh.socket.d/zzzz-vps-security.conf` 写入本次覆盖配置，沿用原有地址绑定；待确认阶段保留原来的完整监听地址，再在相同地址增加新端口。
 - 先放行端口，再重载 systemd，核对有效 socket 监听与计划一致，一同重启 socket 和 SSH 主进程并检查监听；已有登录会话保留。
 - 新连接确认后，将 socket 和 SSH 配置同时改为新端口。失败或超时回滚时，同时恢复 SSH 配置和本次覆盖文件；原来没有该文件则删除本次创建的文件。其他 socket 覆盖文件保持原状。
+
+### 管理员与 root SSH 登录
+
+交互流程会先询问“是否新建通过 SSH 公钥登录的管理员”，**默认不新建**；然后询问“是否关闭 root 的 SSH 登录”，**默认保留原策略**。可以新建管理员，也可以指定已有非 root 管理员作为替代登录用户。
+
+选择新建时：
+
+1. 输入用户名，脚本检查名称、账号和 `/home/用户名` 不存在，再次展示创建计划。不会覆盖已有用户或家目录。
+2. 创建 `/home/用户名`、Bash 登录环境，家目录权限 `700`。授予免密 sudo 管理权限，授权文件为 `/etc/sudoers.d/90-vps-security-用户名`，权限 `440`，使用 `visudo` 校验并核对 sudo 授权。
+3. 提示粘贴客户端公钥，使用前述校验和权限流程写入该用户的 `.ssh/authorized_keys`；不需要提供客户端私钥，也不设置可供使用的登录密码。
+4. 请保留原会话，另开终端使用管理员公钥登录，并执行 `sudo -n id` 验证管理权限；确认后才继续应用登录限制。新管理员有独立的 `Match User` 公钥认证要求，即使全局选择保留密码登录，该管理员仍只允许 SSH 公钥认证。
+
+选择关闭 root SSH 登录时，会写入 `PermitRootLogin no`。脚本要求替代用户不是 root、具备 sudo 管理权限、安装了有效公钥，并确认已经实际通过密钥登录。未确认登录成功时，本次保留原有 root 与密码认证设置，继续其他配置。非交互使用已有管理员关闭 root 登录，必须同时传入 `--key-login-confirmed`；新建管理员需要交互输入公钥和验证，不能使用 `--yes`。
+
+这项设置关闭的是 root 的 SSH 登录，不删除或锁定 root 账号；管理员仍可使用 sudo。新建账号、公钥和 sudo 授权属于准备步骤，在取消后续应用或 SSH/UFW 回滚后保留；回滚恢复原来的 SSH 登录策略。重跑选择“保留”时，会保留之前已经设置的 root 和全局密码认证限制。
+
+指定创建管理员并关闭 root SSH 登录，仍保留交互验证：
+
+```bash
+sudo --preserve-env=SSH_CONNECTION bash security_hardening.sh --create-admin admin --disable-root-login
+```
+
+已有管理员的非交互示例（须已实际用该用户密钥登录并验证 sudo 权限）：
+
+```bash
+sudo --preserve-env=SSH_CONNECTION bash security_hardening.sh --ssh-port 22222 --login-user admin --disable-root-login --disable-password --key-login-confirmed --firewall keep --yes
+```
 
 ### UFW 防火墙
 
